@@ -8,6 +8,14 @@
 - **No Auto-merge**: Human review is critical.
 - **Locking**: Use `state:agent-in-progress` to prevent duplicate work.
 
+## Execution Principles
+
+- Handler must not rely on the current working directory for repository context.
+- All GitHub operations should explicitly specify the target repository.
+- `CIRCUS_REPO` is the authoritative orchestration target.
+- Orchestration behavior should be deterministic and inspectable.
+- Prefer explicit command arguments over implicit environment inference.
+
 ## Workflow States
 - `state:ready-for-architecture` -> Codex Architect
 - `state:ready-for-dev` -> Junie Developer
