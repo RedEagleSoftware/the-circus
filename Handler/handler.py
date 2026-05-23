@@ -2,6 +2,9 @@ import json
 import os
 import subprocess
 import time
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configuration
 REPO = os.getenv("CIRCUS_REPO")  # Format: owner/repo
@@ -80,7 +83,7 @@ def verify_github_repo_access():
 
 
 def get_candidates(item_type, list_cmd):
-    cmd = f"gh {list_cmd} --repo {REPO} --json number,labels,title"
+    cmd = f"gh {list_cmd} --repo {REPO} --json number,labels,title,url"
     payload = run_command(cmd)
     if payload is None:
         return [], False
@@ -173,25 +176,66 @@ def build_junie_command(number, model, effort):
     return f"junie --issue {number} --model {model} --effort {effort}"
 
 
+def resolve_role_prompt_path(mode):
+    candidates = [os.path.join("TheFarm", "roles", f"{mode}.md")]
+    if mode.endswith("-approval"):
+        base_mode = mode[: -len("-approval")]
+        candidates.append(os.path.join("TheFarm", "roles", f"{base_mode}.md"))
+
+    for path in candidates:
+        if os.path.isfile(path):
+            return os.path.normpath(path)
+
+    return None
+
+
+def build_thin_prompt(item, state_label, mode, role_prompt_path):
+    prompt_lines = [
+        "Agent launch context:",
+        f"- selected item type: {item['type']}",
+        f"- issue/PR number: {item['number']}",
+        f"- title: {item['title']}",
+    ]
+
+    if item.get("url"):
+        prompt_lines.append(f"- URL: {item['url']}")
+
+    prompt_lines.extend(
+        [
+            f"- resolved state label: {state_label}",
+            f"- agent mode: {mode}",
+            f"- role/prompt markdown file path: {role_prompt_path or '<not available>'}",
+            "- instruction: Use GitHub metadata as the source of truth.",
+        ]
+    )
+
+    return "\n".join(prompt_lines)
+
+
 def build_codex_command(model):
-    # TODO: Move mode/issue context into a thin prompt or Codex config profile, not unsupported CLI flags.
+    # TODO: Confirm Codex CLI non-interactive prompt/input mechanism in this environment, then pass thin prompt directly.
     return f"codex --model {model}"
 
 
-def launch_agent(item, config):
+def launch_agent(item, state_label, config):
     agent = config["agent"]
     mode = config["mode"]
     model = config["model"]
     effort = config["effort"]
     number = item["number"]
+    role_prompt_path = resolve_role_prompt_path(mode)
+    thin_prompt = build_thin_prompt(item, state_label, mode, role_prompt_path)
 
     print(f"[Dispatch] Launching {agent} in {mode} mode with model={model}, effort={effort}")
     print(f"[Dispatch] Target item: {item['type']} #{number} - {item['title']}")
+    print("[Dispatch] Generated thin prompt:")
+    print(thin_prompt)
 
     if agent == "junie":
         cmd = build_junie_command(number, model, effort)
     elif agent == "codex":
         print(f"[Dispatch] Codex routing metadata: mode={mode}, effort={effort}")
+        print("[Dispatch] TODO: Pass this thin prompt as Codex initial input once the supported CLI mechanism is verified.")
         cmd = build_codex_command(model)
     else:
         print(f"[Dispatch] Unknown agent: {agent}")
@@ -236,7 +280,7 @@ def process_one_item(items):
 
         print(f"[Dispatch] Lock acquired for {item['type']} #{item['number']}.")
 
-        if launch_agent(item, config):
+        if launch_agent(item, state_label, config):
             return True
 
     return False
