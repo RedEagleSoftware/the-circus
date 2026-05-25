@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import time
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -24,7 +25,7 @@ LABEL_MAP = {
         "model": "gpt-5.3-codex",
         "effort": "Medium",
     },
-    "state:review-requested": {
+    "state:ready-for-review": {
         "agent": "codex",
         "mode": "reviewer",
         "model": "gpt-5.3-codex",
@@ -39,6 +40,7 @@ LABEL_MAP = {
 }
 
 LOCK_LABEL = "state:agent-in-progress"
+LAUNCH_ARTIFACT_DIR = os.path.join("Watchtower", "runs")
 
 
 def run_command(cmd):
@@ -217,17 +219,103 @@ def build_codex_command(model):
     return f"codex --model {model}"
 
 
-def launch_agent(item, state_label, config):
+def sanitize_filename_part(value):
+    safe = []
+    for char in str(value).lower():
+        if char.isalnum() or char in {"-", "_"}:
+            safe.append(char)
+        else:
+            safe.append("-")
+
+    normalized = "".join(safe).strip("-")
+    while "--" in normalized:
+        normalized = normalized.replace("--", "-")
+
+    return normalized or "unknown"
+
+
+def normalize_path_for_display(path):
+    return path.replace("\\", "/")
+
+
+def build_launch_brief_path(item, mode):
+    run_dir = (
+        f"{sanitize_filename_part(item['type'])}-{item['number']}-"
+        f"{sanitize_filename_part(mode)}"
+    )
+    brief_path = os.path.normpath(os.path.join(LAUNCH_ARTIFACT_DIR, run_dir, "launch-brief.md"))
+    return normalize_path_for_display(brief_path)
+
+
+def build_launch_brief_markdown(item, state_label, config, role_prompt_path, timestamp):
+    # TODO: Discover target-repo agent instructions by convention (AGENTS.md,
+    # .circus/roles/<mode>.md, .circus/workflows/<mode>.md) once routing contracts are finalized.
+    references = []
+    if role_prompt_path:
+        references.append(f"- role/prompt file: `{role_prompt_path}`")
+
+    lines = [
+        "# Launch Brief",
+        "",
+        "## Assignment",
+        f"- repository: `{REPO}`",
+        f"- item type: `{item['type']}`",
+        f"- item number: `{item['number']}`",
+        f"- title: `{item['title']}`",
+        f"- workflow state: `{state_label}`",
+        f"- target agent: `{config['agent']}`",
+        f"- mode: `{config['mode']}`",
+        f"- model: `{config['model']}`",
+        f"- effort: `{config['effort']}`",
+        f"- timestamp: `{timestamp}`",
+        "- generated-by: `Handler`",
+        "",
+        "## Source of Truth",
+        "- GitHub issue/PR metadata is the source of truth.",
+        "- If local files, git state, or launch metadata conflict with GitHub metadata, stop and report the mismatch.",
+        "",
+        "## Operating Instructions",
+        "- Perform only this workflow step.",
+        "- Follow any referenced role/prompt files.",
+        "- Do not auto-merge.",
+        "- Do not change unrelated workflow labels.",
+        "- Leave a clear GitHub comment when finished or blocked.",
+        "- If required metadata or repository context is unavailable, stop and report what is missing.",
+        "",
+        "## References",
+    ]
+
+    if references:
+        lines.extend(references)
+    else:
+        lines.append("- no role reference configured")
+
+    return "\n".join(lines)
+
+
+def write_launch_brief(item, state_label, config, role_prompt_path):
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    brief_path = build_launch_brief_path(item, config["mode"])
+    brief_content = build_launch_brief_markdown(item, state_label, config, role_prompt_path, timestamp)
+    os.makedirs(os.path.dirname(brief_path), exist_ok=True)
+
+    with open(brief_path, "w", encoding="utf-8") as brief_file:
+        brief_file.write(f"{brief_content}\n")
+
+    return brief_path
+
+
+def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path):
     agent = config["agent"]
     mode = config["mode"]
     model = config["model"]
     effort = config["effort"]
     number = item["number"]
-    role_prompt_path = resolve_role_prompt_path(mode)
     thin_prompt = build_thin_prompt(item, state_label, mode, role_prompt_path)
 
     print(f"[Dispatch] Launching {agent} in {mode} mode with model={model}, effort={effort}")
     print(f"[Dispatch] Target item: {item['type']} #{number} - {item['title']}")
+    print(f"[Dispatch] Launch brief: {launch_brief_path}")
     print("[Dispatch] Generated thin prompt:")
     print(thin_prompt)
 
@@ -280,7 +368,17 @@ def process_one_item(items):
 
         print(f"[Dispatch] Lock acquired for {item['type']} #{item['number']}.")
 
-        if launch_agent(item, state_label, config):
+        role_prompt_path = resolve_role_prompt_path(config["mode"])
+
+        try:
+            launch_brief_path = write_launch_brief(item, state_label, config, role_prompt_path)
+        except OSError as error:
+            print(f"[Dispatch] Failed to write launch brief for {item['type']} #{item['number']}: {error}")
+            continue
+
+        print(f"[Dispatch] Launch brief generated: {launch_brief_path}")
+
+        if launch_agent(item, state_label, config, role_prompt_path, launch_brief_path):
             return True
 
     return False

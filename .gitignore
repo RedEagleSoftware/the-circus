@@ -20,6 +20,9 @@ env/
 # Project-specific
 .junie/
 Watchtower/logs/
+!Watchtower/logs/.gitkeep
+Watchtower/runs/**
+!Watchtower/runs/.gitkeep
 
 # Distribution / packaging
 *.egg-info/
