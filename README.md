@@ -1,5 +1,8 @@
 # The Circus
 
+> “There is only one thing worth preparing for and that is the unexpected.”
+> — George Smiley, Tinker Tailor Soldier Spy
+
 > Multi-agent orchestration framework for autonomous software development workflows.
 
 ## Overview
