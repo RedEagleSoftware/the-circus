@@ -43,6 +43,11 @@ LABEL_MAP = {
 
 LOCK_LABEL = "state:agent-in-progress"
 LAUNCH_ARTIFACT_DIR = os.path.join("Watchtower", "runs")
+SHARED_ARTIFACT_PLACEHOLDERS = {
+    "architecture-handoff.md": "# Architecture Handoff\n\nNo architecture handoff has been recorded yet.",
+    "running-notes.md": "# Running Notes\n\nNo running notes have been recorded yet.",
+    "decision-log.md": "# Decision Log\n\nNo decisions have been recorded yet.",
+}
 
 
 def run_command(cmd):
@@ -146,6 +151,19 @@ def lock_item(item):
     return run_command(cmd) is not None
 
 
+def unlock_item(item):
+    cmd = f"gh {item['type']} edit {item['number']} --repo {REPO} --remove-label \"{LOCK_LABEL}\""
+    return run_command(cmd) is not None
+
+
+def add_prelaunch_setup_failure_comment(item, error, lock_released):
+    lock_result = "released" if lock_released else "could not be released"
+    item["comment"] = (
+        "Handler failed before launch brief generation completed "
+        f"({error}). The lock label `{LOCK_LABEL}` was {lock_result}."
+    )
+
+
 def resolve_dispatch_config(item, labels):
     primary_states = get_primary_state_labels(labels)
     state_labels = get_state_labels(labels)
@@ -177,6 +195,7 @@ def resolve_dispatch_config(item, labels):
 
 
 def build_junie_command(number, model, effort):
+    # TODO: Confirm Junie CLI artifact/prompt-file input mechanism and include launch brief path directly once verified.
     return f"junie --issue {number} --model {model} --effort {effort}"
 
 
@@ -193,7 +212,16 @@ def resolve_role_prompt_path(mode):
     return None
 
 
-def build_thin_prompt(item, state_label, mode, role_prompt_path):
+def resolve_profile_source(role_prompt_path):
+    if not role_prompt_path:
+        return None
+
+    return normalize_path_for_display(role_prompt_path)
+
+
+def build_thin_prompt(item, state_label, mode, role_prompt_path, launch_brief_path=None):
+    profile_source = resolve_profile_source(role_prompt_path)
+
     prompt_lines = [
         "Agent launch context:",
         f"- selected item type: {item['type']}",
@@ -208,7 +236,9 @@ def build_thin_prompt(item, state_label, mode, role_prompt_path):
         [
             f"- resolved state label: {state_label}",
             f"- agent mode: {mode}",
-            f"- role/prompt markdown file path: {role_prompt_path or '<not available>'}",
+            f"- target repo path: {TARGET_REPO_PATH or '<not configured>'}",
+            f"- agent profile source path: {profile_source or '<not available>'}",
+            f"- launch brief artifact path: {launch_brief_path or '<not available>'}",
             "- instruction: Use GitHub metadata as the source of truth.",
         ]
     )
@@ -337,28 +367,55 @@ def get_next_run_number(item_run_root):
     return next_run_number
 
 
-def build_launch_brief_path(item, mode):
+def get_item_run_root(item):
     item_dir = f"{sanitize_filename_part(item['type'])}-{item['number']}"
-    item_run_root = os.path.normpath(os.path.join(LAUNCH_ARTIFACT_DIR, item_dir))
+    return os.path.normpath(os.path.join(LAUNCH_ARTIFACT_DIR, item_dir))
+
+
+def build_shared_context_paths(item_run_root):
+    shared_dir = os.path.normpath(os.path.join(item_run_root, "shared"))
+    return {
+        "architecture_handoff": normalize_path_for_display(os.path.join(shared_dir, "architecture-handoff.md")),
+        "running_notes": normalize_path_for_display(os.path.join(shared_dir, "running-notes.md")),
+        "decision_log": normalize_path_for_display(os.path.join(shared_dir, "decision-log.md")),
+    }
+
+
+def ensure_shared_artifacts(item_run_root):
+    shared_dir = os.path.normpath(os.path.join(item_run_root, "shared"))
+    os.makedirs(shared_dir, exist_ok=True)
+
+    for filename, placeholder in SHARED_ARTIFACT_PLACEHOLDERS.items():
+        artifact_path = os.path.join(shared_dir, filename)
+        if os.path.exists(artifact_path):
+            continue
+
+        with open(artifact_path, "x", encoding="utf-8") as artifact_file:
+            artifact_file.write(f"{placeholder}\n")
+
+    return build_shared_context_paths(item_run_root)
+
+
+def build_launch_brief_path(item, mode):
+    item_run_root = get_item_run_root(item)
     run_number = get_next_run_number(item_run_root)
     run_dir = f"run-{run_number:03d}-{sanitize_filename_part(mode)}"
     brief_path = os.path.normpath(os.path.join(item_run_root, run_dir, "launch-brief.md"))
     return normalize_path_for_display(brief_path)
 
 
-def build_launch_brief_markdown(item, state_label, config, role_prompt_path, timestamp, target_repo_path):
+def build_launch_brief_markdown(item, state_label, config, role_prompt_path, timestamp, target_repo_path, shared_context_paths=None):
     # TODO: Discover target-repo agent instructions by convention (AGENTS.md,
     # .circus/roles/<mode>.md, .circus/workflows/<mode>.md) once routing contracts are finalized.
-    references = []
-    if role_prompt_path:
-        references.append(f"- role/prompt file: `{role_prompt_path}`")
+    profile_source = resolve_profile_source(role_prompt_path)
+    normalized_target_repo_path = normalize_path_for_display(target_repo_path)
 
     lines = [
         "# Launch Brief",
         "",
         "## Assignment",
         f"- repository: `{REPO}`",
-        f"- target repo path: `{target_repo_path}`",
+        f"- target repo path: `{normalized_target_repo_path}`",
         f"- item type: `{item['type']}`",
         f"- item number: `{item['number']}`",
         f"- title: `{item['title']}`",
@@ -368,7 +425,7 @@ def build_launch_brief_markdown(item, state_label, config, role_prompt_path, tim
         f"- model: `{config['model']}`",
         f"- effort: `{config['effort']}`",
         f"- timestamp: `{timestamp}`",
-        "- generated-by: `Generated by Handler`",
+        "- generated-by: `Handler`",
         "",
         "## Source of Truth",
         "- GitHub issue/PR metadata is the source of truth.",
@@ -376,25 +433,34 @@ def build_launch_brief_markdown(item, state_label, config, role_prompt_path, tim
         "",
         "## Operating Instructions",
         "- Perform only this workflow step.",
-        "- Follow any referenced role/prompt files.",
+        "- Follow the referenced agent profile.",
         "- Do not auto-merge.",
         "- Do not change unrelated workflow labels.",
         "- Leave a clear GitHub comment when finished or blocked.",
         "- If required metadata or repository context is unavailable, stop and report what is missing.",
         "",
-        "## References",
+        "## Agent Profile",
+        f"- profile source: `{profile_source or '<not available>'}`",
     ]
 
-    if references:
-        lines.extend(references)
-    else:
-        lines.append("- no role reference configured")
+    if shared_context_paths:
+        lines.extend(
+            [
+                "",
+                "## Shared Context",
+                f"- architecture handoff: `{shared_context_paths['architecture_handoff']}`",
+                f"- running notes: `{shared_context_paths['running_notes']}`",
+                f"- decision log: `{shared_context_paths['decision_log']}`",
+            ]
+        )
 
     return "\n".join(lines)
 
 
 def write_launch_brief(item, state_label, config, role_prompt_path):
     timestamp = datetime.now().isoformat(timespec="seconds")
+    item_run_root = get_item_run_root(item)
+    shared_context_paths = ensure_shared_artifacts(item_run_root)
     brief_path = build_launch_brief_path(item, config["mode"])
     brief_content = build_launch_brief_markdown(
         item,
@@ -403,6 +469,7 @@ def write_launch_brief(item, state_label, config, role_prompt_path):
         role_prompt_path,
         timestamp,
         TARGET_REPO_PATH or "<not configured>",
+        shared_context_paths,
     )
     os.makedirs(os.path.dirname(brief_path), exist_ok=True)
 
@@ -418,7 +485,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
     model = config["model"]
     effort = config["effort"]
     number = item["number"]
-    thin_prompt = build_thin_prompt(item, state_label, mode, role_prompt_path)
+    thin_prompt = build_thin_prompt(item, state_label, mode, role_prompt_path, launch_brief_path)
 
     print(f"[Dispatch] Launching {agent} in {mode} mode with model={model}, effort={effort}")
     print(f"[Dispatch] Target item: {item['type']} #{number} - {item['title']}")
@@ -429,6 +496,9 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
 
     if agent == "junie":
         cmd = build_junie_command(number, model, effort)
+        print(f"[Dispatch] Launch brief available at: {launch_brief_path}")
+        print("[Dispatch] Junie launch note: provide this launch brief path manually in Junie input for this run.")
+        print("[Dispatch] TODO: Confirm Junie preferred prompt/artifact input mechanism (e.g., prompt-file equivalent) and wire it into the generated command.")
     elif agent == "codex":
         print(f"[Dispatch] Codex routing metadata: mode={mode}, effort={effort}")
         print("[Dispatch] TODO: Pass this thin prompt as Codex initial input once the supported CLI mechanism is verified.")
@@ -483,6 +553,16 @@ def process_one_item(items):
             launch_brief_path = write_launch_brief(item, state_label, config, role_prompt_path)
         except OSError as error:
             print(f"[Dispatch] Failed to write launch brief for {item['type']} #{item['number']}: {error}")
+            print(f"[Dispatch] Releasing lock for {item['type']} #{item['number']} due to pre-launch setup failure...")
+            lock_released = unlock_item(item)
+
+            if lock_released:
+                print(f"[Dispatch] Lock cleanup succeeded for {item['type']} #{item['number']}.")
+            else:
+                print(f"[Dispatch] Lock cleanup failed for {item['type']} #{item['number']}; manual cleanup may be required.")
+
+            add_prelaunch_setup_failure_comment(item, error, lock_released)
+            add_comment(item)
             continue
 
         print(f"[Dispatch] Launch brief generated: {launch_brief_path}")

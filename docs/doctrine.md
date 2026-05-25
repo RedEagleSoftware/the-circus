@@ -42,6 +42,9 @@
 - `CIRCUS_REPO` is the authoritative orchestration target.
 - Orchestration behavior should be deterministic and inspectable.
 - Prefer explicit command arguments over implicit environment inference.
+- Prefer a fresh agent session for each distinct workflow task.
+- Durable markdown artifacts and GitHub metadata should carry context between sessions.
+- Agents should not rely on long-lived conversational memory for orchestration correctness.
 
 ## Observability Principles
 
@@ -49,6 +52,14 @@
 - Workflow transitions should leave durable operational artifacts.
 - Prefer transparent logs and artifacts over hidden automation state.
 - Watchtower exists to observe before it controls.
+
+## Handoff Artifact Principles
+
+- Agents should not overwrite GitHub issue bodies as part of normal handoff.
+- The GitHub issue remains the original work request and workflow discussion.
+- Agent-produced guidance for later agents should be written as issue-level shared artifacts.
+- Single-run logs/results belong inside that run’s folder.
+- Shared handoff artifacts should be referenced by later launch briefs.
 
 ## Workflow States
 

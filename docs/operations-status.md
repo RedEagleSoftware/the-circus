@@ -56,17 +56,4 @@
 - When "Next Likely Tasks" drops below ~2 items, schedule a new planning/review session.
 - Prefer updating existing operational context over creating excessive historical records.
 
-## Last Completed Work
-
-- Added manual workflow label synchronization using explicit `CIRCUS_REPO` targeting via `gh`.
-- Created launch brief artifact generation.
-- Grouped Watchtower runs by issue with numbered run history.
-- Added explicit target repository workspace configuration.
-- Added startup/polling observability and dispatch logging.
-
-## Next Likely Tasks
-
-1. Pass launch brief artifact path to developer agent.
-2. Expand developer role doctrine.
-3. Explore subprocess execution.
-4. Add agent result/status artifacts to Watchtower runs.
+\

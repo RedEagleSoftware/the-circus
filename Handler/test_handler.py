@@ -90,6 +90,53 @@ class HandlerObservabilityTests(unittest.TestCase):
             any("[Poll] Skipping issue #10" in line and "lock label" in line for line in printed_lines)
         )
 
+    def test_process_one_item_releases_lock_when_launch_brief_generation_fails(self):
+        item = {
+            "type": "issue",
+            "number": 22,
+            "title": "Fail during setup",
+            "labels": [{"name": "state:ready-for-dev"}],
+        }
+
+        with patch.object(handler, "lock_item", return_value=True):
+            with patch.object(handler, "write_launch_brief", side_effect=OSError("disk full")):
+                with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                    with patch.object(handler, "add_comment") as mock_add_comment:
+                        with patch.object(handler, "launch_agent") as mock_launch_agent:
+                            with patch("builtins.print") as mock_print:
+                                dispatched = handler.process_one_item([item])
+
+        self.assertFalse(dispatched)
+        mock_unlock.assert_called_once_with(item)
+        mock_add_comment.assert_called_once_with(item)
+        mock_launch_agent.assert_not_called()
+        self.assertIn("failed before launch brief generation completed", item["comment"])
+        self.assertIn("The lock label `state:agent-in-progress` was released", item["comment"])
+
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("Failed to write launch brief for issue #22: disk full" in line for line in printed_lines))
+        self.assertTrue(any("Releasing lock for issue #22" in line for line in printed_lines))
+        self.assertTrue(any("Lock cleanup succeeded for issue #22" in line for line in printed_lines))
+
+    def test_process_one_item_keeps_lock_after_successful_dispatch(self):
+        item = {
+            "type": "issue",
+            "number": 23,
+            "title": "Successful dispatch",
+            "labels": [{"name": "state:ready-for-dev"}],
+        }
+
+        with patch.object(handler, "lock_item", return_value=True):
+            with patch.object(handler, "write_launch_brief", return_value="Watchtower/runs/issue-23/run-001-developer/launch-brief.md"):
+                with patch.object(handler, "launch_agent", return_value=True):
+                    with patch.object(handler, "unlock_item") as mock_unlock:
+                        with patch.object(handler, "add_comment") as mock_add_comment:
+                            dispatched = handler.process_one_item([item])
+
+        self.assertTrue(dispatched)
+        mock_unlock.assert_not_called()
+        mock_add_comment.assert_not_called()
+
     def test_poll_cycle_observability_when_idle(self):
         with patch.object(handler, "REPO", "owner/repo"):
             with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
@@ -115,6 +162,88 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(items, [])
         self.assertTrue(ok)
         mock_run.assert_called_once_with("gh issue list --repo owner/repo --json number,labels,title,url")
+
+    def test_build_thin_prompt_includes_target_repo_and_launch_brief_path(self):
+        item = {"type": "issue", "number": 3, "title": "Implement launch brief", "url": "https://github.com/owner/repo/issues/3"}
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            prompt = handler.build_thin_prompt(
+                item,
+                "state:ready-for-dev",
+                "developer",
+                os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                "Watchtower/runs/issue-3/run-001-developer/launch-brief.md",
+            )
+
+        self.assertIn("- target repo path: C:/target/repo", prompt)
+        self.assertIn("- agent profile source path: TheFarm/roles/developer.md", prompt)
+        self.assertIn(
+            "- launch brief artifact path: Watchtower/runs/issue-3/run-001-developer/launch-brief.md",
+            prompt,
+        )
+
+    def test_launch_agent_junie_preserves_flags_and_logs_manual_launch_brief_handoff(self):
+        item = {
+            "type": "issue",
+            "number": 3,
+            "title": "Implement launch brief path handoff",
+            "url": "https://github.com/owner/repo/issues/3",
+        }
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-3/run-001-developer/launch-brief.md"
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch("builtins.print") as mock_print:
+                launched = handler.launch_agent(
+                    item,
+                    "state:ready-for-dev",
+                    config,
+                    os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                    launch_brief_path,
+                )
+
+        self.assertTrue(launched)
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any(f"[Dispatch] Launch brief available at: {launch_brief_path}" in line for line in printed_lines))
+        self.assertTrue(any("provide this launch brief path manually" in line for line in printed_lines))
+        self.assertTrue(any("Confirm Junie preferred prompt/artifact input mechanism" in line for line in printed_lines))
+
+        executing_lines = [line for line in printed_lines if line.startswith("[Dispatch] Executing: ")]
+        self.assertEqual(executing_lines, ["[Dispatch] Executing: junie --issue 3 --model gpt-5.3-codex --effort Medium"])
+        self.assertFalse(any("--prompt-file" in line for line in executing_lines))
+
+    def test_launch_agent_codex_command_remains_unchanged(self):
+        item = {
+            "type": "issue",
+            "number": 9,
+            "title": "Review changes",
+            "url": "https://github.com/owner/repo/issues/9",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "reviewer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch("builtins.print") as mock_print:
+                launched = handler.launch_agent(
+                    item,
+                    "state:ready-for-review",
+                    config,
+                    os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
+                    "Watchtower/runs/issue-9/run-001-reviewer/launch-brief.md",
+                )
+
+        self.assertTrue(launched)
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("[Dispatch] Executing: codex --model gpt-5.3-codex" in line for line in printed_lines))
 
     def test_build_launch_brief_path_is_predictable(self):
         item = {"type": "issue", "number": 3}
@@ -160,13 +289,19 @@ class HandlerObservabilityTests(unittest.TestCase):
                 config,
                 os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
                 "2026-05-25T09:06:00",
-                "C:/target/repo",
+                "C:\\target\\repo",
+                {
+                    "architecture_handoff": "Watchtower/runs/issue-3/shared/architecture-handoff.md",
+                    "running_notes": "Watchtower/runs/issue-3/shared/running-notes.md",
+                    "decision_log": "Watchtower/runs/issue-3/shared/decision-log.md",
+                },
             )
 
         self.assertIn("## Assignment", markdown)
         self.assertIn("## Source of Truth", markdown)
         self.assertIn("## Operating Instructions", markdown)
-        self.assertIn("## References", markdown)
+        self.assertIn("## Agent Profile", markdown)
+        self.assertIn("## Shared Context", markdown)
         self.assertIn("- repository: `owner/repo`", markdown)
         self.assertIn("- target repo path: `C:/target/repo`", markdown)
         self.assertIn("- item type: `issue`", markdown)
@@ -176,10 +311,15 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("- mode: `developer`", markdown)
         self.assertIn("- model: `gpt-5.3-codex`", markdown)
         self.assertIn("- effort: `Medium`", markdown)
-        self.assertIn("- generated-by: `Generated by Handler`", markdown)
+        self.assertIn("- generated-by: `Handler`", markdown)
+        self.assertIn("- architecture handoff: `Watchtower/runs/issue-3/shared/architecture-handoff.md`", markdown)
+        self.assertIn("- running notes: `Watchtower/runs/issue-3/shared/running-notes.md`", markdown)
+        self.assertIn("- decision log: `Watchtower/runs/issue-3/shared/decision-log.md`", markdown)
         self.assertIn("GitHub issue/PR metadata is the source of truth", markdown)
         self.assertIn("If local files, git state, or launch metadata conflict with GitHub metadata", markdown)
-        self.assertIn("- role/prompt file: `TheFarm\\roles\\developer.md`", markdown)
+        self.assertIn("- profile source: `TheFarm/roles/developer.md`", markdown)
+        self.assertNotIn("role/prompt", markdown)
+        self.assertNotIn("\\", markdown)
         self.assertNotIn("docs\\doctrine.md", markdown)
         self.assertNotIn("docs\\operations-status.md", markdown)
 
@@ -206,8 +346,8 @@ class HandlerObservabilityTests(unittest.TestCase):
                 "C:/target/repo",
             )
 
-        self.assertIn("## References", markdown)
-        self.assertIn("- no role reference configured", markdown)
+        self.assertIn("## Agent Profile", markdown)
+        self.assertIn("- profile source: `<not available>`", markdown)
         self.assertNotIn("docs\\doctrine.md", markdown)
         self.assertNotIn("docs\\operations-status.md", markdown)
 
@@ -227,7 +367,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(handler, "LAUNCH_ARTIFACT_DIR", temp_dir):
                 with patch.object(handler, "REPO", "owner/repo"):
-                    with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                    with patch.object(handler, "TARGET_REPO_PATH", "C:\\target\\repo"):
                         brief_path = handler.write_launch_brief(
                             item,
                             "state:ready-for-dev",
@@ -239,13 +379,96 @@ class HandlerObservabilityTests(unittest.TestCase):
             with open(brief_path, "r", encoding="utf-8") as generated_file:
                 content = generated_file.read()
 
+            shared_dir = os.path.join(temp_dir, "issue-3", "shared")
+            self.assertTrue(os.path.isdir(shared_dir))
+
+            architecture_handoff_path = os.path.join(shared_dir, "architecture-handoff.md")
+            running_notes_path = os.path.join(shared_dir, "running-notes.md")
+            decision_log_path = os.path.join(shared_dir, "decision-log.md")
+
+            self.assertTrue(os.path.isfile(architecture_handoff_path))
+            self.assertTrue(os.path.isfile(running_notes_path))
+            self.assertTrue(os.path.isfile(decision_log_path))
+
+            with open(architecture_handoff_path, "r", encoding="utf-8") as architecture_handoff_file:
+                architecture_handoff_content = architecture_handoff_file.read()
+            with open(running_notes_path, "r", encoding="utf-8") as running_notes_file:
+                running_notes_content = running_notes_file.read()
+            with open(decision_log_path, "r", encoding="utf-8") as decision_log_file:
+                decision_log_content = decision_log_file.read()
+
         self.assertIn("# Launch Brief", content)
         self.assertIn("## Assignment", content)
         self.assertIn("- repository: `owner/repo`", content)
         self.assertIn("- target repo path: `C:/target/repo`", content)
-        self.assertIn("- role/prompt file: `TheFarm\\roles\\developer.md`", content)
+        self.assertIn("## Agent Profile", content)
+        self.assertIn("- profile source: `TheFarm/roles/developer.md`", content)
+        self.assertIn("## Shared Context", content)
+        self.assertIn(
+            f"- architecture handoff: `{temp_dir.replace('\\', '/')}/issue-3/shared/architecture-handoff.md`",
+            content,
+        )
+        self.assertIn(
+            f"- running notes: `{temp_dir.replace('\\', '/')}/issue-3/shared/running-notes.md`",
+            content,
+        )
+        self.assertIn(
+            f"- decision log: `{temp_dir.replace('\\', '/')}/issue-3/shared/decision-log.md`",
+            content,
+        )
+        self.assertIn("- generated-by: `Handler`", content)
+        self.assertNotIn("role/prompt", content)
+        self.assertNotIn("\\", content)
         self.assertNotIn("docs\\doctrine.md", content)
         self.assertNotIn("docs\\operations-status.md", content)
+
+        self.assertEqual(
+            architecture_handoff_content,
+            "# Architecture Handoff\n\nNo architecture handoff has been recorded yet.\n",
+        )
+        self.assertEqual(
+            running_notes_content,
+            "# Running Notes\n\nNo running notes have been recorded yet.\n",
+        )
+        self.assertEqual(
+            decision_log_content,
+            "# Decision Log\n\nNo decisions have been recorded yet.\n",
+        )
+
+    def test_ensure_shared_artifacts_does_not_overwrite_existing_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            item_run_root = os.path.join(temp_dir, "issue-7")
+            shared_dir = os.path.join(item_run_root, "shared")
+            os.makedirs(shared_dir, exist_ok=True)
+
+            architecture_handoff_path = os.path.join(shared_dir, "architecture-handoff.md")
+            with open(architecture_handoff_path, "w", encoding="utf-8") as architecture_handoff_file:
+                architecture_handoff_file.write("# Architecture Handoff\n\nExisting handoff context.\n")
+
+            with patch.object(handler, "LAUNCH_ARTIFACT_DIR", temp_dir):
+                shared_context_paths = handler.ensure_shared_artifacts(item_run_root)
+
+            self.assertEqual(
+                shared_context_paths["architecture_handoff"],
+                f"{temp_dir.replace('\\', '/')}/issue-7/shared/architecture-handoff.md",
+            )
+            self.assertEqual(
+                shared_context_paths["running_notes"],
+                f"{temp_dir.replace('\\', '/')}/issue-7/shared/running-notes.md",
+            )
+            self.assertEqual(
+                shared_context_paths["decision_log"],
+                f"{temp_dir.replace('\\', '/')}/issue-7/shared/decision-log.md",
+            )
+
+            with open(architecture_handoff_path, "r", encoding="utf-8") as architecture_handoff_file:
+                self.assertEqual(
+                    architecture_handoff_file.read(),
+                    "# Architecture Handoff\n\nExisting handoff context.\n",
+                )
+
+            self.assertTrue(os.path.isfile(os.path.join(shared_dir, "running-notes.md")))
+            self.assertTrue(os.path.isfile(os.path.join(shared_dir, "decision-log.md")))
 
     def test_get_labeled_items_filters_supported_labels_and_reports_unsupported_states(self):
         issues_payload = (
