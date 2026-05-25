@@ -9,7 +9,6 @@
 - Lock acquisition working
 - One-dispatch-then-exit behavior operational
 - Startup observability added
-- Manual workflow label synchronization command available (`python main.py --sync-labels`)
 
 ## Future Watchtower Concept
 
@@ -71,21 +70,3 @@
 2. Expand developer role doctrine.
 3. Explore subprocess execution.
 4. Add agent result/status artifacts to Watchtower runs.
-
-## Manual Label Sync Usage
-
-- Command: `python main.py --sync-labels`
-- Managed labels (non-destructive):
-  - `state:ready-for-architecture`
-  - `state:ready-for-dev`
-  - `state:ready-for-review`
-  - `state:ready-for-architect`
-  - `state:ready-for-randy`
-  - `state:changes-requested`
-  - `state:blocked`
-  - `state:agent-in-progress`
-- Behavior:
-  - Creates missing required labels.
-  - Updates color/description for required labels when they mismatch.
-  - Does not delete or rename unknown labels.
-  - Does not run during normal Handler polling.
