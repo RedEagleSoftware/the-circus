@@ -7,6 +7,56 @@ import Handler.handler as handler
 
 
 class HandlerObservabilityTests(unittest.TestCase):
+    def test_validate_target_repo_workspace_missing_path(self):
+        with patch("builtins.print") as mock_print:
+            is_valid = handler.validate_target_repo_workspace(None, "owner/repo")
+
+        self.assertFalse(is_valid)
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("CIRCUS_TARGET_REPO_PATH is required" in line for line in printed_lines))
+
+    def test_validate_target_repo_workspace_nonexistent_path(self):
+        with patch("builtins.print") as mock_print:
+            is_valid = handler.validate_target_repo_workspace("C:\\does-not-exist", "owner/repo")
+
+        self.assertFalse(is_valid)
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("does not exist" in line for line in printed_lines))
+
+    def test_validate_target_repo_workspace_not_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = os.path.join(temp_dir, "not-a-dir.txt")
+            with open(file_path, "w", encoding="utf-8") as file_handle:
+                file_handle.write("test")
+
+            with patch("builtins.print") as mock_print:
+                is_valid = handler.validate_target_repo_workspace(file_path, "owner/repo")
+
+        self.assertFalse(is_valid)
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("is not a directory" in line for line in printed_lines))
+
+    def test_validate_target_repo_workspace_not_git_repo(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch("builtins.print") as mock_print:
+                is_valid = handler.validate_target_repo_workspace(temp_dir, "owner/repo")
+
+        self.assertFalse(is_valid)
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("does not appear to be a git repository" in line for line in printed_lines))
+
+    def test_validate_target_repo_workspace_warns_on_remote_mismatch(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.makedirs(os.path.join(temp_dir, ".git"), exist_ok=True)
+
+            with patch.object(handler, "get_git_remote_origin_url", return_value="git@github.com:other/repo.git"):
+                with patch("builtins.print") as mock_print:
+                    is_valid = handler.validate_target_repo_workspace(temp_dir, "owner/repo")
+
+        self.assertTrue(is_valid)
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("remote appears to mismatch" in line for line in printed_lines))
+
     def test_verify_github_repo_access_success(self):
         with patch.object(handler, "REPO", "owner/repo"):
             with patch.object(handler, "run_command", return_value='{"nameWithOwner": "owner/repo"}'):
@@ -42,13 +92,15 @@ class HandlerObservabilityTests(unittest.TestCase):
 
     def test_poll_cycle_observability_when_idle(self):
         with patch.object(handler, "REPO", "owner/repo"):
-            with patch.object(handler, "verify_github_repo_access", return_value=True):
-                with patch.object(handler, "get_labeled_items", return_value=([], [], [], True)):
-                    with patch.object(handler, "process_one_item", return_value=False):
-                        with patch("time.sleep", side_effect=SystemExit):
-                            with patch("builtins.print") as mock_print:
-                                with self.assertRaises(SystemExit):
-                                    handler.poll()
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(handler, "validate_target_repo_workspace", return_value=True):
+                    with patch.object(handler, "verify_github_repo_access", return_value=True):
+                        with patch.object(handler, "get_labeled_items", return_value=([], [], [], True)):
+                            with patch.object(handler, "process_one_item", return_value=False):
+                                with patch("time.sleep", side_effect=SystemExit):
+                                    with patch("builtins.print") as mock_print:
+                                        with self.assertRaises(SystemExit):
+                                            handler.poll()
 
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("[Poll] Starting cycle #1..." in line for line in printed_lines))
@@ -67,9 +119,25 @@ class HandlerObservabilityTests(unittest.TestCase):
     def test_build_launch_brief_path_is_predictable(self):
         item = {"type": "issue", "number": 3}
 
-        path = handler.build_launch_brief_path(item, "developer")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(handler, "LAUNCH_ARTIFACT_DIR", temp_dir):
+                path = handler.build_launch_brief_path(item, "developer")
 
-        self.assertEqual(path, "Watchtower/runs/issue-3-developer/launch-brief.md")
+        self.assertEqual(path, f"{temp_dir.replace('\\', '/')}/issue-3/run-001-developer/launch-brief.md")
+        self.assertNotIn("\\", path)
+
+    def test_build_launch_brief_path_increments_run_number_for_existing_item(self):
+        item = {"type": "issue", "number": 3}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            item_root = os.path.join(temp_dir, "issue-3")
+            os.makedirs(os.path.join(item_root, "run-001-developer"), exist_ok=True)
+            os.makedirs(os.path.join(item_root, "run-002-reviewer"), exist_ok=True)
+
+            with patch.object(handler, "LAUNCH_ARTIFACT_DIR", temp_dir):
+                path = handler.build_launch_brief_path(item, "developer")
+
+        self.assertEqual(path, f"{temp_dir.replace('\\', '/')}/issue-3/run-003-developer/launch-brief.md")
         self.assertNotIn("\\", path)
 
     def test_build_launch_brief_markdown_includes_required_sections_and_dynamic_references(self):
@@ -92,6 +160,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                 config,
                 os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
                 "2026-05-25T09:06:00",
+                "C:/target/repo",
             )
 
         self.assertIn("## Assignment", markdown)
@@ -99,6 +168,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("## Operating Instructions", markdown)
         self.assertIn("## References", markdown)
         self.assertIn("- repository: `owner/repo`", markdown)
+        self.assertIn("- target repo path: `C:/target/repo`", markdown)
         self.assertIn("- item type: `issue`", markdown)
         self.assertIn("- item number: `3`", markdown)
         self.assertIn("- workflow state: `state:ready-for-dev`", markdown)
@@ -133,6 +203,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                 config,
                 None,
                 "2026-05-25T09:22:00",
+                "C:/target/repo",
             )
 
         self.assertIn("## References", markdown)
@@ -156,12 +227,13 @@ class HandlerObservabilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(handler, "LAUNCH_ARTIFACT_DIR", temp_dir):
                 with patch.object(handler, "REPO", "owner/repo"):
-                    brief_path = handler.write_launch_brief(
-                        item,
-                        "state:ready-for-dev",
-                        config,
-                        os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
-                    )
+                    with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                        brief_path = handler.write_launch_brief(
+                            item,
+                            "state:ready-for-dev",
+                            config,
+                            os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                        )
 
             self.assertTrue(os.path.isfile(brief_path))
             with open(brief_path, "r", encoding="utf-8") as generated_file:
@@ -170,6 +242,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("# Launch Brief", content)
         self.assertIn("## Assignment", content)
         self.assertIn("- repository: `owner/repo`", content)
+        self.assertIn("- target repo path: `C:/target/repo`", content)
         self.assertIn("- role/prompt file: `TheFarm\\roles\\developer.md`", content)
         self.assertNotIn("docs\\doctrine.md", content)
         self.assertNotIn("docs\\operations-status.md", content)

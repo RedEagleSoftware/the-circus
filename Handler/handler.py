@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import time
 from datetime import datetime
@@ -9,6 +10,7 @@ load_dotenv()
 
 # Configuration
 REPO = os.getenv("CIRCUS_REPO")  # Format: owner/repo
+TARGET_REPO_PATH = os.getenv("CIRCUS_TARGET_REPO_PATH")
 POLL_INTERVAL = 60  # seconds
 
 # Label to Agent Mapping
@@ -219,6 +221,85 @@ def build_codex_command(model):
     return f"codex --model {model}"
 
 
+def extract_github_repo_slug(value):
+    if not value:
+        return None
+
+    normalized = str(value).strip().replace("\\", "/")
+    if normalized.endswith(".git"):
+        normalized = normalized[: -len(".git")]
+
+    if "github.com/" in normalized:
+        return normalized.split("github.com/", 1)[1].strip("/").lower()
+
+    if "github.com:" in normalized:
+        return normalized.split("github.com:", 1)[1].strip("/").lower()
+
+    if re.match(r"^[^/]+/[^/]+$", normalized):
+        return normalized.lower()
+
+    return None
+
+
+def get_git_remote_origin_url(repo_path):
+    try:
+        result = subprocess.run(
+            ["git", "config", "--get", "remote.origin.url"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+    except (OSError, ValueError) as error:
+        print(f"[Startup] Warning: Unable to inspect git remote for '{repo_path}': {error}")
+        return None
+
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        if stderr:
+            print(f"[Startup] Warning: Unable to read git remote.origin.url for '{repo_path}': {stderr}")
+        else:
+            print(f"[Startup] Warning: Unable to read git remote.origin.url for '{repo_path}'.")
+        return None
+
+    remote_url = result.stdout.strip()
+    return remote_url or None
+
+
+def validate_target_repo_workspace(target_repo_path, expected_repo):
+    if not target_repo_path:
+        print("[Startup] Error: CIRCUS_TARGET_REPO_PATH is required.")
+        print("[Startup] Startup aborted: set CIRCUS_TARGET_REPO_PATH to a local target repository working copy.")
+        return False
+
+    if not os.path.exists(target_repo_path):
+        print(f"[Startup] Error: CIRCUS_TARGET_REPO_PATH does not exist: {target_repo_path}")
+        print("[Startup] Startup aborted: configure a valid existing target repository path.")
+        return False
+
+    if not os.path.isdir(target_repo_path):
+        print(f"[Startup] Error: CIRCUS_TARGET_REPO_PATH is not a directory: {target_repo_path}")
+        print("[Startup] Startup aborted: configure CIRCUS_TARGET_REPO_PATH to a repository directory.")
+        return False
+
+    git_dir = os.path.join(target_repo_path, ".git")
+    if not os.path.exists(git_dir):
+        print(f"[Startup] Error: CIRCUS_TARGET_REPO_PATH does not appear to be a git repository: {target_repo_path}")
+        print("[Startup] Startup aborted: expected a .git directory or file in the target repository path.")
+        return False
+
+    expected_slug = extract_github_repo_slug(expected_repo)
+    remote_url = get_git_remote_origin_url(target_repo_path)
+    remote_slug = extract_github_repo_slug(remote_url)
+    if expected_slug and remote_slug and expected_slug != remote_slug:
+        print(
+            f"[Startup] Warning: target repo remote appears to mismatch CIRCUS_REPO "
+            f"(expected '{expected_repo}', remote '{remote_url}')."
+        )
+
+    return True
+
+
 def sanitize_filename_part(value):
     safe = []
     for char in str(value).lower():
@@ -238,16 +319,34 @@ def normalize_path_for_display(path):
     return path.replace("\\", "/")
 
 
+def get_next_run_number(item_run_root):
+    next_run_number = 1
+
+    if not os.path.isdir(item_run_root):
+        return next_run_number
+
+    for entry in os.listdir(item_run_root):
+        match = re.match(r"^run-(\d+)-", entry)
+        if not match:
+            continue
+
+        run_number = int(match.group(1))
+        if run_number >= next_run_number:
+            next_run_number = run_number + 1
+
+    return next_run_number
+
+
 def build_launch_brief_path(item, mode):
-    run_dir = (
-        f"{sanitize_filename_part(item['type'])}-{item['number']}-"
-        f"{sanitize_filename_part(mode)}"
-    )
-    brief_path = os.path.normpath(os.path.join(LAUNCH_ARTIFACT_DIR, run_dir, "launch-brief.md"))
+    item_dir = f"{sanitize_filename_part(item['type'])}-{item['number']}"
+    item_run_root = os.path.normpath(os.path.join(LAUNCH_ARTIFACT_DIR, item_dir))
+    run_number = get_next_run_number(item_run_root)
+    run_dir = f"run-{run_number:03d}-{sanitize_filename_part(mode)}"
+    brief_path = os.path.normpath(os.path.join(item_run_root, run_dir, "launch-brief.md"))
     return normalize_path_for_display(brief_path)
 
 
-def build_launch_brief_markdown(item, state_label, config, role_prompt_path, timestamp):
+def build_launch_brief_markdown(item, state_label, config, role_prompt_path, timestamp, target_repo_path):
     # TODO: Discover target-repo agent instructions by convention (AGENTS.md,
     # .circus/roles/<mode>.md, .circus/workflows/<mode>.md) once routing contracts are finalized.
     references = []
@@ -259,6 +358,7 @@ def build_launch_brief_markdown(item, state_label, config, role_prompt_path, tim
         "",
         "## Assignment",
         f"- repository: `{REPO}`",
+        f"- target repo path: `{target_repo_path}`",
         f"- item type: `{item['type']}`",
         f"- item number: `{item['number']}`",
         f"- title: `{item['title']}`",
@@ -268,7 +368,7 @@ def build_launch_brief_markdown(item, state_label, config, role_prompt_path, tim
         f"- model: `{config['model']}`",
         f"- effort: `{config['effort']}`",
         f"- timestamp: `{timestamp}`",
-        "- generated-by: `Handler`",
+        "- generated-by: `Generated by Handler`",
         "",
         "## Source of Truth",
         "- GitHub issue/PR metadata is the source of truth.",
@@ -296,7 +396,14 @@ def build_launch_brief_markdown(item, state_label, config, role_prompt_path, tim
 def write_launch_brief(item, state_label, config, role_prompt_path):
     timestamp = datetime.now().isoformat(timespec="seconds")
     brief_path = build_launch_brief_path(item, config["mode"])
-    brief_content = build_launch_brief_markdown(item, state_label, config, role_prompt_path, timestamp)
+    brief_content = build_launch_brief_markdown(
+        item,
+        state_label,
+        config,
+        role_prompt_path,
+        timestamp,
+        TARGET_REPO_PATH or "<not configured>",
+    )
     os.makedirs(os.path.dirname(brief_path), exist_ok=True)
 
     with open(brief_path, "w", encoding="utf-8") as brief_file:
@@ -315,6 +422,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
 
     print(f"[Dispatch] Launching {agent} in {mode} mode with model={model}, effort={effort}")
     print(f"[Dispatch] Target item: {item['type']} #{number} - {item['title']}")
+    print(f"[Dispatch] Target repo path: {TARGET_REPO_PATH}")
     print(f"[Dispatch] Launch brief: {launch_brief_path}")
     print("[Dispatch] Generated thin prompt:")
     print(thin_prompt)
@@ -332,6 +440,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
     # One workflow step per agent invocation: dispatch once and stop.
     # TODO: Add a shared prompt-template handoff once role files are fully standardized.
     print(f"[Dispatch] Executing: {cmd}")
+    print("[Dispatch] TODO: Future execution should run from or explicitly pass CIRCUS_TARGET_REPO_PATH.")
     return True
 
 
@@ -392,6 +501,10 @@ def poll():
 
     print("[Handler] Starting Handler...")
     print(f"[Handler] Configured repository: {REPO}")
+    print(f"[Handler] Configured target repo path: {TARGET_REPO_PATH}")
+
+    if not validate_target_repo_workspace(TARGET_REPO_PATH, REPO):
+        return
 
     if not verify_github_repo_access():
         print("[Handler] Startup check failed. Exiting.")

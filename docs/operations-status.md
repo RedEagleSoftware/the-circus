@@ -9,6 +9,7 @@
 - Lock acquisition working
 - One-dispatch-then-exit behavior operational
 - Startup observability added
+- Manual workflow label synchronization command available (`python main.py --sync-labels`)
 
 ## Future Watchtower Concept
 
@@ -57,16 +58,34 @@
 - Prefer updating existing operational context over creating excessive historical records.
 
 ## Last Completed Work
-- Added explicit `--repo` handling
-- Added startup observability
-- Replaced gh label filtering with Python filtering
-- Added model/effort routing metadata
-- Refactor main.py into real entrypoint
+
+- Added manual workflow label synchronization using explicit `CIRCUS_REPO` targeting via `gh`.
+- Created launch brief artifact generation.
+- Grouped Watchtower runs by issue with numbered run history.
+- Added explicit target repository workspace configuration.
+- Added startup/polling observability and dispatch logging.
 
 ## Next Likely Tasks
 
-1. Create launch brief artifact generation.
-2. Pass launch brief artifact path to developer agent.
-3. Expand developer role doctrine.
-4. Add configurable workspace root.
-5. Explore subprocess execution.
+1. Pass launch brief artifact path to developer agent.
+2. Expand developer role doctrine.
+3. Explore subprocess execution.
+4. Add agent result/status artifacts to Watchtower runs.
+
+## Manual Label Sync Usage
+
+- Command: `python main.py --sync-labels`
+- Managed labels (non-destructive):
+  - `state:ready-for-architecture`
+  - `state:ready-for-dev`
+  - `state:ready-for-review`
+  - `state:ready-for-architect`
+  - `state:ready-for-randy`
+  - `state:changes-requested`
+  - `state:blocked`
+  - `state:agent-in-progress`
+- Behavior:
+  - Creates missing required labels.
+  - Updates color/description for required labels when they mismatch.
+  - Does not delete or rename unknown labels.
+  - Does not run during normal Handler polling.

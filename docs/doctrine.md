@@ -1,5 +1,14 @@
 # The Circus Operational Doctrine
 
+## Control Document Rules
+
+- `docs/doctrine.md` is operator-owned.
+- `docs/operations-status.md` is operator-owned.
+- Implementation agents may read these files for context.
+- Implementation agents must not directly edit these files unless the prompt explicitly authorizes it.
+- Agents may propose changes to operator-owned documents in a separate proposal artifact.
+- Usage instructions should live in README or dedicated docs, not in operational status unless explicitly requested.
+
 ## Principles
 
 - **Prompts should be thin**: Agent identity and behavior live in markdown files.
@@ -8,6 +17,14 @@
 - **Gradual Automation**: Start manual/sei-manual first, then automate.
 - **No Auto-merge**: Human review is critical.
 - **Locking**: Use `state:agent-in-progress` to prevent duplicate work.
+
+## Learning Principles
+
+- Agents may append issue-specific running notes.
+- Agents may propose updates to role or project guidance.
+- Agents must not silently modify their own role definitions.
+- Durable learning should be reviewed before becoming doctrine.
+- Prefer explicit proposed updates over hidden behavioral drift.
 
 ## Workspace Principles
 
