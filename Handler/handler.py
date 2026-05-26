@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from datetime import datetime
@@ -49,6 +50,13 @@ SHARED_ARTIFACT_PLACEHOLDERS = {
     "decision-log.md": "# Decision Log\n\nNo decisions have been recorded yet.",
 }
 
+AGENT_EXECUTABLE_ENV_OVERRIDES = {
+    "junie": "CIRCUS_JUNIE_EXECUTABLE",
+    "codex": "CIRCUS_CODEX_EXECUTABLE",
+}
+
+EXECUTABLE_PATHS = {}
+
 
 def run_command(cmd):
     result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
@@ -89,6 +97,78 @@ def verify_github_repo_access():
 
     print(f"[GitHub] Repo access confirmed: {repo_name}")
     return True
+
+
+def get_required_executables():
+    required = [("gh", None), ("git", None)]
+    configured_agents = {config.get("agent") for config in LABEL_MAP.values() if config.get("agent")}
+
+    for agent in sorted(configured_agents):
+        env_override = AGENT_EXECUTABLE_ENV_OVERRIDES.get(agent)
+        required.append((agent, env_override))
+
+    return required
+
+
+def resolve_executable_path(executable_name, env_override_name=None):
+    override_candidate = None
+    if env_override_name:
+        configured_override = os.getenv(env_override_name)
+        if configured_override:
+            override_candidate = configured_override.strip()
+
+    if override_candidate:
+        resolved_override = shutil.which(override_candidate)
+        if resolved_override:
+            return resolved_override, "env"
+        return None, "missing-env"
+
+    resolved_default = shutil.which(executable_name)
+    if resolved_default:
+        return resolved_default, "path"
+
+    return None, "missing-path"
+
+
+def validate_required_executables():
+    print("[Startup] Validating required executables...")
+
+    resolved_paths = {}
+    missing_messages = []
+
+    for executable_name, env_override_name in get_required_executables():
+        resolved_path, resolution_source = resolve_executable_path(executable_name, env_override_name)
+
+        if resolved_path:
+            if resolution_source == "env":
+                print(
+                    f"[Startup] Found executable '{executable_name}' via {env_override_name}: {resolved_path}"
+                )
+            else:
+                print(f"[Startup] Found executable '{executable_name}' at: {resolved_path}")
+
+            resolved_paths[executable_name] = resolved_path
+            continue
+
+        if resolution_source == "missing-env":
+            missing_messages.append(
+                f"[Startup] Error: {env_override_name} is set, but executable '{executable_name}' was not found "
+                f"for value '{os.getenv(env_override_name)}'."
+            )
+        else:
+            missing_messages.append(
+                f"[Startup] Error: missing required executable '{executable_name}'. "
+                "Install it or add it to PATH."
+            )
+
+    if missing_messages:
+        for message in missing_messages:
+            print(message)
+
+        print("[Startup] Startup aborted: required command-line tools are unavailable.")
+        return None
+
+    return resolved_paths
 
 
 def get_candidates(item_type, list_cmd):
@@ -194,9 +274,26 @@ def resolve_dispatch_config(item, labels):
     return primary_states[0], LABEL_MAP[primary_states[0]]
 
 
-def build_junie_command(number, model, effort):
-    # TODO: Confirm Junie CLI artifact/prompt-file input mechanism and include launch brief path directly once verified.
-    return f"junie --issue {number} --model {model} --effort {effort}"
+def build_junie_command(model, effort, project_path, task_text):
+    junie_executable = EXECUTABLE_PATHS.get("junie", "junie")
+    normalized_effort = str(effort).lower()
+    return [
+        junie_executable,
+        "--project",
+        str(project_path),
+        "--model",
+        str(model),
+        "--effort",
+        normalized_effort,
+        str(task_text),
+    ]
+
+
+def build_junie_task_text(absolute_launch_brief_path):
+    return (
+        f"Read the launch brief at {absolute_launch_brief_path} "
+        "and execute the assigned workflow."
+    )
 
 
 def resolve_role_prompt_path(mode):
@@ -248,7 +345,8 @@ def build_thin_prompt(item, state_label, mode, role_prompt_path, launch_brief_pa
 
 def build_codex_command(model):
     # TODO: Confirm Codex CLI non-interactive prompt/input mechanism in this environment, then pass thin prompt directly.
-    return f"codex --model {model}"
+    codex_executable = EXECUTABLE_PATHS.get("codex", "codex")
+    return f"{codex_executable} --model {model}"
 
 
 def extract_github_repo_slug(value):
@@ -495,23 +593,55 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
     print(thin_prompt)
 
     if agent == "junie":
-        cmd = build_junie_command(number, model, effort)
-        print(f"[Dispatch] Launch brief available at: {launch_brief_path}")
-        print("[Dispatch] Junie launch note: provide this launch brief path manually in Junie input for this run.")
-        print("[Dispatch] TODO: Confirm Junie preferred prompt/artifact input mechanism (e.g., prompt-file equivalent) and wire it into the generated command.")
+        absolute_launch_brief_path = os.path.abspath(launch_brief_path)
+        junie_task_text = build_junie_task_text(absolute_launch_brief_path)
+        cmd = build_junie_command(model, effort, TARGET_REPO_PATH or "", junie_task_text)
+        normalized_target_repo_path = normalize_path_for_display(TARGET_REPO_PATH) if TARGET_REPO_PATH else "<not configured>"
+        command_shape = (
+            f"{cmd[0]} --project {cmd[2]} --model {cmd[4]} --effort {cmd[6]} "
+            f"\"{cmd[7]}\""
+        )
+
+        print(f"[Dispatch] Launch brief display path: {launch_brief_path}")
+        print(f"[Dispatch] Launch brief absolute path: {absolute_launch_brief_path}")
+        print(f"[Dispatch] Junie target repo path: {normalized_target_repo_path}")
+        print("[Dispatch] Junie handoff path: passing short positional task argument.")
+        print(f"[Dispatch] Executing: {command_shape}")
+        print(f"[Dispatch] Junie execution cwd: {TARGET_REPO_PATH}")
+
+        try:
+            result = subprocess.run(cmd, cwd=TARGET_REPO_PATH, text=True)
+        except OSError as error:
+            item["prelaunch_error"] = str(error)
+            print(f"[Dispatch] Junie failed to launch before execution started: {error}")
+            return False
+
+        print(f"[Dispatch] Junie exit code: {result.returncode}")
+
+        if result.returncode != 0:
+            item["comment"] = (
+                f"Junie launched for {item['type']} #{number} and exited with non-zero status "
+                f"({result.returncode}). The lock label `{LOCK_LABEL}` remains in place for human inspection."
+            )
+            print(
+                f"[Dispatch] Junie exited non-zero for {item['type']} #{number}; "
+                "lock remains and human inspection is required."
+            )
+            add_comment(item)
+        else:
+            print(f"[Dispatch] Junie completed with exit code 0 for {item['type']} #{number}; lock remains in place.")
+
+        return True
     elif agent == "codex":
         print(f"[Dispatch] Codex routing metadata: mode={mode}, effort={effort}")
         print("[Dispatch] TODO: Pass this thin prompt as Codex initial input once the supported CLI mechanism is verified.")
         cmd = build_codex_command(model)
+        print(f"[Dispatch] Executing: {cmd}")
+        print("[Dispatch] TODO: Future execution should run from or explicitly pass CIRCUS_TARGET_REPO_PATH.")
+        return True
     else:
         print(f"[Dispatch] Unknown agent: {agent}")
         return False
-
-    # One workflow step per agent invocation: dispatch once and stop.
-    # TODO: Add a shared prompt-template handoff once role files are fully standardized.
-    print(f"[Dispatch] Executing: {cmd}")
-    print("[Dispatch] TODO: Future execution should run from or explicitly pass CIRCUS_TARGET_REPO_PATH.")
-    return True
 
 
 def process_one_item(items):
@@ -570,10 +700,31 @@ def process_one_item(items):
         if launch_agent(item, state_label, config, role_prompt_path, launch_brief_path):
             return True
 
+        prelaunch_error = item.get("prelaunch_error")
+        if prelaunch_error:
+            print(f"[Dispatch] Releasing lock for {item['type']} #{item['number']} due to launch failure...")
+            lock_released = unlock_item(item)
+
+            if lock_released:
+                print(f"[Dispatch] Lock cleanup succeeded for {item['type']} #{item['number']}.")
+            else:
+                print(f"[Dispatch] Lock cleanup failed for {item['type']} #{item['number']}; manual cleanup may be required.")
+
+            lock_result = "released" if lock_released else "could not be released"
+            item["comment"] = (
+                "Handler failed to start Junie before execution began "
+                f"({prelaunch_error}). The lock label `{LOCK_LABEL}` was {lock_result}."
+            )
+            add_comment(item)
+            item.pop("prelaunch_error", None)
+            continue
+
     return False
 
 
 def poll():
+    global EXECUTABLE_PATHS
+
     if not REPO:
         print("[Handler] Error: CIRCUS_REPO environment variable is required but not set. Expected format: owner/repo.")
         print("[Handler] Handler cannot continue without an explicit repository target.")
@@ -582,6 +733,12 @@ def poll():
     print("[Handler] Starting Handler...")
     print(f"[Handler] Configured repository: {REPO}")
     print(f"[Handler] Configured target repo path: {TARGET_REPO_PATH}")
+
+    resolved_executables = validate_required_executables()
+    if resolved_executables is None:
+        return
+
+    EXECUTABLE_PATHS = resolved_executables
 
     if not validate_target_repo_workspace(TARGET_REPO_PATH, REPO):
         return

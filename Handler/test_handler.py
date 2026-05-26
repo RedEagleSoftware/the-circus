@@ -1,12 +1,84 @@
 import unittest
 import tempfile
 import os
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import Handler.handler as handler
 
 
 class HandlerObservabilityTests(unittest.TestCase):
+    def setUp(self):
+        handler.EXECUTABLE_PATHS.clear()
+
+    def test_validate_required_executables_reports_found_paths(self):
+        def which_side_effect(command_name):
+            mapping = {
+                "gh": "C:/tools/gh.exe",
+                "git": "C:/tools/git.exe",
+                "junie": "C:/tools/junie.exe",
+                "codex": "C:/tools/codex.exe",
+            }
+            return mapping.get(command_name)
+
+        with patch.object(handler.shutil, "which", side_effect=which_side_effect):
+            with patch("builtins.print") as mock_print:
+                resolved = handler.validate_required_executables()
+
+        self.assertEqual(
+            resolved,
+            {
+                "gh": "C:/tools/gh.exe",
+                "git": "C:/tools/git.exe",
+                "junie": "C:/tools/junie.exe",
+                "codex": "C:/tools/codex.exe",
+            },
+        )
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("Found executable 'gh'" in line for line in printed_lines))
+        self.assertTrue(any("Found executable 'git'" in line for line in printed_lines))
+        self.assertTrue(any("Found executable 'junie'" in line for line in printed_lines))
+        self.assertTrue(any("Found executable 'codex'" in line for line in printed_lines))
+
+    def test_validate_required_executables_fails_when_required_tool_missing(self):
+        def which_side_effect(command_name):
+            mapping = {
+                "gh": "C:/tools/gh.exe",
+                "git": "C:/tools/git.exe",
+                "junie": None,
+                "codex": "C:/tools/codex.exe",
+            }
+            return mapping.get(command_name)
+
+        with patch.object(handler.shutil, "which", side_effect=which_side_effect):
+            with patch("builtins.print") as mock_print:
+                resolved = handler.validate_required_executables()
+
+        self.assertIsNone(resolved)
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("missing required executable 'junie'" in line for line in printed_lines))
+        self.assertTrue(any("Startup aborted" in line for line in printed_lines))
+
+    def test_validate_required_executables_prefers_env_override_for_junie(self):
+        def which_side_effect(command_name):
+            if command_name == "C:/custom/junie.exe":
+                return "C:/custom/junie.exe"
+
+            mapping = {
+                "gh": "C:/tools/gh.exe",
+                "git": "C:/tools/git.exe",
+                "codex": "C:/tools/codex.exe",
+            }
+            return mapping.get(command_name)
+
+        with patch.dict(os.environ, {"CIRCUS_JUNIE_EXECUTABLE": "C:/custom/junie.exe"}, clear=False):
+            with patch.object(handler.shutil, "which", side_effect=which_side_effect):
+                with patch("builtins.print") as mock_print:
+                    resolved = handler.validate_required_executables()
+
+        self.assertEqual(resolved["junie"], "C:/custom/junie.exe")
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("via CIRCUS_JUNIE_EXECUTABLE" in line for line in printed_lines))
+
     def test_validate_target_repo_workspace_missing_path(self):
         with patch("builtins.print") as mock_print:
             is_valid = handler.validate_target_repo_workspace(None, "owner/repo")
@@ -137,17 +209,44 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_unlock.assert_not_called()
         mock_add_comment.assert_not_called()
 
+    def test_process_one_item_releases_lock_when_junie_fails_before_start(self):
+        item = {
+            "type": "issue",
+            "number": 31,
+            "title": "Junie command unavailable",
+            "labels": [{"name": "state:ready-for-dev"}],
+        }
+        launch_brief_path = "Watchtower/runs/issue-31/run-001-developer/launch-brief.md"
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "lock_item", return_value=True):
+                with patch.object(handler, "write_launch_brief", return_value=launch_brief_path):
+                    with patch.object(handler.subprocess, "run", side_effect=FileNotFoundError("junie not found")):
+                        with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                            with patch.object(handler, "add_comment") as mock_add_comment:
+                                with patch("builtins.print") as mock_print:
+                                    dispatched = handler.process_one_item([item])
+
+        self.assertFalse(dispatched)
+        mock_unlock.assert_called_once_with(item)
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("failed to start Junie before execution began", item["comment"])
+        self.assertIn("The lock label `state:agent-in-progress` was released", item["comment"])
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("Junie failed to launch before execution started" in line for line in printed_lines))
+
     def test_poll_cycle_observability_when_idle(self):
         with patch.object(handler, "REPO", "owner/repo"):
             with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
-                with patch.object(handler, "validate_target_repo_workspace", return_value=True):
-                    with patch.object(handler, "verify_github_repo_access", return_value=True):
-                        with patch.object(handler, "get_labeled_items", return_value=([], [], [], True)):
-                            with patch.object(handler, "process_one_item", return_value=False):
-                                with patch("time.sleep", side_effect=SystemExit):
-                                    with patch("builtins.print") as mock_print:
-                                        with self.assertRaises(SystemExit):
-                                            handler.poll()
+                with patch.object(handler, "validate_required_executables", return_value={"gh": "gh", "git": "git", "junie": "junie", "codex": "codex"}):
+                    with patch.object(handler, "validate_target_repo_workspace", return_value=True):
+                        with patch.object(handler, "verify_github_repo_access", return_value=True):
+                            with patch.object(handler, "get_labeled_items", return_value=([], [], [], True)):
+                                with patch.object(handler, "process_one_item", return_value=False):
+                                    with patch("time.sleep", side_effect=SystemExit):
+                                        with patch("builtins.print") as mock_print:
+                                            with self.assertRaises(SystemExit):
+                                                handler.poll()
 
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("[Poll] Starting cycle #1..." in line for line in printed_lines))
@@ -182,7 +281,7 @@ class HandlerObservabilityTests(unittest.TestCase):
             prompt,
         )
 
-    def test_launch_agent_junie_preserves_flags_and_logs_manual_launch_brief_handoff(self):
+    def test_launch_agent_junie_runs_with_target_workspace_and_task_handoff(self):
         item = {
             "type": "issue",
             "number": 3,
@@ -196,26 +295,88 @@ class HandlerObservabilityTests(unittest.TestCase):
             "effort": "Medium",
         }
         launch_brief_path = "Watchtower/runs/issue-3/run-001-developer/launch-brief.md"
+        absolute_launch_brief_path = "C:/abs/Watchtower/runs/issue-3/run-001-developer/launch-brief.md"
 
         with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
-            with patch("builtins.print") as mock_print:
-                launched = handler.launch_agent(
-                    item,
-                    "state:ready-for-dev",
-                    config,
-                    os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
-                    launch_brief_path,
-                )
+            with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
+                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
+                    with patch("builtins.print") as mock_print:
+                        launched = handler.launch_agent(
+                            item,
+                            "state:ready-for-dev",
+                            config,
+                            os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                            launch_brief_path,
+                        )
 
         self.assertTrue(launched)
+        mock_subprocess_run.assert_called_once()
+        command = mock_subprocess_run.call_args.args[0]
+        self.assertEqual(command[0], "junie")
+        self.assertEqual(command[1:3], ["--project", "C:/target/repo"])
+        self.assertEqual(command[3:5], ["--model", "gpt-5.3-codex"])
+        self.assertEqual(command[5:7], ["--effort", "medium"])
+        self.assertEqual(
+            command[7],
+            f"Read the launch brief at {absolute_launch_brief_path} and execute the assigned workflow.",
+        )
+
+        self.assertEqual(mock_subprocess_run.call_args.kwargs["cwd"], "C:/target/repo")
+        self.assertTrue(mock_subprocess_run.call_args.kwargs["text"])
+        self.assertNotIn("input", mock_subprocess_run.call_args.kwargs)
+
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
-        self.assertTrue(any(f"[Dispatch] Launch brief available at: {launch_brief_path}" in line for line in printed_lines))
-        self.assertTrue(any("provide this launch brief path manually" in line for line in printed_lines))
-        self.assertTrue(any("Confirm Junie preferred prompt/artifact input mechanism" in line for line in printed_lines))
+        self.assertTrue(any(f"[Dispatch] Launch brief display path: {launch_brief_path}" in line for line in printed_lines))
+        self.assertTrue(
+            any(f"[Dispatch] Launch brief absolute path: {absolute_launch_brief_path}" in line for line in printed_lines)
+        )
+        self.assertTrue(any("[Dispatch] Junie target repo path: C:/target/repo" in line for line in printed_lines))
+        self.assertTrue(any("Junie handoff path: passing short positional task argument" in line for line in printed_lines))
+        self.assertTrue(any("[Dispatch] Junie execution cwd: C:/target/repo" in line for line in printed_lines))
+        self.assertTrue(any("[Dispatch] Junie exit code: 0" in line for line in printed_lines))
 
         executing_lines = [line for line in printed_lines if line.startswith("[Dispatch] Executing: ")]
-        self.assertEqual(executing_lines, ["[Dispatch] Executing: junie --issue 3 --model gpt-5.3-codex --effort Medium"])
+        self.assertEqual(len(executing_lines), 1)
+        self.assertIn("--project C:/target/repo", executing_lines[0])
+        self.assertIn("--model gpt-5.3-codex", executing_lines[0])
+        self.assertIn("--effort medium", executing_lines[0])
+        self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", executing_lines[0])
         self.assertFalse(any("--prompt-file" in line for line in executing_lines))
+
+    def test_launch_agent_junie_non_zero_exit_comments_for_human_inspection(self):
+        item = {
+            "type": "issue",
+            "number": 15,
+            "title": "Fix README implementation",
+            "url": "https://github.com/owner/repo/issues/15",
+        }
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-15/run-001-developer/launch-brief.md"
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler.subprocess, "run", return_value=Mock(returncode=7)):
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    with patch("builtins.print") as mock_print:
+                        launched = handler.launch_agent(
+                            item,
+                            "state:ready-for-dev",
+                            config,
+                            os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                            launch_brief_path,
+                        )
+
+        self.assertTrue(launched)
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("exited with non-zero status (7)", item["comment"])
+        self.assertIn("lock label `state:agent-in-progress` remains", item["comment"])
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("[Dispatch] Junie exit code: 7" in line for line in printed_lines))
+        self.assertTrue(any("human inspection is required" in line for line in printed_lines))
 
     def test_launch_agent_codex_command_remains_unchanged(self):
         item = {
@@ -232,16 +393,18 @@ class HandlerObservabilityTests(unittest.TestCase):
         }
 
         with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
-            with patch("builtins.print") as mock_print:
-                launched = handler.launch_agent(
-                    item,
-                    "state:ready-for-review",
-                    config,
-                    os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
-                    "Watchtower/runs/issue-9/run-001-reviewer/launch-brief.md",
-                )
+            with patch.object(handler.subprocess, "run") as mock_subprocess_run:
+                with patch("builtins.print") as mock_print:
+                    launched = handler.launch_agent(
+                        item,
+                        "state:ready-for-review",
+                        config,
+                        os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
+                        "Watchtower/runs/issue-9/run-001-reviewer/launch-brief.md",
+                    )
 
         self.assertTrue(launched)
+        mock_subprocess_run.assert_not_called()
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("[Dispatch] Executing: codex --model gpt-5.3-codex" in line for line in printed_lines))
 
