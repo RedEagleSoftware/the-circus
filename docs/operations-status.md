@@ -56,4 +56,24 @@
 - When "Next Likely Tasks" drops below ~2 items, schedule a new planning/review session.
 - Prefer updating existing operational context over creating excessive historical records.
 
-\
+## Last Completed Work
+
+- Added explicit target repository workspace configuration.
+- Synchronized required workflow labels to target repositories.
+- Define issue-level shared handoff artifacts.
+- Pass launch brief and handoff context to developer agent
+- Create v1 orchestration proposal/specification document.
+- Expand architect role doctrine.
+- 
+## Current Task
+
+- Enable architect execution flow.
+
+
+## Next Likely Tasks
+
+1. Generate architecture handoff artifacts from architect runs.
+2. Route developer implementation context through architecture handoffs.
+3. Add agent result/status artifacts to Watchtower runs.
+4. Add target-repo instruction discovery conventions.
+5. Explore broader subprocess execution patterns.
