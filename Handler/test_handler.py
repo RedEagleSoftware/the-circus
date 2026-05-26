@@ -378,7 +378,76 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertTrue(any("[Dispatch] Junie exit code: 7" in line for line in printed_lines))
         self.assertTrue(any("human inspection is required" in line for line in printed_lines))
 
-    def test_launch_agent_codex_command_remains_unchanged(self):
+    def test_build_codex_architect_task_text_includes_handoff_and_comment_requirements(self):
+        task_text = handler.build_codex_architect_task_text("C:/abs/Watchtower/runs/issue-9/run-001-architect/launch-brief.md")
+
+        self.assertIn(
+            "Read the launch brief at C:/abs/Watchtower/runs/issue-9/run-001-architect/launch-brief.md",
+            task_text,
+        )
+        self.assertIn("execute the architect workflow", task_text)
+        self.assertIn("Produce or update the architecture handoff artifact", task_text)
+        self.assertIn("leave a GitHub comment summarizing the handoff or blocker", task_text)
+
+    def test_launch_agent_codex_architect_runs_with_exec_cd_and_task_handoff(self):
+        item = {
+            "type": "issue",
+            "number": 9,
+            "title": "Define architecture handoff",
+            "url": "https://github.com/owner/repo/issues/9",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "architect",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-9/run-001-architect/launch-brief.md"
+        absolute_launch_brief_path = "C:/abs/Watchtower/runs/issue-9/run-001-architect/launch-brief.md"
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
+                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
+                    with patch("builtins.print") as mock_print:
+                        launched = handler.launch_agent(
+                            item,
+                            "state:ready-for-architecture",
+                            config,
+                            os.path.normpath(os.path.join("TheFarm", "roles", "architect.md")),
+                            launch_brief_path,
+                        )
+
+        self.assertTrue(launched)
+        mock_subprocess_run.assert_called_once()
+        command = mock_subprocess_run.call_args.args[0]
+        self.assertEqual(command[0], "codex")
+        self.assertEqual(command[1], "exec")
+        self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
+        self.assertEqual(command[4:6], ["--cd", "C:/target/repo"])
+        self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", command[6])
+        self.assertIn("execute the architect workflow", command[6])
+        self.assertIn("Produce or update the architecture handoff artifact", command[6])
+        self.assertIn("leave a GitHub comment summarizing the handoff or blocker", command[6])
+
+        self.assertEqual(mock_subprocess_run.call_args.kwargs["cwd"], "C:/target/repo")
+        self.assertTrue(mock_subprocess_run.call_args.kwargs["text"])
+
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any(f"[Dispatch] Launch brief display path: {launch_brief_path}" in line for line in printed_lines))
+        self.assertTrue(
+            any(f"[Dispatch] Launch brief absolute path: {absolute_launch_brief_path}" in line for line in printed_lines)
+        )
+        self.assertTrue(any("[Dispatch] Codex target repo path: C:/target/repo" in line for line in printed_lines))
+        self.assertTrue(any("Codex handoff path: passing short positional prompt argument" in line for line in printed_lines))
+        self.assertTrue(any("[Dispatch] Codex execution cwd: C:/target/repo" in line for line in printed_lines))
+        self.assertTrue(any("[Dispatch] Codex exit code: 0" in line for line in printed_lines))
+
+        executing_lines = [line for line in printed_lines if line.startswith("[Dispatch] Executing: ")]
+        self.assertEqual(len(executing_lines), 1)
+        self.assertIn("codex exec --model gpt-5.3-codex --cd C:/target/repo", executing_lines[0])
+        self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", executing_lines[0])
+
+    def test_launch_agent_codex_non_architect_mode_remains_non_executing_placeholder(self):
         item = {
             "type": "issue",
             "number": 9,
@@ -406,7 +475,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertTrue(launched)
         mock_subprocess_run.assert_not_called()
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
-        self.assertTrue(any("[Dispatch] Executing: codex --model gpt-5.3-codex" in line for line in printed_lines))
+        self.assertTrue(any("Codex execution flow currently enabled only for architect mode" in line for line in printed_lines))
 
     def test_build_launch_brief_path_is_predictable(self):
         item = {"type": "issue", "number": 3}

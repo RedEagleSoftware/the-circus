@@ -296,6 +296,14 @@ def build_junie_task_text(absolute_launch_brief_path):
     )
 
 
+def build_codex_architect_task_text(absolute_launch_brief_path):
+    return (
+        f"Read the launch brief at {absolute_launch_brief_path} and execute the architect workflow. "
+        "Produce or update the architecture handoff artifact referenced by the launch brief. "
+        "Then leave a GitHub comment summarizing the handoff or blocker."
+    )
+
+
 def resolve_role_prompt_path(mode):
     candidates = [os.path.join("TheFarm", "roles", f"{mode}.md")]
     if mode.endswith("-approval"):
@@ -343,10 +351,17 @@ def build_thin_prompt(item, state_label, mode, role_prompt_path, launch_brief_pa
     return "\n".join(prompt_lines)
 
 
-def build_codex_command(model):
-    # TODO: Confirm Codex CLI non-interactive prompt/input mechanism in this environment, then pass thin prompt directly.
+def build_codex_command(model, project_path, task_text):
     codex_executable = EXECUTABLE_PATHS.get("codex", "codex")
-    return f"{codex_executable} --model {model}"
+    return [
+        codex_executable,
+        "exec",
+        "--model",
+        str(model),
+        "--cd",
+        str(project_path),
+        str(task_text),
+    ]
 
 
 def extract_github_repo_slug(value):
@@ -634,10 +649,45 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         return True
     elif agent == "codex":
         print(f"[Dispatch] Codex routing metadata: mode={mode}, effort={effort}")
-        print("[Dispatch] TODO: Pass this thin prompt as Codex initial input once the supported CLI mechanism is verified.")
-        cmd = build_codex_command(model)
-        print(f"[Dispatch] Executing: {cmd}")
-        print("[Dispatch] TODO: Future execution should run from or explicitly pass CIRCUS_TARGET_REPO_PATH.")
+        if mode != "architect":
+            print("[Dispatch] TODO: Codex execution flow currently enabled only for architect mode.")
+            return True
+
+        absolute_launch_brief_path = os.path.abspath(launch_brief_path)
+        codex_task_text = build_codex_architect_task_text(absolute_launch_brief_path)
+        cmd = build_codex_command(model, TARGET_REPO_PATH or "", codex_task_text)
+        normalized_target_repo_path = normalize_path_for_display(TARGET_REPO_PATH) if TARGET_REPO_PATH else "<not configured>"
+        command_shape = f"{cmd[0]} {cmd[1]} {cmd[2]} {cmd[3]} {cmd[4]} {cmd[5]} \"{cmd[6]}\""
+
+        print(f"[Dispatch] Launch brief display path: {launch_brief_path}")
+        print(f"[Dispatch] Launch brief absolute path: {absolute_launch_brief_path}")
+        print(f"[Dispatch] Codex target repo path: {normalized_target_repo_path}")
+        print("[Dispatch] Codex handoff path: passing short positional prompt argument.")
+        print(f"[Dispatch] Executing: {command_shape}")
+        print(f"[Dispatch] Codex execution cwd: {TARGET_REPO_PATH}")
+
+        try:
+            result = subprocess.run(cmd, cwd=TARGET_REPO_PATH, text=True)
+        except OSError as error:
+            item["prelaunch_error"] = str(error)
+            print(f"[Dispatch] Codex failed to launch before execution started: {error}")
+            return False
+
+        print(f"[Dispatch] Codex exit code: {result.returncode}")
+
+        if result.returncode != 0:
+            item["comment"] = (
+                f"Codex launched for {item['type']} #{number} and exited with non-zero status "
+                f"({result.returncode}). The lock label `{LOCK_LABEL}` remains in place for human inspection."
+            )
+            print(
+                f"[Dispatch] Codex exited non-zero for {item['type']} #{number}; "
+                "lock remains and human inspection is required."
+            )
+            add_comment(item)
+        else:
+            print(f"[Dispatch] Codex completed with exit code 0 for {item['type']} #{number}; lock remains in place.")
+
         return True
     else:
         print(f"[Dispatch] Unknown agent: {agent}")

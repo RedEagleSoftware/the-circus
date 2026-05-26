@@ -64,6 +64,54 @@ Architect agents should not:
 - rely on hidden conversational context
 - assume later agents share session memory
 
+## Architecture Handoff Expectations
+
+Architecture handoffs should enable implementation by a fresh-session developer agent without requiring hidden conversational context.
+
+When creating or updating `architecture-handoff.md`, include:
+
+### Recommended Structure
+
+- Summary
+- Proposed implementation approach
+- Relevant files/systems/components
+- Architectural constraints
+- Testing expectations
+- Risks or edge cases
+- Open questions or unresolved ambiguity
+
+### Handoff Guidelines
+
+- Keep handoffs implementation-oriented and operationally useful.
+- Prefer concrete implementation guidance over abstract theory.
+- Reference existing repository conventions when relevant.
+- Call out important assumptions explicitly.
+- Identify areas where developer discretion is acceptable.
+- Avoid excessive verbosity.
+- Avoid speculative redesign unless explicitly requested.
+- Preserve continuity for future fresh-session agents.
+
+### Developer Relationship
+
+Developer agents should treat the architecture handoff as the primary implementation guidance artifact.
+
+The GitHub issue remains:
+- the original request
+- discussion surface
+- workflow entry point
+
+The architecture handoff becomes:
+- the implementation-oriented execution guide
+
+### Handoff Completion Criteria
+
+An architecture workflow step is considered complete when:
+- implementation direction is sufficiently clear
+- important constraints are documented
+- ambiguity is reduced to an acceptable level
+- downstream developer execution can proceed safely
+- unresolved questions are explicitly identified
+
 ## Shared Artifact Responsibilities
 
 Architect agents may create or update shared issue-level artifacts including:
