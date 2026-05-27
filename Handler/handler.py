@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from datetime import datetime
 from dotenv import load_dotenv
@@ -408,6 +409,30 @@ def add_developer_pr_failure_comment(item, details):
     add_comment(item)
 
 
+def create_pull_request_with_body_file(branch_name, pr_title, pr_body):
+    temp_body_file_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".md", delete=False) as body_file:
+            body_file.write(pr_body)
+            temp_body_file_path = body_file.name
+
+        create_pr_cmd = (
+            f"gh pr create --repo {REPO} --head {json.dumps(branch_name)} "
+            f"--title {json.dumps(pr_title)} --body-file {json.dumps(temp_body_file_path)}"
+        )
+        return run_command(create_pr_cmd)
+    finally:
+        if temp_body_file_path and os.path.exists(temp_body_file_path):
+            try:
+                os.remove(temp_body_file_path)
+            except OSError as error:
+                print(
+                    f"[Dispatch] Warning: unable to remove temporary PR body file "
+                    f"'{temp_body_file_path}': {error}"
+                )
+
+
 def finalize_developer_success_with_pull_request(item, launch_brief_path):
     repo_path = TARGET_REPO_PATH
     if not repo_path:
@@ -493,11 +518,7 @@ def finalize_developer_success_with_pull_request(item, launch_brief_path):
     pr_title = build_developer_pr_title(item)
     pr_body = build_developer_pr_body(item, launch_brief_path)
     print(f"[Dispatch] Creating pull request with title: {pr_title}")
-    create_pr_cmd = (
-        f"gh pr create --repo {REPO} --head {json.dumps(developer_branch)} "
-        f"--title {json.dumps(pr_title)} --body {json.dumps(pr_body)}"
-    )
-    create_result = run_command(create_pr_cmd)
+    create_result = create_pull_request_with_body_file(developer_branch, pr_title, pr_body)
     if create_result is None:
         print(f"[Dispatch] Failed to create pull request for branch '{developer_branch}'.")
         add_developer_pr_failure_comment(item, "unable to create pull request")

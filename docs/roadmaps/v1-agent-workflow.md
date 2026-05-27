@@ -103,7 +103,7 @@ over hidden inference and automation.
 - `state:ready-for-dev`
 - `state:review-requested`
 - `state:ready-for-architect`
-- `state:ready-for-randy`
+- `state:ready-for-human-review`
 - `state:blocked`
 - `state:agent-in-progress`
 

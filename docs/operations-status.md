@@ -27,7 +27,7 @@
 - state:ready-for-dev
 - state:ready-for-review
 - state:ready-for-architect
-- state:ready-for-randy
+- state:ready-for-human-review
 - state:changes-requested
 - state:blocked
 - state:agent-in-progress

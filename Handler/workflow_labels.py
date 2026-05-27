@@ -15,7 +15,7 @@ REQUIRED_WORKFLOW_LABELS = {
         "description": "Ready for architect approval after review.",
         "color": "1D76DB",
     },
-    "state:ready-for-randy": {
+    "state:ready-for-human-review": {
         "description": "Ready for final human review.",
         "color": "FBCA04",
     },

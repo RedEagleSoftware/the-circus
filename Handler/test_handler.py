@@ -1,6 +1,8 @@
 import unittest
 import tempfile
 import os
+import json
+import re
 from unittest.mock import Mock, patch
 
 import Handler.handler as handler
@@ -615,9 +617,48 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(len(mock_run_command.call_args_list), 2)
         self.assertIn("gh pr list --repo owner/repo", mock_run_command.call_args_list[0].args[0])
         self.assertIn("gh pr create --repo owner/repo", mock_run_command.call_args_list[1].args[0])
+        self.assertIn("--body-file", mock_run_command.call_args_list[1].args[0])
+        self.assertNotIn("--body ", mock_run_command.call_args_list[1].args[0])
         self.assertIn('"Issue #31: Add PR automation"', mock_run_command.call_args_list[1].args[0])
         mock_advance.assert_called_once_with(item)
         mock_add_comment.assert_not_called()
+
+    def test_create_pull_request_with_body_file_writes_real_newlines_and_cleans_up_temp_file(self):
+        captured = {}
+
+        pr_body = "Closes #2\n\n## Linked Issue\n- https://github.com/owner/repo/issues/2\n"
+
+        def fake_run_command(cmd):
+            captured["command"] = cmd
+
+            self.assertIn("gh pr create --repo owner/repo", cmd)
+            self.assertIn("--body-file", cmd)
+            self.assertNotIn("--body ", cmd)
+
+            body_file_match = re.search(r'--body-file ("(?:[^"\\]|\\.)*")', cmd)
+            self.assertIsNotNone(body_file_match)
+
+            body_file_path = json.loads(body_file_match.group(1))
+            captured["body_file_path"] = body_file_path
+
+            with open(body_file_path, "r", encoding="utf-8") as body_file:
+                captured["body_file_contents"] = body_file.read()
+
+            return "https://github.com/owner/repo/pull/98"
+
+        with patch.object(handler, "REPO", "owner/repo"):
+            with patch.object(handler, "run_command", side_effect=fake_run_command):
+                pr_url = handler.create_pull_request_with_body_file(
+                    "circus/issue-2-real-newlines",
+                    "Issue #2: Preserve markdown newlines",
+                    pr_body,
+                )
+
+        self.assertEqual(pr_url, "https://github.com/owner/repo/pull/98")
+        self.assertEqual(captured["body_file_contents"], pr_body)
+        self.assertIn("\n## Linked Issue\n", captured["body_file_contents"])
+        self.assertNotIn("\\n", captured["body_file_contents"])
+        self.assertFalse(os.path.exists(captured["body_file_path"]))
 
     def test_finalize_developer_success_reuses_existing_pr_without_duplicate_creation(self):
         item = {

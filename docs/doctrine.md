@@ -67,7 +67,7 @@
 - `state:ready-for-dev` -> Junie Developer
 - `state:ready-for-review` -> Codex PR Reviewer
 - `state:ready-for-architect` -> Codex Architect Approval
-- `state:ready-for-randy` -> Human Review
+- `state:ready-for-human-review` -> Human Review
 
 ## Tool Stack
 
@@ -106,5 +106,5 @@
 - Each issue/PR should have exactly one primary `state:*` label.
 - `state:agent-in-progress` is a lock label and may coexist with one primary state.
 - `state:blocked` is terminal until a human removes it.
-- `state:ready-for-randy` is human-owned and should not be dispatched automatically.
+- `state:ready-for-human-review` is human-owned and should not be dispatched automatically.
 - `state:changes-requested` routes back to development.
