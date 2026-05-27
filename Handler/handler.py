@@ -32,6 +32,12 @@ LABEL_MAP = {
         "model": "gpt-5.3-codex",
         "effort": "Medium",
     },
+    "state:changes-requested": {
+        "agent": "junie",
+        "mode": "developer",
+        "model": "gpt-5.3-codex",
+        "effort": "Medium",
+    },
     "state:ready-for-review": {
         "agent": "codex",
         "mode": "reviewer",
@@ -317,10 +323,10 @@ def advance_architect_workflow_on_success(item):
     )
 
 
-def advance_developer_workflow_on_success(item):
+def advance_developer_workflow_on_success(item, from_state_label="state:ready-for-dev"):
     transition_steps = [
         ("remove", LOCK_LABEL),
-        ("remove", "state:ready-for-dev"),
+        ("remove", from_state_label),
         ("add", "state:ready-for-review"),
     ]
 
@@ -340,14 +346,14 @@ def advance_reviewer_workflow_on_approved(item):
     transition_steps = [
         ("remove", LOCK_LABEL),
         ("remove", "state:ready-for-review"),
-        ("add", "state:ready-for-human-review"),
+        ("add", "state:ready-for-architect-review"),
     ]
 
     return execute_label_transition(
         item,
         workflow_name="Reviewer",
         transition_steps=transition_steps,
-        success_message="[Dispatch] Workflow advanced to human review stage for issue #{number}.",
+        success_message="[Dispatch] Implementation review passed; workflow advanced to architect review stage for issue #{number}.",
         failure_message=(
             "[Dispatch] Reviewer workflow transition encountered label update failures for issue #{number}; "
             "manual inspection is required."
@@ -372,6 +378,27 @@ def advance_reviewer_workflow_on_changes_requested(item):
             "manual inspection is required."
         ),
     )
+
+
+def append_reviewer_feedback_note(item_run_root, review_result_path, review_pr_url=None):
+    shared_context_paths = build_shared_context_paths(item_run_root)
+    running_notes_path = shared_context_paths["running_notes"]
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    note_lines = [
+        "",
+        f"## Reviewer Follow-up ({timestamp})",
+        f"- latest review result: `{normalize_path_for_display(review_result_path)}`",
+    ]
+
+    if review_pr_url:
+        note_lines.append(f"- review discussion: {review_pr_url}")
+
+    note_lines.append("- status: reviewer requested implementation changes; use this artifact during follow-up development.")
+
+    with open(running_notes_path, "a", encoding="utf-8") as running_notes_file:
+        running_notes_file.write("\n".join(note_lines) + "\n")
+
+    return running_notes_path
 
 
 def build_developer_commit_message(item):
@@ -520,7 +547,7 @@ def create_pull_request_with_body_file(branch_name, pr_title, pr_body):
                 )
 
 
-def finalize_developer_success_with_pull_request(item, launch_brief_path):
+def finalize_developer_success_with_pull_request(item, launch_brief_path, from_state_label="state:ready-for-dev"):
     repo_path = TARGET_REPO_PATH
     if not repo_path:
         print("[Dispatch] Cannot finalize developer success: CIRCUS_TARGET_REPO_PATH is not configured.")
@@ -598,7 +625,7 @@ def finalize_developer_success_with_pull_request(item, launch_brief_path):
     existing_pr_url = existing_pr.get("url")
     if existing_pr_url:
         print(f"[Dispatch] Existing pull request found for branch '{developer_branch}': {existing_pr_url}")
-        transition_ok = advance_developer_workflow_on_success(item)
+        transition_ok = advance_developer_workflow_on_success(item, from_state_label=from_state_label)
         print(f"[Dispatch] Label transition result after confirming existing PR: {transition_ok}")
         return transition_ok
 
@@ -615,7 +642,7 @@ def finalize_developer_success_with_pull_request(item, launch_brief_path):
     pr_url = pr_url_match.group(0) if pr_url_match else create_result.strip()
     print(f"[Dispatch] Pull request ready for branch '{developer_branch}': {pr_url}")
 
-    transition_ok = advance_developer_workflow_on_success(item)
+    transition_ok = advance_developer_workflow_on_success(item, from_state_label=from_state_label)
     print(f"[Dispatch] Label transition result after PR creation: {transition_ok}")
     return transition_ok
 
@@ -1434,8 +1461,12 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             return False
         else:
             item.pop("agent_exit_non_zero", None)
-            if mode == "developer" and state_label == "state:ready-for-dev":
-                return finalize_developer_success_with_pull_request(item, launch_brief_path)
+            if mode == "developer" and state_label in {"state:ready-for-dev", "state:changes-requested"}:
+                return finalize_developer_success_with_pull_request(
+                    item,
+                    launch_brief_path,
+                    from_state_label=state_label,
+                )
 
             print(f"[Dispatch] Junie completed with exit code 0 for {item['type']} #{number}; lock remains in place.")
             return True
@@ -1545,6 +1576,8 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
 
             if review_outcome == "CHANGES_REQUESTED":
                 print("[Dispatch] Review result handling: CHANGES_REQUESTED.")
+                running_notes_path = append_reviewer_feedback_note(item_run_root, review_result_path, review_pr_url)
+                print(f"[Dispatch] Reviewer feedback context appended to running notes: {running_notes_path}")
                 return advance_reviewer_workflow_on_changes_requested(item)
 
             if review_outcome == "BLOCKED":

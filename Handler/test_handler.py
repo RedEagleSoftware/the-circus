@@ -504,7 +504,11 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(mock_subprocess_run.call_args.kwargs["cwd"], "C:/target/repo")
         self.assertTrue(mock_subprocess_run.call_args.kwargs["text"])
         self.assertNotIn("input", mock_subprocess_run.call_args.kwargs)
-        mock_finalize.assert_called_once_with(item, launch_brief_path)
+        mock_finalize.assert_called_once_with(
+            item,
+            launch_brief_path,
+            from_state_label="state:ready-for-dev",
+        )
 
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any(f"[Dispatch] Launch brief display path: {launch_brief_path}" in line for line in printed_lines))
@@ -593,6 +597,44 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_finalize.assert_called_once_with(
             item,
             "Watchtower/runs/issue-16/run-001-developer/launch-brief.md",
+            from_state_label="state:ready-for-dev",
+        )
+
+    def test_launch_agent_junie_changes_requested_success_runs_post_run_pr_flow(self):
+        item = {
+            "type": "issue",
+            "number": 66,
+            "title": "Implement review follow-up",
+            "url": "https://github.com/owner/repo/issues/66",
+        }
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler.os.path, "abspath", return_value="C:/abs/brief.md"):
+                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                    with patch.object(
+                        handler,
+                        "finalize_developer_success_with_pull_request",
+                        return_value=True,
+                    ) as mock_finalize:
+                        launched = handler.launch_agent(
+                            item,
+                            "state:changes-requested",
+                            config,
+                            os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                            "Watchtower/runs/issue-66/run-002-developer/launch-brief.md",
+                        )
+
+        self.assertTrue(launched)
+        mock_finalize.assert_called_once_with(
+            item,
+            "Watchtower/runs/issue-66/run-002-developer/launch-brief.md",
+            from_state_label="state:changes-requested",
         )
 
     def test_launch_agent_junie_developer_non_zero_exit_does_not_advance_workflow_labels(self):
@@ -673,7 +715,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("--body-file", mock_run_command.call_args_list[1].args[0])
         self.assertNotIn("--body ", mock_run_command.call_args_list[1].args[0])
         self.assertIn('"Issue #31: Add PR automation"', mock_run_command.call_args_list[1].args[0])
-        mock_advance.assert_called_once_with(item)
+        mock_advance.assert_called_once_with(item, from_state_label="state:ready-for-dev")
         mock_add_comment.assert_not_called()
 
     def test_create_pull_request_with_body_file_writes_real_newlines_and_cleans_up_temp_file(self):
@@ -745,7 +787,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(len(mock_run_command.call_args_list), 1)
         self.assertIn("gh pr list --repo owner/repo", mock_run_command.call_args_list[0].args[0])
         self.assertNotIn("gh pr create", mock_run_command.call_args_list[0].args[0])
-        mock_advance.assert_called_once_with(item)
+        mock_advance.assert_called_once_with(item, from_state_label="state:ready-for-dev")
 
     def test_finalize_developer_success_push_failure_prevents_transition(self):
         item = {
@@ -1173,6 +1215,98 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertTrue(any("Adding label: state:ready-for-review" in line for line in printed_lines))
         self.assertTrue(any("Workflow advanced to review stage for issue #4." in line for line in printed_lines))
 
+    def test_advance_developer_workflow_on_success_from_changes_requested_transitions_labels(self):
+        item = {
+            "type": "issue",
+            "number": 40,
+            "title": "Developer follow-up complete",
+        }
+
+        with patch.object(handler, "REPO", "owner/repo"):
+            with patch.object(handler, "run_command", return_value="") as mock_run_command:
+                transitioned = handler.advance_developer_workflow_on_success(
+                    item,
+                    from_state_label="state:changes-requested",
+                )
+
+        self.assertTrue(transitioned)
+        self.assertEqual(
+            mock_run_command.call_args_list,
+            [
+                unittest.mock.call(
+                    'gh issue edit 40 --repo owner/repo --remove-label "state:agent-in-progress"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 40 --repo owner/repo --remove-label "state:changes-requested"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 40 --repo owner/repo --add-label "state:ready-for-review"'
+                ),
+            ],
+        )
+
+    def test_advance_reviewer_workflow_on_approved_transitions_to_architect_review(self):
+        item = {
+            "type": "issue",
+            "number": 11,
+            "title": "Review complete",
+        }
+
+        with patch.object(handler, "REPO", "owner/repo"):
+            with patch.object(handler, "run_command", return_value="") as mock_run_command:
+                with patch("builtins.print") as mock_print:
+                    transitioned = handler.advance_reviewer_workflow_on_approved(item)
+
+        self.assertTrue(transitioned)
+        self.assertEqual(
+            mock_run_command.call_args_list,
+            [
+                unittest.mock.call(
+                    'gh issue edit 11 --repo owner/repo --remove-label "state:agent-in-progress"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 11 --repo owner/repo --remove-label "state:ready-for-review"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 11 --repo owner/repo --add-label "state:ready-for-architect-review"'
+                ),
+            ],
+        )
+
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("Implementation review passed" in line for line in printed_lines))
+        self.assertFalse(any("state:ready-for-human-review" in line for line in printed_lines))
+
+    def test_append_reviewer_feedback_note_does_not_overwrite_architecture_handoff(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            item_run_root = os.path.join(temp_dir, "issue-11")
+            shared_paths = handler.ensure_shared_artifacts(item_run_root)
+            architecture_handoff_path = shared_paths["architecture_handoff"]
+            running_notes_path = shared_paths["running_notes"]
+
+            original_handoff_contents = "# Architecture Handoff\n\nKeep this guidance.\n"
+            with open(architecture_handoff_path, "w", encoding="utf-8") as architecture_handoff_file:
+                architecture_handoff_file.write(original_handoff_contents)
+
+            review_result_path = os.path.join(item_run_root, "run-002-reviewer", "review-result.md")
+            appended_path = handler.append_reviewer_feedback_note(
+                item_run_root,
+                review_result_path,
+                review_pr_url="https://github.com/owner/repo/pull/101",
+            )
+
+            with open(architecture_handoff_path, "r", encoding="utf-8") as architecture_handoff_file:
+                current_handoff_contents = architecture_handoff_file.read()
+
+            with open(running_notes_path, "r", encoding="utf-8") as running_notes_file:
+                running_notes_contents = running_notes_file.read()
+
+        self.assertEqual(appended_path, running_notes_path)
+        self.assertEqual(current_handoff_contents, original_handoff_contents)
+        self.assertIn("latest review result", running_notes_contents)
+        self.assertIn(handler.normalize_path_for_display(review_result_path), running_notes_contents)
+        self.assertIn("https://github.com/owner/repo/pull/101", running_notes_contents)
+
     def test_find_open_review_pr_for_issue_prefers_closes_marker(self):
         payload = json.dumps(
             [
@@ -1407,25 +1541,31 @@ class HandlerObservabilityTests(unittest.TestCase):
             "effort": "Medium",
         }
 
+        review_result_path = "Watchtower/runs/issue-10/run-001-reviewer/review-result.md"
+
         with patch.dict(os.environ, {}, clear=True):
             with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
-                with patch.object(handler, "build_reviewer_result_path", return_value="Watchtower/runs/issue-10/run-001-reviewer/review-result.md"):
+                with patch.object(handler, "build_reviewer_result_path", return_value=review_result_path):
                     with patch.object(handler.os.path, "exists", return_value=True):
                         with patch.object(handler, "parse_review_result_outcome", return_value="CHANGES_REQUESTED"):
                             with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
                                 with patch.object(handler, "advance_reviewer_workflow_on_approved") as mock_approved:
                                     with patch.object(handler, "advance_reviewer_workflow_on_changes_requested", return_value=True) as mock_changes:
-                                        launched = handler.launch_agent(
-                                            item,
-                                            "state:ready-for-review",
-                                            config,
-                                            os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
-                                            "Watchtower/runs/issue-10/run-001-reviewer/launch-brief.md",
-                                        )
+                                        with patch.object(handler, "append_reviewer_feedback_note", return_value="Watchtower/runs/issue-10/shared/running-notes.md") as mock_append_feedback:
+                                            launched = handler.launch_agent(
+                                                item,
+                                                "state:ready-for-review",
+                                                config,
+                                                os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
+                                                "Watchtower/runs/issue-10/run-001-reviewer/launch-brief.md",
+                                            )
 
         self.assertTrue(launched)
         mock_approved.assert_not_called()
         mock_changes.assert_called_once_with(item)
+        mock_append_feedback.assert_called_once()
+        self.assertEqual(mock_append_feedback.call_args.args[1], review_result_path)
+        self.assertEqual(mock_append_feedback.call_args.args[2], "https://github.com/owner/repo/pull/88")
 
     def test_launch_agent_codex_reviewer_missing_review_result_artifact_does_not_transition(self):
         item = {
