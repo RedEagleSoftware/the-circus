@@ -10,6 +10,21 @@ class HandlerObservabilityTests(unittest.TestCase):
     def setUp(self):
         handler.EXECUTABLE_PATHS.clear()
 
+    def test_get_circus_runtime_root_is_derived_from_module_location_without_env_var(self):
+        expected_root = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(handler.__file__)), os.pardir))
+
+        with patch.dict(
+            os.environ,
+            {
+                "CIRCUS_ROOT": "C:/wrong/path",
+                "THE_CIRCUS_PATH": "C:/also/wrong",
+            },
+            clear=False,
+        ):
+            resolved_root = handler.get_circus_runtime_root()
+
+        self.assertEqual(resolved_root, expected_root)
+
     def test_validate_required_executables_reports_found_paths(self):
         def which_side_effect(command_name):
             mapping = {
@@ -156,7 +171,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         with patch("builtins.print") as mock_print:
             dispatched = handler.process_one_item(items)
 
-        self.assertFalse(dispatched)
+        self.assertEqual(dispatched, "no-dispatch")
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(
             any("[Poll] Skipping issue #10" in line and "lock label" in line for line in printed_lines)
@@ -178,7 +193,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                             with patch("builtins.print") as mock_print:
                                 dispatched = handler.process_one_item([item])
 
-        self.assertFalse(dispatched)
+        self.assertEqual(dispatched, "prelaunch-failed")
         mock_unlock.assert_called_once_with(item)
         mock_add_comment.assert_called_once_with(item)
         mock_launch_agent.assert_not_called()
@@ -205,7 +220,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                         with patch.object(handler, "add_comment") as mock_add_comment:
                             dispatched = handler.process_one_item([item])
 
-        self.assertTrue(dispatched)
+        self.assertEqual(dispatched, "success")
         mock_unlock.assert_not_called()
         mock_add_comment.assert_not_called()
 
@@ -227,7 +242,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                                 with patch("builtins.print") as mock_print:
                                     dispatched = handler.process_one_item([item])
 
-        self.assertFalse(dispatched)
+        self.assertEqual(dispatched, "prelaunch-failed")
         mock_unlock.assert_called_once_with(item)
         mock_add_comment.assert_called_once_with(item)
         self.assertIn("failed to start Junie before execution began", item["comment"])
@@ -235,23 +250,92 @@ class HandlerObservabilityTests(unittest.TestCase):
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("Junie failed to launch before execution started" in line for line in printed_lines))
 
+    def test_process_one_item_releases_lock_when_codex_architect_fails_before_start(self):
+        item = {
+            "type": "issue",
+            "number": 32,
+            "title": "Codex command unavailable",
+            "labels": [{"name": "state:ready-for-architecture"}],
+        }
+        launch_brief_path = "Watchtower/runs/issue-32/run-001-architect/launch-brief.md"
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "lock_item", return_value=True):
+                with patch.object(handler, "write_launch_brief", return_value=launch_brief_path):
+                    with patch.object(handler.subprocess, "run", side_effect=FileNotFoundError("codex not found")):
+                        with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                            with patch.object(handler, "add_comment") as mock_add_comment:
+                                with patch.object(handler, "advance_architect_workflow_on_success") as mock_advance_transition:
+                                    with patch("builtins.print") as mock_print:
+                                        dispatched = handler.process_one_item([item])
+
+        self.assertEqual(dispatched, "prelaunch-failed")
+        mock_unlock.assert_called_once_with(item)
+        mock_add_comment.assert_called_once_with(item)
+        mock_advance_transition.assert_not_called()
+        self.assertIn("failed to start Junie before execution began", item["comment"])
+        self.assertIn("The lock label `state:agent-in-progress` was released", item["comment"])
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("Codex failed to launch before execution started" in line for line in printed_lines))
+
     def test_poll_cycle_observability_when_idle(self):
         with patch.object(handler, "REPO", "owner/repo"):
             with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
                 with patch.object(handler, "validate_required_executables", return_value={"gh": "gh", "git": "git", "junie": "junie", "codex": "codex"}):
                     with patch.object(handler, "validate_target_repo_workspace", return_value=True):
                         with patch.object(handler, "verify_github_repo_access", return_value=True):
-                            with patch.object(handler, "get_labeled_items", return_value=([], [], [], True)):
-                                with patch.object(handler, "process_one_item", return_value=False):
-                                    with patch("time.sleep", side_effect=SystemExit):
+                            with patch.object(handler, "get_max_steps_per_run", return_value=1):
+                                with patch.object(handler, "get_labeled_items", return_value=([], [], [], True)):
+                                    with patch.object(handler, "process_one_item", return_value="no-dispatch"):
                                         with patch("builtins.print") as mock_print:
-                                            with self.assertRaises(SystemExit):
-                                                handler.poll()
+                                            handler.poll()
 
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("[Handler] Max workflow steps this run: 1" in line for line in printed_lines))
         self.assertTrue(any("[Poll] Starting cycle #1..." in line for line in printed_lines))
         self.assertTrue(any("[Poll] Retrieved issues=0, prs=0, candidates=0." in line for line in printed_lines))
         self.assertTrue(any("[Poll] No candidate items matched workflow labels this cycle." in line for line in printed_lines))
+        self.assertTrue(any("[Handler] No eligible workflow step found. Exiting." in line for line in printed_lines))
+
+    def test_get_max_steps_per_run_defaults_to_one_when_env_missing(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(handler.get_max_steps_per_run(), 1)
+
+    def test_get_max_steps_per_run_uses_configured_value(self):
+        with patch.dict(os.environ, {"CIRCUS_MAX_STEPS_PER_RUN": "2"}, clear=True):
+            self.assertEqual(handler.get_max_steps_per_run(), 2)
+
+    def test_poll_allows_second_dispatch_and_repolls_when_max_steps_is_two(self):
+        with patch.object(handler, "REPO", "owner/repo"):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(
+                    handler,
+                    "validate_required_executables",
+                    return_value={"gh": "gh", "git": "git", "junie": "junie", "codex": "codex"},
+                ):
+                    with patch.object(handler, "validate_target_repo_workspace", return_value=True):
+                        with patch.object(handler, "verify_github_repo_access", return_value=True):
+                            with patch.object(handler, "get_max_steps_per_run", return_value=2):
+                                with patch.object(
+                                    handler,
+                                    "get_labeled_items",
+                                    side_effect=[
+                                        ([], [], [{"number": 1}], True),
+                                        ([], [], [{"number": 1}], True),
+                                    ],
+                                ) as mock_get_labeled_items:
+                                    with patch.object(handler, "process_one_item", side_effect=["success", "success"]) as mock_process:
+                                        with patch("builtins.print") as mock_print:
+                                            handler.poll()
+
+        self.assertEqual(mock_get_labeled_items.call_count, 2)
+        self.assertEqual(mock_process.call_count, 2)
+
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("[Handler] Completed workflow step 1 of 2." in line for line in printed_lines))
+        self.assertTrue(any("[Handler] Re-polling for next eligible workflow step." in line for line in printed_lines))
+        self.assertTrue(any("[Handler] Completed workflow step 2 of 2." in line for line in printed_lines))
+        self.assertTrue(any("[Handler] Max workflow steps reached. Exiting." in line for line in printed_lines))
 
     def test_get_candidates_fetches_without_label_filter(self):
         with patch.object(handler, "REPO", "owner/repo"):
@@ -264,6 +348,7 @@ class HandlerObservabilityTests(unittest.TestCase):
 
     def test_build_thin_prompt_includes_target_repo_and_launch_brief_path(self):
         item = {"type": "issue", "number": 3, "title": "Implement launch brief", "url": "https://github.com/owner/repo/issues/3"}
+        expected_profile_path = f"{handler.normalize_path_for_display(handler.get_circus_runtime_root())}/TheFarm/roles/developer.md"
 
         with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
             prompt = handler.build_thin_prompt(
@@ -275,7 +360,7 @@ class HandlerObservabilityTests(unittest.TestCase):
             )
 
         self.assertIn("- target repo path: C:/target/repo", prompt)
-        self.assertIn("- agent profile source path: TheFarm/roles/developer.md", prompt)
+        self.assertIn(f"- agent profile source path: {expected_profile_path}", prompt)
         self.assertIn(
             "- launch brief artifact path: Watchtower/runs/issue-3/run-001-developer/launch-brief.md",
             prompt,
@@ -300,14 +385,15 @@ class HandlerObservabilityTests(unittest.TestCase):
         with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
             with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
                 with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
-                    with patch("builtins.print") as mock_print:
-                        launched = handler.launch_agent(
-                            item,
-                            "state:ready-for-dev",
-                            config,
-                            os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
-                            launch_brief_path,
-                        )
+                    with patch.object(handler, "advance_developer_workflow_on_success", return_value=True) as mock_advance:
+                        with patch("builtins.print") as mock_print:
+                            launched = handler.launch_agent(
+                                item,
+                                "state:ready-for-dev",
+                                config,
+                                os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                                launch_brief_path,
+                            )
 
         self.assertTrue(launched)
         mock_subprocess_run.assert_called_once()
@@ -324,6 +410,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(mock_subprocess_run.call_args.kwargs["cwd"], "C:/target/repo")
         self.assertTrue(mock_subprocess_run.call_args.kwargs["text"])
         self.assertNotIn("input", mock_subprocess_run.call_args.kwargs)
+        mock_advance.assert_called_once_with(item)
 
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any(f"[Dispatch] Launch brief display path: {launch_brief_path}" in line for line in printed_lines))
@@ -370,13 +457,73 @@ class HandlerObservabilityTests(unittest.TestCase):
                             launch_brief_path,
                         )
 
-        self.assertTrue(launched)
+        self.assertFalse(launched)
         mock_add_comment.assert_called_once_with(item)
         self.assertIn("exited with non-zero status (7)", item["comment"])
         self.assertIn("lock label `state:agent-in-progress` remains", item["comment"])
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("[Dispatch] Junie exit code: 7" in line for line in printed_lines))
         self.assertTrue(any("human inspection is required" in line for line in printed_lines))
+
+    def test_launch_agent_junie_developer_success_advances_workflow_labels(self):
+        item = {
+            "type": "issue",
+            "number": 16,
+            "title": "Implement feature",
+            "url": "https://github.com/owner/repo/issues/16",
+        }
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler.os.path, "abspath", return_value="C:/abs/brief.md"):
+                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                    with patch.object(handler, "advance_developer_workflow_on_success", return_value=True) as mock_advance:
+                        launched = handler.launch_agent(
+                            item,
+                            "state:ready-for-dev",
+                            config,
+                            os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                            "Watchtower/runs/issue-16/run-001-developer/launch-brief.md",
+                        )
+
+        self.assertTrue(launched)
+        mock_advance.assert_called_once_with(item)
+
+    def test_launch_agent_junie_developer_non_zero_exit_does_not_advance_workflow_labels(self):
+        item = {
+            "type": "issue",
+            "number": 17,
+            "title": "Developer run fails",
+            "url": "https://github.com/owner/repo/issues/17",
+        }
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler.os.path, "abspath", return_value="C:/abs/brief.md"):
+                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=9)):
+                    with patch.object(handler, "add_comment") as mock_add_comment:
+                        with patch.object(handler, "advance_developer_workflow_on_success") as mock_advance:
+                            launched = handler.launch_agent(
+                                item,
+                                "state:ready-for-dev",
+                                config,
+                                os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                                "Watchtower/runs/issue-17/run-001-developer/launch-brief.md",
+                            )
+
+        self.assertFalse(launched)
+        mock_add_comment.assert_called_once_with(item)
+        mock_advance.assert_not_called()
 
     def test_build_codex_architect_task_text_includes_handoff_and_comment_requirements(self):
         task_text = handler.build_codex_architect_task_text("C:/abs/Watchtower/runs/issue-9/run-001-architect/launch-brief.md")
@@ -388,6 +535,50 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("execute the architect workflow", task_text)
         self.assertIn("Produce or update the architecture handoff artifact", task_text)
         self.assertIn("leave a GitHub comment summarizing the handoff or blocker", task_text)
+
+    def test_is_codex_sandbox_bypass_enabled_defaults_to_false_when_missing(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(handler.is_codex_sandbox_bypass_enabled())
+
+    def test_is_codex_sandbox_bypass_enabled_only_for_true_case_insensitive(self):
+        with patch.dict(os.environ, {"CIRCUS_CODEX_BYPASS_SANDBOX": "true"}, clear=True):
+            self.assertTrue(handler.is_codex_sandbox_bypass_enabled())
+
+        with patch.dict(os.environ, {"CIRCUS_CODEX_BYPASS_SANDBOX": "TrUe"}, clear=True):
+            self.assertTrue(handler.is_codex_sandbox_bypass_enabled())
+
+        with patch.dict(os.environ, {"CIRCUS_CODEX_BYPASS_SANDBOX": "false"}, clear=True):
+            self.assertFalse(handler.is_codex_sandbox_bypass_enabled())
+
+        with patch.dict(os.environ, {"CIRCUS_CODEX_BYPASS_SANDBOX": "1"}, clear=True):
+            self.assertFalse(handler.is_codex_sandbox_bypass_enabled())
+
+    def test_build_codex_command_with_optional_sandbox_bypass_adds_flag_only_when_enabled(self):
+        enabled_command = handler.build_codex_command_with_optional_sandbox_bypass(
+            "gpt-5.3-codex",
+            "C:/target/repo",
+            "Prompt text",
+            bypass_sandbox=True,
+        )
+        disabled_command = handler.build_codex_command_with_optional_sandbox_bypass(
+            "gpt-5.3-codex",
+            "C:/target/repo",
+            "Prompt text",
+            bypass_sandbox=False,
+        )
+
+        self.assertEqual(enabled_command[0], "codex")
+        self.assertEqual(enabled_command[1], "exec")
+        self.assertEqual(enabled_command[2:4], ["--model", "gpt-5.3-codex"])
+        self.assertEqual(enabled_command[4:6], ["--cd", "C:/target/repo"])
+        self.assertIn("--dangerously-bypass-approvals-and-sandbox", enabled_command)
+        self.assertEqual(enabled_command[-1], "Prompt text")
+
+        self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", disabled_command)
+        self.assertEqual(disabled_command[1], "exec")
+        self.assertEqual(disabled_command[2:4], ["--model", "gpt-5.3-codex"])
+        self.assertEqual(disabled_command[4:6], ["--cd", "C:/target/repo"])
+        self.assertEqual(disabled_command[-1], "Prompt text")
 
     def test_launch_agent_codex_architect_runs_with_exec_cd_and_task_handoff(self):
         item = {
@@ -405,17 +596,19 @@ class HandlerObservabilityTests(unittest.TestCase):
         launch_brief_path = "Watchtower/runs/issue-9/run-001-architect/launch-brief.md"
         absolute_launch_brief_path = "C:/abs/Watchtower/runs/issue-9/run-001-architect/launch-brief.md"
 
-        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
-            with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
-                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
-                    with patch("builtins.print") as mock_print:
-                        launched = handler.launch_agent(
-                            item,
-                            "state:ready-for-architecture",
-                            config,
-                            os.path.normpath(os.path.join("TheFarm", "roles", "architect.md")),
-                            launch_brief_path,
-                        )
+        with patch.dict(os.environ, {}, clear=True):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
+                    with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
+                        with patch.object(handler, "advance_architect_workflow_on_success") as mock_advance_transition:
+                            with patch("builtins.print") as mock_print:
+                                launched = handler.launch_agent(
+                                    item,
+                                    "state:ready-for-architecture",
+                                    config,
+                                    os.path.normpath(os.path.join("TheFarm", "roles", "architect.md")),
+                                    launch_brief_path,
+                                )
 
         self.assertTrue(launched)
         mock_subprocess_run.assert_called_once()
@@ -431,6 +624,7 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         self.assertEqual(mock_subprocess_run.call_args.kwargs["cwd"], "C:/target/repo")
         self.assertTrue(mock_subprocess_run.call_args.kwargs["text"])
+        mock_advance_transition.assert_called_once_with(item)
 
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any(f"[Dispatch] Launch brief display path: {launch_brief_path}" in line for line in printed_lines))
@@ -438,6 +632,7 @@ class HandlerObservabilityTests(unittest.TestCase):
             any(f"[Dispatch] Launch brief absolute path: {absolute_launch_brief_path}" in line for line in printed_lines)
         )
         self.assertTrue(any("[Dispatch] Codex target repo path: C:/target/repo" in line for line in printed_lines))
+        self.assertTrue(any("Codex sandbox bypass disabled (default-safe mode)" in line for line in printed_lines))
         self.assertTrue(any("Codex handoff path: passing short positional prompt argument" in line for line in printed_lines))
         self.assertTrue(any("[Dispatch] Codex execution cwd: C:/target/repo" in line for line in printed_lines))
         self.assertTrue(any("[Dispatch] Codex exit code: 0" in line for line in printed_lines))
@@ -446,6 +641,162 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(len(executing_lines), 1)
         self.assertIn("codex exec --model gpt-5.3-codex --cd C:/target/repo", executing_lines[0])
         self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", executing_lines[0])
+        self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", executing_lines[0])
+
+    def test_launch_agent_codex_architect_adds_sandbox_bypass_flag_when_enabled(self):
+        item = {
+            "type": "issue",
+            "number": 12,
+            "title": "Run architect with sandbox bypass",
+            "url": "https://github.com/owner/repo/issues/12",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "architect",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-12/run-001-architect/launch-brief.md"
+        absolute_launch_brief_path = "C:/abs/Watchtower/runs/issue-12/run-001-architect/launch-brief.md"
+
+        with patch.dict(os.environ, {"CIRCUS_CODEX_BYPASS_SANDBOX": "true"}, clear=True):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
+                    with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
+                        with patch.object(handler, "advance_architect_workflow_on_success") as mock_advance_transition:
+                            with patch("builtins.print") as mock_print:
+                                launched = handler.launch_agent(
+                                    item,
+                                    "state:ready-for-architecture",
+                                    config,
+                                    os.path.normpath(os.path.join("TheFarm", "roles", "architect.md")),
+                                    launch_brief_path,
+                                )
+
+        self.assertTrue(launched)
+        mock_subprocess_run.assert_called_once()
+        command = mock_subprocess_run.call_args.args[0]
+        self.assertEqual(command[0], "codex")
+        self.assertEqual(command[1], "exec")
+        self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
+        self.assertEqual(command[4:6], ["--cd", "C:/target/repo"])
+        self.assertIn("--dangerously-bypass-approvals-and-sandbox", command)
+        self.assertEqual(command[-1], handler.build_codex_architect_task_text(absolute_launch_brief_path))
+        mock_advance_transition.assert_called_once_with(item)
+
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("WARNING: Codex sandbox bypass ENABLED" in line for line in printed_lines))
+
+        executing_lines = [line for line in printed_lines if line.startswith("[Dispatch] Executing: ")]
+        self.assertEqual(len(executing_lines), 1)
+        self.assertIn("--dangerously-bypass-approvals-and-sandbox", executing_lines[0])
+
+    def test_launch_agent_codex_architect_non_zero_exit_does_not_advance_workflow_labels(self):
+        item = {
+            "type": "issue",
+            "number": 13,
+            "title": "Architect run fails",
+            "url": "https://github.com/owner/repo/issues/13",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "architect",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-13/run-001-architect/launch-brief.md"
+        absolute_launch_brief_path = "C:/abs/Watchtower/runs/issue-13/run-001-architect/launch-brief.md"
+
+        with patch.dict(os.environ, {}, clear=True):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
+                    with patch.object(handler.subprocess, "run", return_value=Mock(returncode=7)) as mock_subprocess_run:
+                        with patch.object(handler, "add_comment") as mock_add_comment:
+                            with patch.object(handler, "advance_architect_workflow_on_success") as mock_advance_transition:
+                                launched = handler.launch_agent(
+                                    item,
+                                    "state:ready-for-architecture",
+                                    config,
+                                    os.path.normpath(os.path.join("TheFarm", "roles", "architect.md")),
+                                    launch_brief_path,
+                                )
+
+        self.assertFalse(launched)
+        mock_subprocess_run.assert_called_once()
+        mock_add_comment.assert_called_once_with(item)
+        mock_advance_transition.assert_not_called()
+        self.assertIn("exited with non-zero status (7)", item["comment"])
+        self.assertIn("lock label `state:agent-in-progress` remains in place", item["comment"])
+
+    def test_advance_architect_workflow_on_success_transitions_labels(self):
+        item = {
+            "type": "issue",
+            "number": 2,
+            "title": "Architecture complete",
+        }
+
+        with patch.object(handler, "REPO", "owner/repo"):
+            with patch.object(handler, "run_command", return_value="") as mock_run_command:
+                with patch("builtins.print") as mock_print:
+                    transitioned = handler.advance_architect_workflow_on_success(item)
+
+        self.assertTrue(transitioned)
+        self.assertEqual(
+            mock_run_command.call_args_list,
+            [
+                unittest.mock.call(
+                    'gh issue edit 2 --repo owner/repo --remove-label "state:agent-in-progress"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 2 --repo owner/repo --remove-label "state:ready-for-architecture"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 2 --repo owner/repo --add-label "state:ready-for-dev"'
+                ),
+            ],
+        )
+
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("Architect workflow completed successfully for issue #2." in line for line in printed_lines))
+        self.assertTrue(any("Removing label: state:agent-in-progress" in line for line in printed_lines))
+        self.assertTrue(any("Removing label: state:ready-for-architecture" in line for line in printed_lines))
+        self.assertTrue(any("Adding label: state:ready-for-dev" in line for line in printed_lines))
+        self.assertTrue(any("Workflow advanced to developer stage for issue #2." in line for line in printed_lines))
+
+    def test_advance_developer_workflow_on_success_transitions_labels(self):
+        item = {
+            "type": "issue",
+            "number": 4,
+            "title": "Development complete",
+        }
+
+        with patch.object(handler, "REPO", "owner/repo"):
+            with patch.object(handler, "run_command", return_value="") as mock_run_command:
+                with patch("builtins.print") as mock_print:
+                    transitioned = handler.advance_developer_workflow_on_success(item)
+
+        self.assertTrue(transitioned)
+        self.assertEqual(
+            mock_run_command.call_args_list,
+            [
+                unittest.mock.call(
+                    'gh issue edit 4 --repo owner/repo --remove-label "state:agent-in-progress"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 4 --repo owner/repo --remove-label "state:ready-for-dev"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 4 --repo owner/repo --add-label "state:ready-for-review"'
+                ),
+            ],
+        )
+
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("Developer workflow completed successfully for issue #4." in line for line in printed_lines))
+        self.assertTrue(any("Removing label: state:agent-in-progress" in line for line in printed_lines))
+        self.assertTrue(any("Removing label: state:ready-for-dev" in line for line in printed_lines))
+        self.assertTrue(any("Adding label: state:ready-for-review" in line for line in printed_lines))
+        self.assertTrue(any("Workflow advanced to review stage for issue #4." in line for line in printed_lines))
 
     def test_launch_agent_codex_non_architect_mode_remains_non_executing_placeholder(self):
         item = {
@@ -476,6 +827,20 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_subprocess_run.assert_not_called()
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("Codex execution flow currently enabled only for architect mode" in line for line in printed_lines))
+
+    def test_junie_command_generation_is_unchanged(self):
+        command = handler.build_junie_command(
+            "gpt-5.3-codex",
+            "Medium",
+            "C:/target/repo",
+            "Read launch brief",
+        )
+
+        self.assertEqual(command[0], "junie")
+        self.assertEqual(command[1:3], ["--project", "C:/target/repo"])
+        self.assertEqual(command[3:5], ["--model", "gpt-5.3-codex"])
+        self.assertEqual(command[5:7], ["--effort", "medium"])
+        self.assertEqual(command[7], "Read launch brief")
 
     def test_build_launch_brief_path_is_predictable(self):
         item = {"type": "issue", "number": 3}
@@ -514,6 +879,11 @@ class HandlerObservabilityTests(unittest.TestCase):
             "effort": "Medium",
         }
 
+        normalized_circus_root = handler.normalize_path_for_display(handler.get_circus_runtime_root())
+        architecture_handoff_path = f"{normalized_circus_root}/Watchtower/runs/issue-3/shared/architecture-handoff.md"
+        running_notes_path = f"{normalized_circus_root}/Watchtower/runs/issue-3/shared/running-notes.md"
+        decision_log_path = f"{normalized_circus_root}/Watchtower/runs/issue-3/shared/decision-log.md"
+
         with patch.object(handler, "REPO", "owner/repo"):
             markdown = handler.build_launch_brief_markdown(
                 item,
@@ -523,12 +893,15 @@ class HandlerObservabilityTests(unittest.TestCase):
                 "2026-05-25T09:06:00",
                 "C:\\target\\repo",
                 {
-                    "architecture_handoff": "Watchtower/runs/issue-3/shared/architecture-handoff.md",
-                    "running_notes": "Watchtower/runs/issue-3/shared/running-notes.md",
-                    "decision_log": "Watchtower/runs/issue-3/shared/decision-log.md",
+                    "architecture_handoff": architecture_handoff_path,
+                    "running_notes": running_notes_path,
+                    "decision_log": decision_log_path,
                 },
             )
 
+        self.assertIn("## Runtime Roots", markdown)
+        self.assertIn(f"- circus repo root: `{normalized_circus_root}`", markdown)
+        self.assertIn("- target repo root: `C:/target/repo`", markdown)
         self.assertIn("## Assignment", markdown)
         self.assertIn("## Source of Truth", markdown)
         self.assertIn("## Operating Instructions", markdown)
@@ -544,12 +917,12 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("- model: `gpt-5.3-codex`", markdown)
         self.assertIn("- effort: `Medium`", markdown)
         self.assertIn("- generated-by: `Handler`", markdown)
-        self.assertIn("- architecture handoff: `Watchtower/runs/issue-3/shared/architecture-handoff.md`", markdown)
-        self.assertIn("- running notes: `Watchtower/runs/issue-3/shared/running-notes.md`", markdown)
-        self.assertIn("- decision log: `Watchtower/runs/issue-3/shared/decision-log.md`", markdown)
+        self.assertIn(f"- architecture handoff: `{architecture_handoff_path}`", markdown)
+        self.assertIn(f"- running notes: `{running_notes_path}`", markdown)
+        self.assertIn(f"- decision log: `{decision_log_path}`", markdown)
         self.assertIn("GitHub issue/PR metadata is the source of truth", markdown)
         self.assertIn("If local files, git state, or launch metadata conflict with GitHub metadata", markdown)
-        self.assertIn("- profile source: `TheFarm/roles/developer.md`", markdown)
+        self.assertIn(f"- profile source: `{normalized_circus_root}/TheFarm/roles/developer.md`", markdown)
         self.assertNotIn("role/prompt", markdown)
         self.assertNotIn("\\", markdown)
         self.assertNotIn("docs\\doctrine.md", markdown)
@@ -630,11 +1003,20 @@ class HandlerObservabilityTests(unittest.TestCase):
                 decision_log_content = decision_log_file.read()
 
         self.assertIn("# Launch Brief", content)
+        self.assertIn("## Runtime Roots", content)
+        self.assertIn(
+            f"- circus repo root: `{handler.normalize_path_for_display(handler.get_circus_runtime_root())}`",
+            content,
+        )
+        self.assertIn("- target repo root: `C:/target/repo`", content)
         self.assertIn("## Assignment", content)
         self.assertIn("- repository: `owner/repo`", content)
         self.assertIn("- target repo path: `C:/target/repo`", content)
         self.assertIn("## Agent Profile", content)
-        self.assertIn("- profile source: `TheFarm/roles/developer.md`", content)
+        self.assertIn(
+            f"- profile source: `{handler.normalize_path_for_display(handler.get_circus_runtime_root())}/TheFarm/roles/developer.md`",
+            content,
+        )
         self.assertIn("## Shared Context", content)
         self.assertIn(
             f"- architecture handoff: `{temp_dir.replace('\\', '/')}/issue-3/shared/architecture-handoff.md`",

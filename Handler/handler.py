@@ -13,6 +13,8 @@ load_dotenv()
 REPO = os.getenv("CIRCUS_REPO")  # Format: owner/repo
 TARGET_REPO_PATH = os.getenv("CIRCUS_TARGET_REPO_PATH")
 POLL_INTERVAL = 60  # seconds
+DEFAULT_MAX_STEPS_PER_RUN = 1
+MAX_STEPS_PER_RUN_ENV = "CIRCUS_MAX_STEPS_PER_RUN"
 
 # Label to Agent Mapping
 LABEL_MAP = {
@@ -56,6 +58,21 @@ AGENT_EXECUTABLE_ENV_OVERRIDES = {
 }
 
 EXECUTABLE_PATHS = {}
+
+
+def get_circus_runtime_root():
+    handler_module_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.normpath(os.path.join(handler_module_dir, os.pardir))
+
+
+def resolve_circus_runtime_path(path):
+    if path is None:
+        return None
+
+    if os.path.isabs(path):
+        return os.path.normpath(path)
+
+    return os.path.normpath(os.path.join(get_circus_runtime_root(), path))
 
 
 def run_command(cmd):
@@ -236,6 +253,110 @@ def unlock_item(item):
     return run_command(cmd) is not None
 
 
+def remove_label(item, label):
+    cmd = f"gh {item['type']} edit {item['number']} --repo {REPO} --remove-label \"{label}\""
+    return run_command(cmd) is not None
+
+
+def add_label(item, label):
+    cmd = f"gh {item['type']} edit {item['number']} --repo {REPO} --add-label \"{label}\""
+    return run_command(cmd) is not None
+
+
+def execute_label_transition(item, workflow_name, transition_steps, success_message, failure_message):
+    number = item["number"]
+    print(f"[Dispatch] {workflow_name} workflow completed successfully for issue #{number}.")
+
+    transition_ok = True
+    for operation, label in transition_steps:
+        if operation == "remove":
+            print(f"[Dispatch] Removing label: {label}")
+            if not remove_label(item, label):
+                transition_ok = False
+                print(f"[Dispatch] Failed to remove label: {label}")
+        else:
+            print(f"[Dispatch] Adding label: {label}")
+            if not add_label(item, label):
+                transition_ok = False
+                print(f"[Dispatch] Failed to add label: {label}")
+
+    if transition_ok:
+        print(success_message.format(number=number))
+    else:
+        print(failure_message.format(number=number))
+
+    return transition_ok
+
+
+def advance_architect_workflow_on_success(item):
+    transition_steps = [
+        ("remove", LOCK_LABEL),
+        ("remove", "state:ready-for-architecture"),
+        ("add", "state:ready-for-dev"),
+    ]
+
+    return execute_label_transition(
+        item,
+        workflow_name="Architect",
+        transition_steps=transition_steps,
+        success_message="[Dispatch] Workflow advanced to developer stage for issue #{number}.",
+        failure_message=(
+            "[Dispatch] Architect workflow transition encountered label update failures for issue #{number}; "
+            "manual inspection is required."
+        ),
+    )
+
+
+def advance_developer_workflow_on_success(item):
+    transition_steps = [
+        ("remove", LOCK_LABEL),
+        ("remove", "state:ready-for-dev"),
+        ("add", "state:ready-for-review"),
+    ]
+
+    return execute_label_transition(
+        item,
+        workflow_name="Developer",
+        transition_steps=transition_steps,
+        success_message="[Dispatch] Workflow advanced to review stage for issue #{number}.",
+        failure_message=(
+            "[Dispatch] Developer workflow transition encountered label update failures for issue #{number}; "
+            "manual inspection is required."
+        ),
+    )
+
+
+def get_max_steps_per_run():
+    raw_value = os.getenv(MAX_STEPS_PER_RUN_ENV)
+    if raw_value is None:
+        return DEFAULT_MAX_STEPS_PER_RUN
+
+    stripped_value = raw_value.strip()
+    if not stripped_value:
+        print(
+            f"[Handler] {MAX_STEPS_PER_RUN_ENV} is blank; using default {DEFAULT_MAX_STEPS_PER_RUN}."
+        )
+        return DEFAULT_MAX_STEPS_PER_RUN
+
+    try:
+        parsed_value = int(stripped_value)
+    except ValueError:
+        print(
+            f"[Handler] Invalid {MAX_STEPS_PER_RUN_ENV} value '{raw_value}'; "
+            f"using default {DEFAULT_MAX_STEPS_PER_RUN}."
+        )
+        return DEFAULT_MAX_STEPS_PER_RUN
+
+    if parsed_value < 1:
+        print(
+            f"[Handler] {MAX_STEPS_PER_RUN_ENV} must be >= 1; "
+            f"using default {DEFAULT_MAX_STEPS_PER_RUN}."
+        )
+        return DEFAULT_MAX_STEPS_PER_RUN
+
+    return parsed_value
+
+
 def add_prelaunch_setup_failure_comment(item, error, lock_released):
     lock_result = "released" if lock_released else "could not be released"
     item["comment"] = (
@@ -311,8 +432,9 @@ def resolve_role_prompt_path(mode):
         candidates.append(os.path.join("TheFarm", "roles", f"{base_mode}.md"))
 
     for path in candidates:
-        if os.path.isfile(path):
-            return os.path.normpath(path)
+        runtime_resolved_path = resolve_circus_runtime_path(path)
+        if os.path.isfile(runtime_resolved_path):
+            return runtime_resolved_path
 
     return None
 
@@ -321,7 +443,7 @@ def resolve_profile_source(role_prompt_path):
     if not role_prompt_path:
         return None
 
-    return normalize_path_for_display(role_prompt_path)
+    return normalize_path_for_display(resolve_circus_runtime_path(role_prompt_path))
 
 
 def build_thin_prompt(item, state_label, mode, role_prompt_path, launch_brief_path=None):
@@ -362,6 +484,20 @@ def build_codex_command(model, project_path, task_text):
         str(project_path),
         str(task_text),
     ]
+
+
+def is_codex_sandbox_bypass_enabled():
+    bypass_value = os.getenv("CIRCUS_CODEX_BYPASS_SANDBOX", "")
+    return str(bypass_value).strip().lower() == "true"
+
+
+def build_codex_command_with_optional_sandbox_bypass(model, project_path, task_text, bypass_sandbox=False):
+    command = build_codex_command(model, project_path, task_text)
+
+    if bypass_sandbox:
+        command.insert(-1, "--dangerously-bypass-approvals-and-sandbox")
+
+    return command
 
 
 def extract_github_repo_slug(value):
@@ -459,6 +595,9 @@ def sanitize_filename_part(value):
 
 
 def normalize_path_for_display(path):
+    if path is None:
+        return None
+
     return path.replace("\\", "/")
 
 
@@ -482,7 +621,8 @@ def get_next_run_number(item_run_root):
 
 def get_item_run_root(item):
     item_dir = f"{sanitize_filename_part(item['type'])}-{item['number']}"
-    return os.path.normpath(os.path.join(LAUNCH_ARTIFACT_DIR, item_dir))
+    launch_artifact_root = resolve_circus_runtime_path(LAUNCH_ARTIFACT_DIR)
+    return os.path.normpath(os.path.join(launch_artifact_root, item_dir))
 
 
 def build_shared_context_paths(item_run_root):
@@ -522,9 +662,14 @@ def build_launch_brief_markdown(item, state_label, config, role_prompt_path, tim
     # .circus/roles/<mode>.md, .circus/workflows/<mode>.md) once routing contracts are finalized.
     profile_source = resolve_profile_source(role_prompt_path)
     normalized_target_repo_path = normalize_path_for_display(target_repo_path)
+    normalized_circus_runtime_root = normalize_path_for_display(get_circus_runtime_root())
 
     lines = [
         "# Launch Brief",
+        "",
+        "## Runtime Roots",
+        f"- circus repo root: `{normalized_circus_runtime_root}`",
+        f"- target repo root: `{normalized_target_repo_path}`",
         "",
         "## Assignment",
         f"- repository: `{REPO}`",
@@ -589,6 +734,10 @@ def write_launch_brief(item, state_label, config, role_prompt_path):
     with open(brief_path, "w", encoding="utf-8") as brief_file:
         brief_file.write(f"{brief_content}\n")
 
+    print(f"[Dispatch] Shared artifact path (architecture handoff): {shared_context_paths['architecture_handoff']}")
+    print(f"[Dispatch] Shared artifact path (running notes): {shared_context_paths['running_notes']}")
+    print(f"[Dispatch] Shared artifact path (decision log): {shared_context_paths['decision_log']}")
+
     return brief_path
 
 
@@ -643,10 +792,15 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 "lock remains and human inspection is required."
             )
             add_comment(item)
+            item["agent_exit_non_zero"] = True
+            return False
         else:
-            print(f"[Dispatch] Junie completed with exit code 0 for {item['type']} #{number}; lock remains in place.")
+            item.pop("agent_exit_non_zero", None)
+            if mode == "developer" and state_label == "state:ready-for-dev":
+                return advance_developer_workflow_on_success(item)
 
-        return True
+            print(f"[Dispatch] Junie completed with exit code 0 for {item['type']} #{number}; lock remains in place.")
+            return True
     elif agent == "codex":
         print(f"[Dispatch] Codex routing metadata: mode={mode}, effort={effort}")
         if mode != "architect":
@@ -655,13 +809,30 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
 
         absolute_launch_brief_path = os.path.abspath(launch_brief_path)
         codex_task_text = build_codex_architect_task_text(absolute_launch_brief_path)
-        cmd = build_codex_command(model, TARGET_REPO_PATH or "", codex_task_text)
+        codex_bypass_sandbox = is_codex_sandbox_bypass_enabled()
+        cmd = build_codex_command_with_optional_sandbox_bypass(
+            model,
+            TARGET_REPO_PATH or "",
+            codex_task_text,
+            bypass_sandbox=codex_bypass_sandbox,
+        )
         normalized_target_repo_path = normalize_path_for_display(TARGET_REPO_PATH) if TARGET_REPO_PATH else "<not configured>"
-        command_shape = f"{cmd[0]} {cmd[1]} {cmd[2]} {cmd[3]} {cmd[4]} {cmd[5]} \"{cmd[6]}\""
+        command_arguments = cmd[1:-1]
+        command_shape = f"{cmd[0]} {' '.join(command_arguments)} \"{cmd[-1]}\""
 
         print(f"[Dispatch] Launch brief display path: {launch_brief_path}")
         print(f"[Dispatch] Launch brief absolute path: {absolute_launch_brief_path}")
         print(f"[Dispatch] Codex target repo path: {normalized_target_repo_path}")
+        if codex_bypass_sandbox:
+            print(
+                "[Dispatch] WARNING: Codex sandbox bypass ENABLED via CIRCUS_CODEX_BYPASS_SANDBOX=true; "
+                "running with --dangerously-bypass-approvals-and-sandbox (HIGH RISK)."
+            )
+        else:
+            print(
+                "[Dispatch] Codex sandbox bypass disabled (default-safe mode); "
+                "set CIRCUS_CODEX_BYPASS_SANDBOX=true to enable HIGH-RISK bypass."
+            )
         print("[Dispatch] Codex handoff path: passing short positional prompt argument.")
         print(f"[Dispatch] Executing: {command_shape}")
         print(f"[Dispatch] Codex execution cwd: {TARGET_REPO_PATH}")
@@ -685,10 +856,15 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 "lock remains and human inspection is required."
             )
             add_comment(item)
+            item["agent_exit_non_zero"] = True
+            return False
         else:
-            print(f"[Dispatch] Codex completed with exit code 0 for {item['type']} #{number}; lock remains in place.")
-
-        return True
+            item.pop("agent_exit_non_zero", None)
+            if mode == "architect" and state_label == "state:ready-for-architecture":
+                return advance_architect_workflow_on_success(item)
+            else:
+                print(f"[Dispatch] Codex completed with exit code 0 for {item['type']} #{number}; lock remains in place.")
+                return True
     else:
         print(f"[Dispatch] Unknown agent: {agent}")
         return False
@@ -722,8 +898,8 @@ def process_one_item(items):
         print(f"[Dispatch] Acquiring lock for {item['type']} #{item['number']}...")
 
         if not lock_item(item):
-            print(f"[Dispatch] Lock acquisition failed for {item['type']} #{item['number']}; skipping.")
-            continue
+            print(f"[Dispatch] Lock acquisition failed for {item['type']} #{item['number']}; stopping dispatch.")
+            return "lock-failed"
 
         print(f"[Dispatch] Lock acquired for {item['type']} #{item['number']}.")
 
@@ -743,12 +919,12 @@ def process_one_item(items):
 
             add_prelaunch_setup_failure_comment(item, error, lock_released)
             add_comment(item)
-            continue
+            return "prelaunch-failed"
 
         print(f"[Dispatch] Launch brief generated: {launch_brief_path}")
 
         if launch_agent(item, state_label, config, role_prompt_path, launch_brief_path):
-            return True
+            return "success"
 
         prelaunch_error = item.get("prelaunch_error")
         if prelaunch_error:
@@ -767,9 +943,15 @@ def process_one_item(items):
             )
             add_comment(item)
             item.pop("prelaunch_error", None)
-            continue
+            return "prelaunch-failed"
 
-    return False
+        if item.get("agent_exit_non_zero"):
+            item.pop("agent_exit_non_zero", None)
+            return "agent-non-zero"
+
+        return "dispatch-failed"
+
+    return "no-dispatch"
 
 
 def poll():
@@ -782,7 +964,8 @@ def poll():
 
     print("[Handler] Starting Handler...")
     print(f"[Handler] Configured repository: {REPO}")
-    print(f"[Handler] Configured target repo path: {TARGET_REPO_PATH}")
+    print(f"[Handler] Resolved Circus runtime root: {normalize_path_for_display(get_circus_runtime_root())}")
+    print(f"[Handler] Resolved target repo root: {normalize_path_for_display(TARGET_REPO_PATH) if TARGET_REPO_PATH else '<not configured>'}")
 
     resolved_executables = validate_required_executables()
     if resolved_executables is None:
@@ -797,10 +980,14 @@ def poll():
         print("[Handler] Startup check failed. Exiting.")
         return
 
-    startup_retrieval_confirmed = False
-    cycle_number = 1
+    max_steps_per_run = get_max_steps_per_run()
+    print(f"[Handler] Max workflow steps this run: {max_steps_per_run}")
 
-    while True:
+    startup_retrieval_confirmed = False
+    completed_steps = 0
+
+    while completed_steps < max_steps_per_run:
+        cycle_number = completed_steps + 1
         print(f"[Poll] Starting cycle #{cycle_number}...")
         issues, prs, items, retrieval_ok = get_labeled_items()
 
@@ -810,20 +997,43 @@ def poll():
                 print("[GitHub] Startup retrieval check succeeded for issues and PRs.")
                 startup_retrieval_confirmed = True
         else:
-            print("[GitHub] Failed to retrieve issues/PRs this cycle; Handler will retry.")
+            print("[GitHub] Failed to retrieve issues/PRs this cycle; stopping current run.")
+            return
 
         if not items:
             print("[Poll] No candidate items matched workflow labels this cycle.")
-
-        dispatched = process_one_item(items)
-        if dispatched:
-            print("[Handler] Dispatched one workflow step. Exiting for manual control.")
+            print("[Handler] No eligible workflow step found. Exiting.")
             return
 
-        print(f"[Poll] No dispatch in cycle #{cycle_number}. Sleeping for {POLL_INTERVAL} seconds.")
-        cycle_number += 1
+        dispatch_result = process_one_item(items)
+        if dispatch_result == "success":
+            completed_steps += 1
+            print(f"[Handler] Completed workflow step {completed_steps} of {max_steps_per_run}.")
 
-        time.sleep(POLL_INTERVAL)
+            if completed_steps >= max_steps_per_run:
+                print("[Handler] Max workflow steps reached. Exiting.")
+                return
+
+            print("[Handler] Re-polling for next eligible workflow step.")
+            continue
+
+        if dispatch_result == "lock-failed":
+            print("[Handler] Stopping run: lock could not be acquired.")
+            return
+        if dispatch_result == "agent-non-zero":
+            print("[Handler] Stopping run: agent exited non-zero and requires human inspection.")
+            return
+        if dispatch_result == "prelaunch-failed":
+            print("[Handler] Stopping run: pre-launch failure encountered.")
+            return
+        if dispatch_result == "dispatch-failed":
+            print("[Handler] Stopping run: dispatch failed.")
+            return
+        if dispatch_result == "no-dispatch":
+            print("[Handler] No dispatch completed this cycle. Exiting.")
+            return
+
+    print("[Handler] Max workflow steps reached. Exiting.")
 
 if __name__ == "__main__":
     poll()
