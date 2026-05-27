@@ -186,12 +186,17 @@ class HandlerObservabilityTests(unittest.TestCase):
         }
 
         with patch.object(handler, "lock_item", return_value=True):
-            with patch.object(handler, "write_launch_brief", side_effect=OSError("disk full")):
-                with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
-                    with patch.object(handler, "add_comment") as mock_add_comment:
-                        with patch.object(handler, "launch_agent") as mock_launch_agent:
-                            with patch("builtins.print") as mock_print:
-                                dispatched = handler.process_one_item([item])
+            with patch.object(
+                handler,
+                "prepare_developer_branch",
+                return_value={"ok": True, "branch": "circus/issue-22-fail-during-setup"},
+            ):
+                with patch.object(handler, "write_launch_brief", side_effect=OSError("disk full")):
+                    with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                        with patch.object(handler, "add_comment") as mock_add_comment:
+                            with patch.object(handler, "launch_agent") as mock_launch_agent:
+                                with patch("builtins.print") as mock_print:
+                                    dispatched = handler.process_one_item([item])
 
         self.assertEqual(dispatched, "prelaunch-failed")
         mock_unlock.assert_called_once_with(item)
@@ -214,11 +219,16 @@ class HandlerObservabilityTests(unittest.TestCase):
         }
 
         with patch.object(handler, "lock_item", return_value=True):
-            with patch.object(handler, "write_launch_brief", return_value="Watchtower/runs/issue-23/run-001-developer/launch-brief.md"):
-                with patch.object(handler, "launch_agent", return_value=True):
-                    with patch.object(handler, "unlock_item") as mock_unlock:
-                        with patch.object(handler, "add_comment") as mock_add_comment:
-                            dispatched = handler.process_one_item([item])
+            with patch.object(
+                handler,
+                "prepare_developer_branch",
+                return_value={"ok": True, "branch": "circus/issue-23-successful-dispatch"},
+            ):
+                with patch.object(handler, "write_launch_brief", return_value="Watchtower/runs/issue-23/run-001-developer/launch-brief.md"):
+                    with patch.object(handler, "launch_agent", return_value=True):
+                        with patch.object(handler, "unlock_item") as mock_unlock:
+                            with patch.object(handler, "add_comment") as mock_add_comment:
+                                dispatched = handler.process_one_item([item])
 
         self.assertEqual(dispatched, "success")
         mock_unlock.assert_not_called()
@@ -235,12 +245,17 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
             with patch.object(handler, "lock_item", return_value=True):
-                with patch.object(handler, "write_launch_brief", return_value=launch_brief_path):
-                    with patch.object(handler.subprocess, "run", side_effect=FileNotFoundError("junie not found")):
-                        with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
-                            with patch.object(handler, "add_comment") as mock_add_comment:
-                                with patch("builtins.print") as mock_print:
-                                    dispatched = handler.process_one_item([item])
+                with patch.object(
+                    handler,
+                    "prepare_developer_branch",
+                    return_value={"ok": True, "branch": "circus/issue-31-junie-command-unavailable"},
+                ):
+                    with patch.object(handler, "write_launch_brief", return_value=launch_brief_path):
+                        with patch.object(handler.subprocess, "run", side_effect=FileNotFoundError("junie not found")):
+                            with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                    with patch("builtins.print") as mock_print:
+                                        dispatched = handler.process_one_item([item])
 
         self.assertEqual(dispatched, "prelaunch-failed")
         mock_unlock.assert_called_once_with(item)
@@ -261,13 +276,14 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
             with patch.object(handler, "lock_item", return_value=True):
-                with patch.object(handler, "write_launch_brief", return_value=launch_brief_path):
-                    with patch.object(handler.subprocess, "run", side_effect=FileNotFoundError("codex not found")):
-                        with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
-                            with patch.object(handler, "add_comment") as mock_add_comment:
-                                with patch.object(handler, "advance_architect_workflow_on_success") as mock_advance_transition:
-                                    with patch("builtins.print") as mock_print:
-                                        dispatched = handler.process_one_item([item])
+                with patch.object(handler, "prepare_architect_execution_branch", return_value={"ok": True, "branch": "main"}):
+                    with patch.object(handler, "write_launch_brief", return_value=launch_brief_path):
+                        with patch.object(handler.subprocess, "run", side_effect=FileNotFoundError("codex not found")):
+                            with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                    with patch.object(handler, "advance_architect_workflow_on_success") as mock_advance_transition:
+                                        with patch("builtins.print") as mock_print:
+                                            dispatched = handler.process_one_item([item])
 
         self.assertEqual(dispatched, "prelaunch-failed")
         mock_unlock.assert_called_once_with(item)
@@ -365,6 +381,25 @@ class HandlerObservabilityTests(unittest.TestCase):
             "- launch brief artifact path: Watchtower/runs/issue-3/run-001-developer/launch-brief.md",
             prompt,
         )
+
+    def test_build_thin_prompt_includes_execution_branch_when_present(self):
+        item = {
+            "type": "issue",
+            "number": 9,
+            "title": "Architect context",
+            "execution_branch": "main",
+        }
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            prompt = handler.build_thin_prompt(
+                item,
+                "state:ready-for-architecture",
+                "architect",
+                os.path.normpath(os.path.join("TheFarm", "roles", "architect.md")),
+                "Watchtower/runs/issue-9/run-001-architect/launch-brief.md",
+            )
+
+        self.assertIn("- execution branch: main", prompt)
 
     def test_launch_agent_junie_runs_with_target_workspace_and_task_handoff(self):
         item = {
@@ -927,6 +962,247 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertNotIn("\\", markdown)
         self.assertNotIn("docs\\doctrine.md", markdown)
         self.assertNotIn("docs\\operations-status.md", markdown)
+
+    def test_build_launch_brief_markdown_includes_working_branch_when_present(self):
+        item = {
+            "type": "issue",
+            "number": 11,
+            "title": "Implement branch support",
+            "working_branch": "circus/issue-11-implement-branch-support",
+        }
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with patch.object(handler, "REPO", "owner/repo"):
+            markdown = handler.build_launch_brief_markdown(
+                item,
+                "state:ready-for-dev",
+                config,
+                os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                "2026-05-25T10:00:00",
+                "C:/target/repo",
+            )
+
+        self.assertIn("- working branch: `circus/issue-11-implement-branch-support`", markdown)
+
+    def test_build_launch_brief_markdown_includes_execution_branch_when_present(self):
+        item = {
+            "type": "issue",
+            "number": 12,
+            "title": "Architect branch metadata",
+            "execution_branch": "main",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "architect",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with patch.object(handler, "REPO", "owner/repo"):
+            markdown = handler.build_launch_brief_markdown(
+                item,
+                "state:ready-for-architecture",
+                config,
+                os.path.normpath(os.path.join("TheFarm", "roles", "architect.md")),
+                "2026-05-25T10:00:00",
+                "C:/target/repo",
+            )
+
+        self.assertIn("- execution branch: `main`", markdown)
+
+    def test_build_developer_branch_name_is_deterministic_and_slugified(self):
+        item = {
+            "number": 2,
+            "title": "Define Initial Sandbox Architecture Conventions!!!",
+        }
+
+        branch_name = handler.build_developer_branch_name(item)
+
+        self.assertEqual(
+            branch_name,
+            "circus/issue-2-define-initial-sandbox-architecture-conventions",
+        )
+
+    def test_prepare_developer_branch_creates_new_branch_when_missing(self):
+        item = {"number": 7, "title": "Create branch before launch"}
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "get_current_git_branch", side_effect=["main", "circus/issue-7-create-branch-before-launch"]):
+                with patch.object(handler, "is_working_tree_clean", return_value=True):
+                    with patch.object(handler, "local_branch_exists", return_value=False):
+                        with patch.object(handler, "checkout_or_create_local_branch", return_value=True) as mock_checkout:
+                            result = handler.prepare_developer_branch(item)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["branch"], "circus/issue-7-create-branch-before-launch")
+        mock_checkout.assert_called_once_with("C:/target/repo", "circus/issue-7-create-branch-before-launch", False)
+
+    def test_prepare_developer_branch_uses_existing_branch_when_present(self):
+        item = {"number": 8, "title": "Reuse existing branch"}
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "get_current_git_branch", side_effect=["main", "circus/issue-8-reuse-existing-branch"]):
+                with patch.object(handler, "is_working_tree_clean", return_value=True):
+                    with patch.object(handler, "local_branch_exists", return_value=True):
+                        with patch.object(handler, "checkout_or_create_local_branch", return_value=True) as mock_checkout:
+                            result = handler.prepare_developer_branch(item)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["branch"], "circus/issue-8-reuse-existing-branch")
+        mock_checkout.assert_called_once_with("C:/target/repo", "circus/issue-8-reuse-existing-branch", True)
+
+    def test_detect_default_base_branch_prefers_origin_head_symbolic_ref(self):
+        with patch.object(
+            handler,
+            "run_git_command_in_repo",
+            return_value=Mock(returncode=0, stdout="origin/main\n", stderr=""),
+        ) as mock_git:
+            branch_name, source = handler.detect_default_base_branch("C:/target/repo")
+
+        self.assertEqual(branch_name, "main")
+        self.assertEqual(source, "remote-head")
+        mock_git.assert_called_once_with("C:/target/repo", ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])
+
+    def test_detect_default_base_branch_falls_back_to_main_when_detection_fails(self):
+        responses = [
+            Mock(returncode=1, stdout="", stderr="no origin head"),
+            Mock(returncode=1, stdout="", stderr="remote unavailable"),
+        ]
+
+        with patch.object(handler, "run_git_command_in_repo", side_effect=responses):
+            branch_name, source = handler.detect_default_base_branch("C:/target/repo")
+
+        self.assertEqual(branch_name, "main")
+        self.assertEqual(source, "fallback")
+
+    def test_prepare_architect_execution_branch_checks_out_detected_base_branch(self):
+        item = {"type": "issue", "number": 3, "title": "Architect prep"}
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "get_current_git_branch", side_effect=["circus/issue-3-work", "main"]):
+                with patch.object(handler, "is_working_tree_clean", return_value=True):
+                    with patch.object(handler, "detect_default_base_branch", return_value=("main", "remote-head")):
+                        with patch.object(handler, "checkout_branch", return_value=True) as mock_checkout:
+                            result = handler.prepare_architect_execution_branch(item)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["branch"], "main")
+        mock_checkout.assert_called_once_with("C:/target/repo", "main")
+
+    def test_prepare_architect_execution_branch_uses_fallback_main_when_detection_fails(self):
+        item = {"type": "issue", "number": 4, "title": "Architect fallback"}
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "get_current_git_branch", side_effect=["feature/stale", "main"]):
+                with patch.object(handler, "is_working_tree_clean", return_value=True):
+                    with patch.object(handler, "detect_default_base_branch", return_value=("main", "fallback")):
+                        with patch.object(handler, "checkout_branch", return_value=True) as mock_checkout:
+                            result = handler.prepare_architect_execution_branch(item)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["branch"], "main")
+        mock_checkout.assert_called_once_with("C:/target/repo", "main")
+
+    def test_prepare_architect_execution_branch_blocks_when_working_tree_dirty(self):
+        item = {"type": "issue", "number": 5, "title": "Architect blocked"}
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "get_current_git_branch", return_value="circus/issue-5-dirty"):
+                with patch.object(handler, "is_working_tree_clean", return_value=False):
+                    with patch.object(handler, "checkout_branch") as mock_checkout:
+                        result = handler.prepare_architect_execution_branch(item)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "dirty-working-tree")
+        self.assertEqual(result["current_branch"], "circus/issue-5-dirty")
+        mock_checkout.assert_not_called()
+
+    def test_process_one_item_dirty_working_tree_blocks_developer_launch_and_releases_lock(self):
+        item = {
+            "type": "issue",
+            "number": 41,
+            "title": "Developer branch blocked by dirty tree",
+            "labels": [{"name": "state:ready-for-dev"}],
+        }
+
+        with patch.object(handler, "lock_item", return_value=True):
+            with patch.object(
+                handler,
+                "prepare_developer_branch",
+                return_value={
+                    "ok": False,
+                    "reason": "dirty-working-tree",
+                    "branch": "circus/issue-41-developer-branch-blocked-by-dirty-tree",
+                    "current_branch": "main",
+                },
+            ):
+                with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                    with patch.object(handler, "add_comment") as mock_add_comment:
+                        with patch.object(handler, "write_launch_brief") as mock_write_launch_brief:
+                            dispatched = handler.process_one_item([item])
+
+        self.assertEqual(dispatched, "prelaunch-failed")
+        mock_unlock.assert_called_once_with(item)
+        mock_add_comment.assert_called_once_with(item)
+        mock_write_launch_brief.assert_not_called()
+        self.assertIn("working tree is dirty", item["comment"])
+        self.assertIn("lock label `state:agent-in-progress` was released", item["comment"])
+
+    def test_process_one_item_architect_route_prepares_base_branch_and_not_developer_branch(self):
+        item = {
+            "type": "issue",
+            "number": 42,
+            "title": "Architect path",
+            "labels": [{"name": "state:ready-for-architecture"}],
+        }
+
+        with patch.object(handler, "lock_item", return_value=True):
+            with patch.object(handler, "prepare_developer_branch") as mock_prepare_branch:
+                with patch.object(handler, "prepare_architect_execution_branch", return_value={"ok": True, "branch": "main"}) as mock_prepare_architect:
+                    with patch.object(handler, "write_launch_brief", return_value="Watchtower/runs/issue-42/run-001-architect/launch-brief.md"):
+                        with patch.object(handler, "launch_agent", return_value=True):
+                            dispatched = handler.process_one_item([item])
+
+        self.assertEqual(dispatched, "success")
+        mock_prepare_branch.assert_not_called()
+        mock_prepare_architect.assert_called_once_with(item)
+        self.assertEqual(item["execution_branch"], "main")
+
+    def test_process_one_item_dirty_working_tree_blocks_architect_launch_and_releases_lock(self):
+        item = {
+            "type": "issue",
+            "number": 43,
+            "title": "Architect blocked by dirty tree",
+            "labels": [{"name": "state:ready-for-architecture"}],
+        }
+
+        with patch.object(handler, "lock_item", return_value=True):
+            with patch.object(
+                handler,
+                "prepare_architect_execution_branch",
+                return_value={
+                    "ok": False,
+                    "reason": "dirty-working-tree",
+                    "current_branch": "circus/issue-43-dirty",
+                },
+            ):
+                with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                    with patch.object(handler, "add_comment") as mock_add_comment:
+                        with patch.object(handler, "write_launch_brief") as mock_write_launch_brief:
+                            dispatched = handler.process_one_item([item])
+
+        self.assertEqual(dispatched, "prelaunch-failed")
+        mock_unlock.assert_called_once_with(item)
+        mock_add_comment.assert_called_once_with(item)
+        mock_write_launch_brief.assert_not_called()
+        self.assertIn("blocked architect launch", item["comment"])
+        self.assertIn("working tree is dirty", item["comment"])
+        self.assertIn("lock label `state:agent-in-progress` was released", item["comment"])
 
     def test_build_launch_brief_markdown_marks_missing_role_reference(self):
         item = {

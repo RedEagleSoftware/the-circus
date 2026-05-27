@@ -15,6 +15,7 @@ TARGET_REPO_PATH = os.getenv("CIRCUS_TARGET_REPO_PATH")
 POLL_INTERVAL = 60  # seconds
 DEFAULT_MAX_STEPS_PER_RUN = 1
 MAX_STEPS_PER_RUN_ENV = "CIRCUS_MAX_STEPS_PER_RUN"
+MAX_BRANCH_SLUG_LENGTH = 60
 
 # Label to Agent Mapping
 LABEL_MAP = {
@@ -459,6 +460,12 @@ def build_thin_prompt(item, state_label, mode, role_prompt_path, launch_brief_pa
     if item.get("url"):
         prompt_lines.append(f"- URL: {item['url']}")
 
+    if item.get("working_branch"):
+        prompt_lines.append(f"- working branch: {item['working_branch']}")
+
+    if item.get("execution_branch"):
+        prompt_lines.append(f"- execution branch: {item['execution_branch']}")
+
     prompt_lines.extend(
         [
             f"- resolved state label: {state_label}",
@@ -579,6 +586,245 @@ def validate_target_repo_workspace(target_repo_path, expected_repo):
     return True
 
 
+def slugify_branch_title(value, max_length=MAX_BRANCH_SLUG_LENGTH):
+    normalized = re.sub(r"[^a-z0-9]+", "-", str(value).lower()).strip("-")
+    if max_length > 0:
+        normalized = normalized[:max_length].strip("-")
+
+    return normalized or "untitled"
+
+
+def build_developer_branch_name(item):
+    item_number = item.get("number")
+    title_slug = slugify_branch_title(item.get("title", ""))
+    return f"circus/issue-{item_number}-{title_slug}"
+
+
+def run_git_command_in_repo(repo_path, git_args):
+    try:
+        return subprocess.run(
+            ["git", *git_args],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+    except (OSError, ValueError) as error:
+        print(f"[Dispatch] Git command failed to start in '{repo_path}': {' '.join(['git', *git_args])}")
+        print(f"[Dispatch] Git launch error: {error}")
+        return None
+
+
+def get_current_git_branch(repo_path):
+    result = run_git_command_in_repo(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"])
+    if result is None or result.returncode != 0:
+        stderr = result.stderr.strip() if result and result.stderr else "unknown error"
+        print(f"[Dispatch] Unable to determine current git branch: {stderr}")
+        return None
+
+    branch_name = result.stdout.strip()
+    return branch_name or None
+
+
+def is_working_tree_clean(repo_path):
+    result = run_git_command_in_repo(repo_path, ["status", "--porcelain"])
+    if result is None or result.returncode != 0:
+        stderr = result.stderr.strip() if result and result.stderr else "unknown error"
+        print(f"[Dispatch] Unable to inspect working tree status: {stderr}")
+        return None
+
+    return result.stdout.strip() == ""
+
+
+def local_branch_exists(repo_path, branch_name):
+    result = run_git_command_in_repo(repo_path, ["branch", "--list", branch_name])
+    if result is None or result.returncode != 0:
+        stderr = result.stderr.strip() if result and result.stderr else "unknown error"
+        print(f"[Dispatch] Unable to check local branch '{branch_name}': {stderr}")
+        return None
+
+    return bool(result.stdout.strip())
+
+
+def checkout_or_create_local_branch(repo_path, branch_name, branch_exists):
+    if branch_exists:
+        checkout_command = ["checkout", branch_name]
+    else:
+        checkout_command = ["checkout", "-b", branch_name]
+
+    result = run_git_command_in_repo(repo_path, checkout_command)
+    if result is None or result.returncode != 0:
+        stderr = result.stderr.strip() if result and result.stderr else "unknown error"
+        print(f"[Dispatch] Failed to switch to branch '{branch_name}': {stderr}")
+        return False
+
+    return True
+
+
+def prepare_developer_branch(item):
+    repo_path = TARGET_REPO_PATH
+    if not repo_path:
+        return {
+            "ok": False,
+            "reason": "git-error",
+            "error": "CIRCUS_TARGET_REPO_PATH is not configured",
+        }
+
+    selected_branch = build_developer_branch_name(item)
+
+    print(f"[Dispatch] Selected developer working branch: {selected_branch}")
+
+    current_branch = get_current_git_branch(repo_path)
+    print(f"[Dispatch] Current branch before switch: {current_branch or '<unknown>'}")
+
+    clean_working_tree = is_working_tree_clean(repo_path)
+    if clean_working_tree is None:
+        return {
+            "ok": False,
+            "reason": "git-error",
+            "error": "unable to determine working tree status",
+        }
+
+    status_label = "clean" if clean_working_tree else "dirty"
+    print(f"[Dispatch] Working tree status before developer launch: {status_label}")
+
+    if not clean_working_tree:
+        return {
+            "ok": False,
+            "reason": "dirty-working-tree",
+            "branch": selected_branch,
+            "current_branch": current_branch,
+        }
+
+    branch_exists = local_branch_exists(repo_path, selected_branch)
+    if branch_exists is None:
+        return {
+            "ok": False,
+            "reason": "git-error",
+            "error": f"unable to verify local branch '{selected_branch}'",
+        }
+
+    if not checkout_or_create_local_branch(repo_path, selected_branch, branch_exists):
+        return {
+            "ok": False,
+            "reason": "git-error",
+            "error": f"unable to switch to branch '{selected_branch}'",
+        }
+
+    if branch_exists:
+        print(f"[Dispatch] Checked out existing branch: {selected_branch}")
+    else:
+        print(f"[Dispatch] Created and checked out branch: {selected_branch}")
+
+    final_branch = get_current_git_branch(repo_path)
+    print(f"[Dispatch] Final branch before launching Junie: {final_branch or '<unknown>'}")
+
+    return {
+        "ok": True,
+        "branch": selected_branch,
+    }
+
+
+def detect_default_base_branch(repo_path):
+    remote_head = run_git_command_in_repo(repo_path, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])
+    if remote_head is not None and remote_head.returncode == 0:
+        remote_ref = remote_head.stdout.strip()
+        if remote_ref and "/" in remote_ref:
+            return remote_ref.split("/", 1)[1], "remote-head"
+
+    if remote_head is not None and remote_head.returncode != 0:
+        stderr = remote_head.stderr.strip() if remote_head.stderr else "unknown error"
+        print(f"[Dispatch] Unable to resolve origin/HEAD symbolic ref: {stderr}")
+
+    remote_show = run_git_command_in_repo(repo_path, ["remote", "show", "origin"])
+    if remote_show is not None and remote_show.returncode == 0:
+        for line in remote_show.stdout.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("HEAD branch:"):
+                detected_branch = stripped.split(":", 1)[1].strip()
+                if detected_branch:
+                    return detected_branch, "remote-show"
+
+    if remote_show is not None and remote_show.returncode != 0:
+        stderr = remote_show.stderr.strip() if remote_show.stderr else "unknown error"
+        print(f"[Dispatch] Unable to inspect remote origin metadata for default branch: {stderr}")
+
+    return "main", "fallback"
+
+
+def checkout_branch(repo_path, branch_name):
+    result = run_git_command_in_repo(repo_path, ["checkout", branch_name])
+    if result is None or result.returncode != 0:
+        stderr = result.stderr.strip() if result and result.stderr else "unknown error"
+        print(f"[Dispatch] Failed to checkout branch '{branch_name}': {stderr}")
+        return False
+
+    return True
+
+
+def prepare_architect_execution_branch(item):
+    repo_path = TARGET_REPO_PATH
+    if not repo_path:
+        return {
+            "ok": False,
+            "reason": "git-error",
+            "error": "CIRCUS_TARGET_REPO_PATH is not configured",
+        }
+
+    print("[Dispatch] Preparing architect repository context...")
+    current_branch = get_current_git_branch(repo_path)
+    print(f"[Dispatch] Current branch: {current_branch or '<unknown>'}")
+
+    clean_working_tree = is_working_tree_clean(repo_path)
+    if clean_working_tree is None:
+        return {
+            "ok": False,
+            "reason": "git-error",
+            "error": "unable to determine working tree status",
+        }
+
+    status_label = "clean" if clean_working_tree else "dirty"
+    print(f"[Dispatch] Working tree status before architect launch: {status_label}")
+
+    if not clean_working_tree:
+        return {
+            "ok": False,
+            "reason": "dirty-working-tree",
+            "current_branch": current_branch,
+        }
+
+    base_branch, detection_source = detect_default_base_branch(repo_path)
+    if detection_source == "fallback":
+        print("[Dispatch] Default branch detection failed; falling back to base branch: main")
+    else:
+        print(f"[Dispatch] Detected base branch: {base_branch}")
+
+    if current_branch != base_branch:
+        print("[Dispatch] Checking out base branch for architect execution...")
+        if not checkout_branch(repo_path, base_branch):
+            return {
+                "ok": False,
+                "reason": "git-error",
+                "error": f"unable to checkout base branch '{base_branch}'",
+            }
+    else:
+        print("[Dispatch] Checkout not required; already on base branch.")
+
+    final_branch = get_current_git_branch(repo_path)
+    print(f"[Dispatch] Architect execution branch: {final_branch or '<unknown>'}")
+    if final_branch != base_branch:
+        return {
+            "ok": False,
+            "reason": "git-error",
+            "error": f"base branch checkout verification failed (expected '{base_branch}', got '{final_branch or '<unknown>'}')",
+        }
+
+    return {
+        "ok": True,
+        "branch": final_branch,
+    }
+
+
 def sanitize_filename_part(value):
     safe = []
     for char in str(value).lower():
@@ -674,6 +920,16 @@ def build_launch_brief_markdown(item, state_label, config, role_prompt_path, tim
         "## Assignment",
         f"- repository: `{REPO}`",
         f"- target repo path: `{normalized_target_repo_path}`",
+    ]
+
+    if item.get("working_branch"):
+        lines.append(f"- working branch: `{item['working_branch']}`")
+
+    if item.get("execution_branch"):
+        lines.append(f"- execution branch: `{item['execution_branch']}`")
+
+    lines.extend(
+        [
         f"- item type: `{item['type']}`",
         f"- item number: `{item['number']}`",
         f"- title: `{item['title']}`",
@@ -699,7 +955,8 @@ def build_launch_brief_markdown(item, state_label, config, role_prompt_path, tim
         "",
         "## Agent Profile",
         f"- profile source: `{profile_source or '<not available>'}`",
-    ]
+        ]
+    )
 
     if shared_context_paths:
         lines.extend(
@@ -902,6 +1159,104 @@ def process_one_item(items):
             return "lock-failed"
 
         print(f"[Dispatch] Lock acquired for {item['type']} #{item['number']}.")
+
+        item.pop("working_branch", None)
+        item.pop("execution_branch", None)
+        if config["agent"] == "junie" and config["mode"] == "developer":
+            branch_setup = prepare_developer_branch(item)
+            if not branch_setup.get("ok"):
+                if branch_setup.get("reason") == "dirty-working-tree":
+                    print(
+                        f"[Dispatch] Blocking developer launch for {item['type']} #{item['number']}: "
+                        "target repository working tree is dirty."
+                    )
+                    print(f"[Dispatch] Releasing lock for {item['type']} #{item['number']} due to pre-launch setup failure...")
+                    lock_released = unlock_item(item)
+
+                    if lock_released:
+                        print(f"[Dispatch] Lock cleanup succeeded for {item['type']} #{item['number']}.")
+                    else:
+                        print(
+                            f"[Dispatch] Lock cleanup failed for {item['type']} #{item['number']}; "
+                            "manual cleanup may be required."
+                        )
+
+                    lock_result = "released" if lock_released else "could not be released"
+                    current_branch = branch_setup.get("current_branch") or "<unknown>"
+                    item["comment"] = (
+                        f"Handler blocked developer launch for {item['type']} #{item['number']} because "
+                        f"the target repository working tree is dirty on branch `{current_branch}`. "
+                        f"The lock label `{LOCK_LABEL}` was {lock_result}. "
+                        "Please clean the workspace and retry dispatch."
+                    )
+                    add_comment(item)
+                    return "prelaunch-failed"
+
+                print(
+                    f"[Dispatch] Developer branch setup failed for {item['type']} #{item['number']}: "
+                    f"{branch_setup.get('error', 'unknown error')}"
+                )
+                print(f"[Dispatch] Releasing lock for {item['type']} #{item['number']} due to pre-launch setup failure...")
+                lock_released = unlock_item(item)
+
+                if lock_released:
+                    print(f"[Dispatch] Lock cleanup succeeded for {item['type']} #{item['number']}.")
+                else:
+                    print(f"[Dispatch] Lock cleanup failed for {item['type']} #{item['number']}; manual cleanup may be required.")
+
+                add_prelaunch_setup_failure_comment(item, branch_setup.get("error", "developer branch setup failed"), lock_released)
+                add_comment(item)
+                return "prelaunch-failed"
+
+            item["working_branch"] = branch_setup["branch"]
+
+        if config["agent"] == "codex" and config["mode"] == "architect":
+            branch_setup = prepare_architect_execution_branch(item)
+            if not branch_setup.get("ok"):
+                if branch_setup.get("reason") == "dirty-working-tree":
+                    print(
+                        f"[Dispatch] Blocking architect launch for {item['type']} #{item['number']}: "
+                        "target repository working tree is dirty."
+                    )
+                    print(f"[Dispatch] Releasing lock for {item['type']} #{item['number']} due to pre-launch setup failure...")
+                    lock_released = unlock_item(item)
+
+                    if lock_released:
+                        print(f"[Dispatch] Lock cleanup succeeded for {item['type']} #{item['number']}.")
+                    else:
+                        print(
+                            f"[Dispatch] Lock cleanup failed for {item['type']} #{item['number']}; "
+                            "manual cleanup may be required."
+                        )
+
+                    lock_result = "released" if lock_released else "could not be released"
+                    current_branch = branch_setup.get("current_branch") or "<unknown>"
+                    item["comment"] = (
+                        f"Handler blocked architect launch for {item['type']} #{item['number']} because "
+                        f"the target repository working tree is dirty on branch `{current_branch}`. "
+                        f"The lock label `{LOCK_LABEL}` was {lock_result}. "
+                        "Please clean the workspace and retry dispatch."
+                    )
+                    add_comment(item)
+                    return "prelaunch-failed"
+
+                print(
+                    f"[Dispatch] Architect branch setup failed for {item['type']} #{item['number']}: "
+                    f"{branch_setup.get('error', 'unknown error')}"
+                )
+                print(f"[Dispatch] Releasing lock for {item['type']} #{item['number']} due to pre-launch setup failure...")
+                lock_released = unlock_item(item)
+
+                if lock_released:
+                    print(f"[Dispatch] Lock cleanup succeeded for {item['type']} #{item['number']}.")
+                else:
+                    print(f"[Dispatch] Lock cleanup failed for {item['type']} #{item['number']}; manual cleanup may be required.")
+
+                add_prelaunch_setup_failure_comment(item, branch_setup.get("error", "architect branch setup failed"), lock_released)
+                add_comment(item)
+                return "prelaunch-failed"
+
+            item["execution_branch"] = branch_setup["branch"]
 
         role_prompt_path = resolve_role_prompt_path(config["mode"])
 
