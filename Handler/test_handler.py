@@ -262,7 +262,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(dispatched, "prelaunch-failed")
         mock_unlock.assert_called_once_with(item)
         mock_add_comment.assert_called_once_with(item)
-        self.assertIn("failed to start Junie before execution began", item["comment"])
+        self.assertIn("failed to start junie before execution began", item["comment"])
         self.assertIn("The lock label `state:agent-in-progress` was released", item["comment"])
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("Junie failed to launch before execution started" in line for line in printed_lines))
@@ -291,7 +291,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_unlock.assert_called_once_with(item)
         mock_add_comment.assert_called_once_with(item)
         mock_advance_transition.assert_not_called()
-        self.assertIn("failed to start Junie before execution began", item["comment"])
+        self.assertIn("failed to start codex before execution began", item["comment"])
         self.assertIn("The lock label `state:agent-in-progress` was released", item["comment"])
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("Codex failed to launch before execution started" in line for line in printed_lines))
@@ -309,7 +309,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                                             handler.poll()
 
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
-        self.assertTrue(any("[Handler] Max workflow steps this run: 1" in line for line in printed_lines))
+        self.assertTrue(any("[Handler] Max workflow steps per issue this run: 1" in line for line in printed_lines))
         self.assertTrue(any("[Poll] Starting cycle #1..." in line for line in printed_lines))
         self.assertTrue(any("[Poll] Retrieved issues=0, prs=0, candidates=0." in line for line in printed_lines))
         self.assertTrue(any("[Poll] No candidate items matched workflow labels this cycle." in line for line in printed_lines))
@@ -320,7 +320,7 @@ class HandlerObservabilityTests(unittest.TestCase):
             self.assertEqual(handler.get_max_steps_per_run(), 1)
 
     def test_get_max_steps_per_run_uses_configured_value(self):
-        with patch.dict(os.environ, {"CIRCUS_MAX_STEPS_PER_RUN": "2"}, clear=True):
+        with patch.dict(os.environ, {"CIRCUS_MAX_WORKFLOW_STEPS_PER_ISSUE": "2"}, clear=True):
             self.assertEqual(handler.get_max_steps_per_run(), 2)
 
     def test_poll_allows_second_dispatch_and_repolls_when_max_steps_is_two(self):
@@ -1096,12 +1096,102 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertTrue(any("Adding label: state:ready-for-review" in line for line in printed_lines))
         self.assertTrue(any("Workflow advanced to review stage for issue #4." in line for line in printed_lines))
 
-    def test_launch_agent_codex_non_architect_mode_remains_non_executing_placeholder(self):
+    def test_find_open_review_pr_for_issue_prefers_closes_marker(self):
+        payload = json.dumps(
+            [
+                {
+                    "number": 201,
+                    "url": "https://github.com/owner/repo/pull/201",
+                    "body": "References #9",
+                },
+                {
+                    "number": 202,
+                    "url": "https://github.com/owner/repo/pull/202",
+                    "body": "Implements feature. Closes #9",
+                },
+            ]
+        )
+
+        with patch.object(handler, "run_command", return_value=payload):
+            result = handler.find_open_review_pr_for_issue(9)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["match_reason"], "preferred-closes")
+        self.assertEqual(result["pr"]["number"], 202)
+
+    def test_find_open_review_pr_for_issue_returns_none_when_no_match_exists(self):
+        payload = json.dumps(
+            [
+                {
+                    "number": 301,
+                    "url": "https://github.com/owner/repo/pull/301",
+                    "body": "No linked issue in body.",
+                }
+            ]
+        )
+
+        with patch.object(handler, "run_command", return_value=payload):
+            result = handler.find_open_review_pr_for_issue(14)
+
+        self.assertTrue(result["ok"])
+        self.assertIsNone(result["pr"])
+
+    def test_launch_agent_codex_reviewer_runs_codex_review_with_pr_url_and_context(self):
         item = {
             "type": "issue",
             "number": 9,
             "title": "Review changes",
             "url": "https://github.com/owner/repo/issues/9",
+            "review_pr": {
+                "number": 77,
+                "url": "https://github.com/owner/repo/pull/77",
+            },
+        }
+        config = {
+            "agent": "codex",
+            "mode": "reviewer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-9/run-001-reviewer/launch-brief.md"
+        review_result_path = "Watchtower/runs/issue-9/run-001-reviewer/review-result.md"
+        absolute_launch_brief_path = "C:/abs/Watchtower/runs/issue-9/run-001-reviewer/launch-brief.md"
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
+                with patch.object(handler, "build_reviewer_result_path", return_value=review_result_path):
+                    with patch.object(handler, "parse_review_result_outcome", return_value="APPROVED"):
+                        with patch.object(handler, "advance_reviewer_workflow_on_approved", return_value=True) as mock_transition:
+                            with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
+                                launched = handler.launch_agent(
+                                    item,
+                                    "state:ready-for-review",
+                                    config,
+                                    os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
+                                    launch_brief_path,
+                                )
+
+        self.assertTrue(launched)
+        mock_subprocess_run.assert_called_once()
+        args, kwargs = mock_subprocess_run.call_args
+        self.assertEqual(args[0], ["codex", "review", "https://github.com/owner/repo/pull/77"])
+        self.assertEqual(kwargs["cwd"], "C:/target/repo")
+        self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_PR_URL"], "https://github.com/owner/repo/pull/77")
+        self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_ISSUE_NUMBER"], "9")
+        self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_LAUNCH_BRIEF"], absolute_launch_brief_path)
+        self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_RESULT_PATH"], review_result_path)
+        mock_transition.assert_called_once_with(item)
+
+    def test_launch_agent_codex_reviewer_ambiguous_output_does_not_transition_labels(self):
+        item = {
+            "type": "issue",
+            "number": 9,
+            "title": "Review changes",
+            "url": "https://github.com/owner/repo/issues/9",
+            "review_pr": {
+                "number": 77,
+                "url": "https://github.com/owner/repo/pull/77",
+            },
         }
         config = {
             "agent": "codex",
@@ -1111,20 +1201,25 @@ class HandlerObservabilityTests(unittest.TestCase):
         }
 
         with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
-            with patch.object(handler.subprocess, "run") as mock_subprocess_run:
-                with patch("builtins.print") as mock_print:
-                    launched = handler.launch_agent(
-                        item,
-                        "state:ready-for-review",
-                        config,
-                        os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
-                        "Watchtower/runs/issue-9/run-001-reviewer/launch-brief.md",
-                    )
+            with patch.object(handler, "build_reviewer_result_path", return_value="Watchtower/runs/issue-9/run-001-reviewer/review-result.md"):
+                with patch.object(handler, "parse_review_result_outcome", return_value=None):
+                    with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                        with patch.object(handler, "advance_reviewer_workflow_on_approved") as mock_approved:
+                            with patch.object(handler, "advance_reviewer_workflow_on_changes_requested") as mock_changes:
+                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                    launched = handler.launch_agent(
+                                        item,
+                                        "state:ready-for-review",
+                                        config,
+                                        os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
+                                        "Watchtower/runs/issue-9/run-001-reviewer/launch-brief.md",
+                                    )
 
         self.assertTrue(launched)
-        mock_subprocess_run.assert_not_called()
-        printed_lines = [call.args[0] for call in mock_print.call_args_list]
-        self.assertTrue(any("Codex execution flow currently enabled only for architect mode" in line for line in printed_lines))
+        mock_approved.assert_not_called()
+        mock_changes.assert_not_called()
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("no unambiguous review outcome marker", item["comment"])
 
     def test_junie_command_generation_is_unchanged(self):
         command = handler.build_junie_command(
@@ -1435,6 +1530,30 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_prepare_branch.assert_not_called()
         mock_prepare_architect.assert_called_once_with(item)
         self.assertEqual(item["execution_branch"], "main")
+
+    def test_process_one_item_ready_for_review_with_missing_pr_skips_launch_and_releases_lock(self):
+        item = {
+            "type": "issue",
+            "number": 42,
+            "title": "Reviewer path missing linked PR",
+            "labels": [{"name": "state:ready-for-review"}],
+        }
+
+        with patch.object(handler, "lock_item", return_value=True):
+            with patch.object(handler, "find_open_review_pr_for_issue", return_value={"ok": True, "pr": None}):
+                with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                    with patch.object(handler, "add_comment") as mock_add_comment:
+                        with patch.object(handler, "write_launch_brief") as mock_write_launch_brief:
+                            with patch.object(handler, "launch_agent") as mock_launch_agent:
+                                dispatched = handler.process_one_item([item])
+
+        self.assertEqual(dispatched, "prelaunch-failed")
+        mock_unlock.assert_called_once_with(item)
+        mock_add_comment.assert_called_once_with(item)
+        mock_write_launch_brief.assert_not_called()
+        mock_launch_agent.assert_not_called()
+        self.assertIn("no linked open PR was discovered", item["comment"])
+        self.assertIn("labels were left unchanged", item["comment"])
 
     def test_process_one_item_dirty_working_tree_blocks_architect_launch_and_releases_lock(self):
         item = {

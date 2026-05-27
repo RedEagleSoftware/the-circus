@@ -15,7 +15,7 @@ REPO = os.getenv("CIRCUS_REPO")  # Format: owner/repo
 TARGET_REPO_PATH = os.getenv("CIRCUS_TARGET_REPO_PATH")
 POLL_INTERVAL = 60  # seconds
 DEFAULT_MAX_STEPS_PER_RUN = 1
-MAX_STEPS_PER_RUN_ENV = "CIRCUS_MAX_STEPS_PER_RUN"
+MAX_STEPS_PER_RUN_ENV = "CIRCUS_MAX_WORKFLOW_STEPS_PER_ISSUE"
 MAX_BRANCH_SLUG_LENGTH = 60
 
 # Label to Agent Mapping
@@ -53,6 +53,9 @@ SHARED_ARTIFACT_PLACEHOLDERS = {
     "running-notes.md": "# Running Notes\n\nNo running notes have been recorded yet.",
     "decision-log.md": "# Decision Log\n\nNo decisions have been recorded yet.",
 }
+
+REVIEW_RESULT_FILENAME = "review-result.md"
+REVIEW_OUTCOMES = {"APPROVED", "CHANGES_REQUESTED", "BLOCKED"}
 
 AGENT_EXECUTABLE_ENV_OVERRIDES = {
     "junie": "CIRCUS_JUNIE_EXECUTABLE",
@@ -328,6 +331,44 @@ def advance_developer_workflow_on_success(item):
     )
 
 
+def advance_reviewer_workflow_on_approved(item):
+    transition_steps = [
+        ("remove", LOCK_LABEL),
+        ("remove", "state:ready-for-review"),
+        ("add", "state:ready-for-human-review"),
+    ]
+
+    return execute_label_transition(
+        item,
+        workflow_name="Reviewer",
+        transition_steps=transition_steps,
+        success_message="[Dispatch] Workflow advanced to human review stage for issue #{number}.",
+        failure_message=(
+            "[Dispatch] Reviewer workflow transition encountered label update failures for issue #{number}; "
+            "manual inspection is required."
+        ),
+    )
+
+
+def advance_reviewer_workflow_on_changes_requested(item):
+    transition_steps = [
+        ("remove", LOCK_LABEL),
+        ("remove", "state:ready-for-review"),
+        ("add", "state:changes-requested"),
+    ]
+
+    return execute_label_transition(
+        item,
+        workflow_name="Reviewer",
+        transition_steps=transition_steps,
+        success_message="[Dispatch] Workflow routed back to development for issue #{number}.",
+        failure_message=(
+            "[Dispatch] Reviewer workflow transition encountered label update failures for issue #{number}; "
+            "manual inspection is required."
+        ),
+    )
+
+
 def build_developer_commit_message(item):
     return f"Implement issue #{item['number']}: {item.get('title', '').strip()}"
 
@@ -397,6 +438,47 @@ def find_existing_open_pr_for_branch(branch_name):
     return {
         "ok": True,
         "url": prs[0].get("url"),
+    }
+
+
+def find_open_review_pr_for_issue(issue_number):
+    cmd = "gh pr list --repo {repo} --state open --json number,url,body --limit 100".format(repo=REPO)
+    payload = run_command(cmd)
+    if payload is None:
+        return {
+            "ok": False,
+            "error": "unable to query open pull requests",
+            "pr": None,
+        }
+
+    try:
+        prs = json.loads(payload)
+    except json.JSONDecodeError:
+        return {
+            "ok": False,
+            "error": "unable to parse pull request listing response",
+            "pr": None,
+        }
+
+    preferred_pattern = re.compile(rf"\bcloses\s*#{issue_number}\b", re.IGNORECASE)
+    fallback_pattern = re.compile(rf"#{issue_number}\b")
+    preferred_match = None
+    fallback_match = None
+
+    for pr in prs:
+        body = pr.get("body") or ""
+        if preferred_pattern.search(body):
+            preferred_match = pr
+            break
+
+        if fallback_match is None and fallback_pattern.search(body):
+            fallback_match = pr
+
+    selected_pr = preferred_match or fallback_match
+    return {
+        "ok": True,
+        "pr": selected_pr,
+        "match_reason": "preferred-closes" if preferred_match else ("fallback-issue-reference" if fallback_match else None),
     }
 
 
@@ -699,6 +781,15 @@ def build_codex_command(model, project_path, task_text):
     ]
 
 
+def build_codex_review_command(review_target):
+    codex_executable = EXECUTABLE_PATHS.get("codex", "codex")
+    return [
+        codex_executable,
+        "review",
+        str(review_target),
+    ]
+
+
 def is_codex_sandbox_bypass_enabled():
     bypass_value = os.getenv("CIRCUS_CODEX_BYPASS_SANDBOX", "")
     return str(bypass_value).strip().lower() == "true"
@@ -711,6 +802,31 @@ def build_codex_command_with_optional_sandbox_bypass(model, project_path, task_t
         command.insert(-1, "--dangerously-bypass-approvals-and-sandbox")
 
     return command
+
+
+def build_reviewer_result_path(launch_brief_path):
+    return normalize_path_for_display(os.path.join(os.path.dirname(launch_brief_path), REVIEW_RESULT_FILENAME))
+
+
+def parse_review_result_outcome(review_result_path):
+    if not os.path.exists(review_result_path):
+        return None
+
+    try:
+        with open(review_result_path, "r", encoding="utf-8") as result_file:
+            content = result_file.read()
+    except OSError:
+        return None
+
+    matches = []
+    for outcome in REVIEW_OUTCOMES:
+        if re.search(rf"\b{re.escape(outcome)}\b", content):
+            matches.append(outcome)
+
+    if len(matches) != 1:
+        return None
+
+    return matches[0]
 
 
 def extract_github_repo_slug(value):
@@ -1266,8 +1382,99 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             return True
     elif agent == "codex":
         print(f"[Dispatch] Codex routing metadata: mode={mode}, effort={effort}")
+        if mode == "reviewer":
+            review_pr = item.get("review_pr") or {}
+            review_pr_url = review_pr.get("url")
+            review_pr_number = review_pr.get("number")
+            if not review_pr_url:
+                item["prelaunch_error"] = "missing linked pull request metadata"
+                print("[Dispatch] Reviewer launch aborted: linked pull request metadata is missing.")
+                return False
+
+            absolute_launch_brief_path = os.path.abspath(launch_brief_path)
+            item_run_root = get_item_run_root(item)
+            shared_context_paths = build_shared_context_paths(item_run_root)
+            architecture_handoff_path = shared_context_paths["architecture_handoff"]
+            review_result_path = build_reviewer_result_path(launch_brief_path)
+            cmd = build_codex_review_command(review_pr_url)
+            command_shape = f"{cmd[0]} {cmd[1]} {cmd[2]}"
+
+            reviewer_env = os.environ.copy()
+            reviewer_env["CIRCUS_REVIEW_PR_URL"] = str(review_pr_url)
+            reviewer_env["CIRCUS_REVIEW_PR_NUMBER"] = str(review_pr_number or "")
+            reviewer_env["CIRCUS_REVIEW_ISSUE_NUMBER"] = str(number)
+            reviewer_env["CIRCUS_REVIEW_LAUNCH_BRIEF"] = absolute_launch_brief_path
+            reviewer_env["CIRCUS_REVIEW_ARCHITECTURE_HANDOFF"] = architecture_handoff_path
+            reviewer_env["CIRCUS_REVIEW_TARGET_REPO_PATH"] = TARGET_REPO_PATH or ""
+            reviewer_env["CIRCUS_REVIEW_RESULT_PATH"] = review_result_path
+
+            print(f"[Dispatch] Review target issue: #{number}")
+            print(f"[Dispatch] Review target PR: #{review_pr_number} ({review_pr_url})")
+            print(f"[Dispatch] Launch brief absolute path: {absolute_launch_brief_path}")
+            print(f"[Dispatch] Architecture handoff path: {architecture_handoff_path}")
+            print(f"[Dispatch] Review result artifact path: {review_result_path}")
+            print("[Dispatch] Reviewer command: codex review")
+            print(f"[Dispatch] Executing: {command_shape}")
+            print(f"[Dispatch] Codex reviewer execution cwd: {TARGET_REPO_PATH}")
+
+            try:
+                result = subprocess.run(cmd, cwd=TARGET_REPO_PATH, text=True, env=reviewer_env)
+            except OSError as error:
+                item["prelaunch_error"] = str(error)
+                print(f"[Dispatch] Codex reviewer failed to launch before execution started: {error}")
+                return False
+
+            print(f"[Dispatch] Codex reviewer exit code: {result.returncode}")
+            if result.returncode != 0:
+                item["comment"] = (
+                    f"Codex reviewer launched for {item['type']} #{number} and exited with non-zero status "
+                    f"({result.returncode}). The lock label `{LOCK_LABEL}` remains in place for human inspection."
+                )
+                add_comment(item)
+                item["agent_exit_non_zero"] = True
+                print(
+                    f"[Dispatch] Codex reviewer exited non-zero for {item['type']} #{number}; "
+                    "lock remains and human inspection is required."
+                )
+                return False
+
+            item.pop("agent_exit_non_zero", None)
+            review_outcome = parse_review_result_outcome(review_result_path)
+            if review_outcome == "APPROVED":
+                print("[Dispatch] Review result handling: APPROVED.")
+                return advance_reviewer_workflow_on_approved(item)
+
+            if review_outcome == "CHANGES_REQUESTED":
+                print("[Dispatch] Review result handling: CHANGES_REQUESTED.")
+                return advance_reviewer_workflow_on_changes_requested(item)
+
+            if review_outcome == "BLOCKED":
+                print(
+                    "[Dispatch] Review result handling: BLOCKED (no automatic label transition); "
+                    "human inspection required and lock remains in place."
+                )
+                item["comment"] = (
+                    f"Codex reviewer reported `BLOCKED` for issue #{number}. "
+                    f"Workflow labels were not transitioned automatically; the lock label `{LOCK_LABEL}` remains in place "
+                    "for human inspection."
+                )
+                add_comment(item)
+                return True
+
+            print(
+                "[Dispatch] Review result handling: no unambiguous review outcome marker found; "
+                "labels were not transitioned automatically."
+            )
+            item["comment"] = (
+                f"Codex reviewer completed for issue #{number}, but no unambiguous review outcome marker "
+                f"(`APPROVED`, `CHANGES_REQUESTED`, or `BLOCKED`) was found in `{review_result_path}`. "
+                "Workflow labels were not transitioned automatically; human review of reviewer output is required."
+            )
+            add_comment(item)
+            return True
+
         if mode != "architect":
-            print("[Dispatch] TODO: Codex execution flow currently enabled only for architect mode.")
+            print("[Dispatch] TODO: Codex execution flow currently enabled only for architect/reviewer modes.")
             return True
 
         absolute_launch_brief_path = os.path.abspath(launch_brief_path)
@@ -1368,6 +1575,7 @@ def process_one_item(items):
 
         item.pop("working_branch", None)
         item.pop("execution_branch", None)
+        item.pop("review_pr", None)
         if config["agent"] == "junie" and config["mode"] == "developer":
             branch_setup = prepare_developer_branch(item)
             if not branch_setup.get("ok"):
@@ -1464,6 +1672,65 @@ def process_one_item(items):
 
             item["execution_branch"] = branch_setup["branch"]
 
+        if config["agent"] == "codex" and config["mode"] == "reviewer":
+            if item["type"] != "issue":
+                print(
+                    f"[Dispatch] Skipping reviewer launch for {item['type']} #{item['number']}: "
+                    "review dispatch is issue-driven in v1."
+                )
+                lock_released = unlock_item(item)
+                lock_result = "released" if lock_released else "could not be released"
+                item["comment"] = (
+                    "Handler skipped review dispatch because workflow review state is issue-owned in v1. "
+                    f"Expected an issue, but got `{item['type']}` #{item['number']}. "
+                    f"The lock label `{LOCK_LABEL}` was {lock_result}."
+                )
+                add_comment(item)
+                return "prelaunch-failed"
+
+            print(f"[Dispatch] Review candidate selected for issue #{item['number']}; discovering linked open PR...")
+            review_pr_lookup = find_open_review_pr_for_issue(item["number"])
+            if not review_pr_lookup.get("ok"):
+                print(
+                    f"[Dispatch] Review PR discovery failed for issue #{item['number']}: "
+                    f"{review_pr_lookup.get('error', 'unknown error')}"
+                )
+                lock_released = unlock_item(item)
+                lock_result = "released" if lock_released else "could not be released"
+                item["comment"] = (
+                    f"Handler could not discover a linked open pull request for issue #{item['number']} "
+                    f"({review_pr_lookup.get('error', 'unknown error')}). Reviewer launch was skipped and "
+                    f"workflow labels were left unchanged. The lock label `{LOCK_LABEL}` was {lock_result}."
+                )
+                add_comment(item)
+                return "prelaunch-failed"
+
+            review_pr = review_pr_lookup.get("pr")
+            if not review_pr:
+                print(
+                    f"[Dispatch] No linked open PR discovered for issue #{item['number']}; "
+                    "reviewer launch skipped and labels left unchanged."
+                )
+                lock_released = unlock_item(item)
+                lock_result = "released" if lock_released else "could not be released"
+                item["comment"] = (
+                    f"Handler found issue #{item['number']} in `state:ready-for-review`, but no linked open PR "
+                    "was discovered. Reviewer launch was skipped and workflow labels were left unchanged. "
+                    f"The lock label `{LOCK_LABEL}` was {lock_result}."
+                )
+                add_comment(item)
+                return "prelaunch-failed"
+
+            item["review_pr"] = {
+                "number": review_pr.get("number"),
+                "url": review_pr.get("url"),
+            }
+            print(
+                f"[Dispatch] Linked PR discovered for issue #{item['number']}: "
+                f"#{review_pr.get('number')} ({review_pr.get('url')}) "
+                f"[{review_pr_lookup.get('match_reason', 'unspecified-match')}]."
+            )
+
         role_prompt_path = resolve_role_prompt_path(config["mode"])
 
         try:
@@ -1499,7 +1766,7 @@ def process_one_item(items):
 
             lock_result = "released" if lock_released else "could not be released"
             item["comment"] = (
-                "Handler failed to start Junie before execution began "
+                f"Handler failed to start {config['agent']} before execution began "
                 f"({prelaunch_error}). The lock label `{LOCK_LABEL}` was {lock_result}."
             )
             add_comment(item)
@@ -1542,7 +1809,7 @@ def poll():
         return
 
     max_steps_per_run = get_max_steps_per_run()
-    print(f"[Handler] Max workflow steps this run: {max_steps_per_run}")
+    print(f"[Handler] Max workflow steps per issue this run: {max_steps_per_run}")
 
     startup_retrieval_confirmed = False
     completed_steps = 0
