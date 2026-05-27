@@ -65,17 +65,22 @@
 - Create v1 orchestration proposal/specification document.
 - Expand architect role doctrine.
 - Enable architect execution flow.
-1. Generate architecture handoff artifacts from architect runs.
-2. Route developer implementation context through architecture handoffs.
+- Generate architecture handoff artifacts from architect runs.
+- Route developer implementation context through architecture handoffs.
+- Create developer branches automatically.
+- Ensure architect runs inspect the target repo base branch
+- Create pull requests automatically.
  
 ## Current Task
 
-- Create developer branches automatically.
+- Set up review flow.
 
 ## Next Likely Tasks
 
-1. Ensure architect runs inspect the target repo base branch
-1. Create pull requests automatically.
-2. Set up review flow.
-3. Add per-run result/status artifacts to Watchtower runs.
-4. Add target-repo instruction discovery conventions.
+1. Add per-run result/status artifacts to Watchtower runs.
+2. Add target-repo instruction discovery conventions.
+
+## Future Roadmap Ideas
+
+- Add configurable agent provider routing.
+- Explore converting role doctrine and reusable workflows into agent skills.

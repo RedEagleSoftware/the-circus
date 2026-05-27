@@ -56,6 +56,11 @@ SHARED_ARTIFACT_PLACEHOLDERS = {
 
 REVIEW_RESULT_FILENAME = "review-result.md"
 REVIEW_OUTCOMES = {"APPROVED", "CHANGES_REQUESTED", "BLOCKED"}
+REVIEW_OUTCOME_MARKERS = {
+    "Outcome: APPROVED": "APPROVED",
+    "Outcome: CHANGES_REQUESTED": "CHANGES_REQUESTED",
+    "Outcome: BLOCKED": "BLOCKED",
+}
 
 AGENT_EXECUTABLE_ENV_OVERRIDES = {
     "junie": "CIRCUS_JUNIE_EXECUTABLE",
@@ -714,6 +719,20 @@ def build_codex_architect_task_text(absolute_launch_brief_path):
     )
 
 
+def build_codex_reviewer_task_text(absolute_launch_brief_path, review_pr_url, review_result_path):
+    return (
+        f"Read the launch brief at {absolute_launch_brief_path} and execute the reviewer workflow. "
+        f"Review the linked pull request at {review_pr_url}. "
+        f"Write review-result.md to this exact absolute path: {review_result_path}. "
+        "The first non-empty line of review-result.md must be exactly one of: "
+        "Outcome: APPROVED, Outcome: CHANGES_REQUESTED, or Outcome: BLOCKED. "
+        "Use the strict review-result.md outcome contract. "
+        "Leave a review comment on the pull request. "
+        "Do not modify workflow labels directly. "
+        "Do not auto-merge."
+    )
+
+
 def resolve_role_prompt_path(mode):
     candidates = [os.path.join("TheFarm", "roles", f"{mode}.md")]
     if mode.endswith("-approval"):
@@ -735,7 +754,7 @@ def resolve_profile_source(role_prompt_path):
     return normalize_path_for_display(resolve_circus_runtime_path(role_prompt_path))
 
 
-def build_thin_prompt(item, state_label, mode, role_prompt_path, launch_brief_path=None):
+def build_thin_prompt(item, state_label, mode, role_prompt_path, launch_brief_path=None, review_result_path=None):
     profile_source = resolve_profile_source(role_prompt_path)
 
     prompt_lines = [
@@ -765,6 +784,19 @@ def build_thin_prompt(item, state_label, mode, role_prompt_path, launch_brief_pa
         ]
     )
 
+    if mode == "reviewer":
+        prompt_lines.extend(
+            [
+                "- reviewer artifact contract: You must write `review-result.md` before exiting.",
+                f"- reviewer result artifact absolute path: {review_result_path or '<not available>'}",
+                "- reviewer outcome first non-empty line must be exactly one of:",
+                "  - Outcome: APPROVED",
+                "  - Outcome: CHANGES_REQUESTED",
+                "  - Outcome: BLOCKED",
+                "- reviewer failure fallback: if you cannot write the file, use `Outcome: BLOCKED` and explain why.",
+            ]
+        )
+
     return "\n".join(prompt_lines)
 
 
@@ -778,15 +810,6 @@ def build_codex_command(model, project_path, task_text):
         "--cd",
         str(project_path),
         str(task_text),
-    ]
-
-
-def build_codex_review_command(review_target):
-    codex_executable = EXECUTABLE_PATHS.get("codex", "codex")
-    return [
-        codex_executable,
-        "review",
-        str(review_target),
     ]
 
 
@@ -805,7 +828,8 @@ def build_codex_command_with_optional_sandbox_bypass(model, project_path, task_t
 
 
 def build_reviewer_result_path(launch_brief_path):
-    return normalize_path_for_display(os.path.join(os.path.dirname(launch_brief_path), REVIEW_RESULT_FILENAME))
+    absolute_path = os.path.abspath(os.path.join(os.path.dirname(launch_brief_path), REVIEW_RESULT_FILENAME))
+    return normalize_path_for_display(absolute_path)
 
 
 def parse_review_result_outcome(review_result_path):
@@ -814,19 +838,16 @@ def parse_review_result_outcome(review_result_path):
 
     try:
         with open(review_result_path, "r", encoding="utf-8") as result_file:
-            content = result_file.read()
+            for raw_line in result_file:
+                line_without_newline = raw_line.rstrip("\r\n")
+                if not line_without_newline.strip():
+                    continue
+
+                return REVIEW_OUTCOME_MARKERS.get(line_without_newline)
     except OSError:
         return None
 
-    matches = []
-    for outcome in REVIEW_OUTCOMES:
-        if re.search(rf"\b{re.escape(outcome)}\b", content):
-            matches.append(outcome)
-
-    if len(matches) != 1:
-        return None
-
-    return matches[0]
+    return None
 
 
 def extract_github_repo_slug(value):
@@ -1225,7 +1246,16 @@ def build_launch_brief_path(item, mode):
     return normalize_path_for_display(brief_path)
 
 
-def build_launch_brief_markdown(item, state_label, config, role_prompt_path, timestamp, target_repo_path, shared_context_paths=None):
+def build_launch_brief_markdown(
+    item,
+    state_label,
+    config,
+    role_prompt_path,
+    timestamp,
+    target_repo_path,
+    shared_context_paths=None,
+    review_result_path=None,
+):
     # TODO: Discover target-repo agent instructions by convention (AGENTS.md,
     # .circus/roles/<mode>.md, .circus/workflows/<mode>.md) once routing contracts are finalized.
     profile_source = resolve_profile_source(role_prompt_path)
@@ -1291,6 +1321,21 @@ def build_launch_brief_markdown(item, state_label, config, role_prompt_path, tim
             ]
         )
 
+    if config.get("mode") == "reviewer":
+        lines.extend(
+            [
+                "",
+                "## Reviewer Result Contract",
+                f"- review result artifact absolute path: `{review_result_path or '<not available>'}`",
+                "- You must write `review-result.md` to this exact absolute path before exiting.",
+                "- The first non-empty line must be exactly one of:",
+                "  - `Outcome: APPROVED`",
+                "  - `Outcome: CHANGES_REQUESTED`",
+                "  - `Outcome: BLOCKED`",
+                "- If you cannot write the artifact file, set the first non-empty line to `Outcome: BLOCKED` and explain why.",
+            ]
+        )
+
     return "\n".join(lines)
 
 
@@ -1299,6 +1344,9 @@ def write_launch_brief(item, state_label, config, role_prompt_path):
     item_run_root = get_item_run_root(item)
     shared_context_paths = ensure_shared_artifacts(item_run_root)
     brief_path = build_launch_brief_path(item, config["mode"])
+    review_result_path = None
+    if config.get("mode") == "reviewer":
+        review_result_path = build_reviewer_result_path(brief_path)
     brief_content = build_launch_brief_markdown(
         item,
         state_label,
@@ -1307,6 +1355,7 @@ def write_launch_brief(item, state_label, config, role_prompt_path):
         timestamp,
         TARGET_REPO_PATH or "<not configured>",
         shared_context_paths,
+        review_result_path,
     )
     os.makedirs(os.path.dirname(brief_path), exist_ok=True)
 
@@ -1326,7 +1375,17 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
     model = config["model"]
     effort = config["effort"]
     number = item["number"]
-    thin_prompt = build_thin_prompt(item, state_label, mode, role_prompt_path, launch_brief_path)
+    reviewer_result_path_for_prompt = None
+    if mode == "reviewer":
+        reviewer_result_path_for_prompt = build_reviewer_result_path(launch_brief_path)
+    thin_prompt = build_thin_prompt(
+        item,
+        state_label,
+        mode,
+        role_prompt_path,
+        launch_brief_path,
+        review_result_path=reviewer_result_path_for_prompt,
+    )
 
     print(f"[Dispatch] Launching {agent} in {mode} mode with model={model}, effort={effort}")
     print(f"[Dispatch] Target item: {item['type']} #{number} - {item['title']}")
@@ -1382,6 +1441,19 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             return True
     elif agent == "codex":
         print(f"[Dispatch] Codex routing metadata: mode={mode}, effort={effort}")
+        codex_bypass_sandbox = is_codex_sandbox_bypass_enabled()
+
+        if codex_bypass_sandbox:
+            print(
+                "[Dispatch] WARNING: Codex sandbox bypass ENABLED via CIRCUS_CODEX_BYPASS_SANDBOX=true; "
+                "running with --dangerously-bypass-approvals-and-sandbox (HIGH RISK)."
+            )
+        else:
+            print(
+                "[Dispatch] Codex sandbox bypass disabled (default-safe mode); "
+                "set CIRCUS_CODEX_BYPASS_SANDBOX=true to enable HIGH-RISK bypass."
+            )
+
         if mode == "reviewer":
             review_pr = item.get("review_pr") or {}
             review_pr_url = review_pr.get("url")
@@ -1396,8 +1468,19 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             shared_context_paths = build_shared_context_paths(item_run_root)
             architecture_handoff_path = shared_context_paths["architecture_handoff"]
             review_result_path = build_reviewer_result_path(launch_brief_path)
-            cmd = build_codex_review_command(review_pr_url)
-            command_shape = f"{cmd[0]} {cmd[1]} {cmd[2]}"
+            reviewer_task_text = build_codex_reviewer_task_text(
+                absolute_launch_brief_path,
+                review_pr_url,
+                review_result_path,
+            )
+            cmd = build_codex_command_with_optional_sandbox_bypass(
+                model,
+                TARGET_REPO_PATH or "",
+                reviewer_task_text,
+                bypass_sandbox=codex_bypass_sandbox,
+            )
+            command_arguments = cmd[1:-1]
+            command_shape = f"{cmd[0]} {' '.join(command_arguments)} \"{cmd[-1]}\""
 
             reviewer_env = os.environ.copy()
             reviewer_env["CIRCUS_REVIEW_PR_URL"] = str(review_pr_url)
@@ -1413,7 +1496,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             print(f"[Dispatch] Launch brief absolute path: {absolute_launch_brief_path}")
             print(f"[Dispatch] Architecture handoff path: {architecture_handoff_path}")
             print(f"[Dispatch] Review result artifact path: {review_result_path}")
-            print("[Dispatch] Reviewer command: codex review")
+            print("[Dispatch] Reviewer command: codex exec")
             print(f"[Dispatch] Executing: {command_shape}")
             print(f"[Dispatch] Codex reviewer execution cwd: {TARGET_REPO_PATH}")
 
@@ -1439,6 +1522,22 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 return False
 
             item.pop("agent_exit_non_zero", None)
+            if not os.path.exists(review_result_path):
+                print(
+                    "[Dispatch] Review result handling: expected review-result artifact is missing; "
+                    f"expected path={review_result_path}; exists=False; "
+                    "workflow progression stopped with no label transition and lock remains in place."
+                )
+                item["comment"] = (
+                    f"Codex reviewer completed for issue #{number}, but expected review result artifact "
+                    f"`{review_result_path}` was not created. Workflow labels were not transitioned automatically, "
+                    f"and lock label `{LOCK_LABEL}` remains in place for human inspection. "
+                    "Handler stopped workflow progression for this run."
+                )
+                add_comment(item)
+                item["missing_review_result_artifact"] = True
+                return False
+
             review_outcome = parse_review_result_outcome(review_result_path)
             if review_outcome == "APPROVED":
                 print("[Dispatch] Review result handling: APPROVED.")
@@ -1479,7 +1578,6 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
 
         absolute_launch_brief_path = os.path.abspath(launch_brief_path)
         codex_task_text = build_codex_architect_task_text(absolute_launch_brief_path)
-        codex_bypass_sandbox = is_codex_sandbox_bypass_enabled()
         cmd = build_codex_command_with_optional_sandbox_bypass(
             model,
             TARGET_REPO_PATH or "",
@@ -1493,16 +1591,6 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         print(f"[Dispatch] Launch brief display path: {launch_brief_path}")
         print(f"[Dispatch] Launch brief absolute path: {absolute_launch_brief_path}")
         print(f"[Dispatch] Codex target repo path: {normalized_target_repo_path}")
-        if codex_bypass_sandbox:
-            print(
-                "[Dispatch] WARNING: Codex sandbox bypass ENABLED via CIRCUS_CODEX_BYPASS_SANDBOX=true; "
-                "running with --dangerously-bypass-approvals-and-sandbox (HIGH RISK)."
-            )
-        else:
-            print(
-                "[Dispatch] Codex sandbox bypass disabled (default-safe mode); "
-                "set CIRCUS_CODEX_BYPASS_SANDBOX=true to enable HIGH-RISK bypass."
-            )
         print("[Dispatch] Codex handoff path: passing short positional prompt argument.")
         print(f"[Dispatch] Executing: {command_shape}")
         print(f"[Dispatch] Codex execution cwd: {TARGET_REPO_PATH}")
@@ -1777,6 +1865,10 @@ def process_one_item(items):
             item.pop("agent_exit_non_zero", None)
             return "agent-non-zero"
 
+        if item.get("missing_review_result_artifact"):
+            item.pop("missing_review_result_artifact", None)
+            return "review-result-missing"
+
         return "dispatch-failed"
 
     return "no-dispatch"
@@ -1856,6 +1948,9 @@ def poll():
             return
         if dispatch_result == "dispatch-failed":
             print("[Handler] Stopping run: dispatch failed.")
+            return
+        if dispatch_result == "review-result-missing":
+            print("[Handler] Stopping run: reviewer completed without review-result artifact.")
             return
         if dispatch_result == "no-dispatch":
             print("[Handler] No dispatch completed this cycle. Exiting.")

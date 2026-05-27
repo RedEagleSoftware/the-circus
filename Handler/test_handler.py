@@ -355,6 +355,35 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertTrue(any("[Handler] Completed workflow step 2 of 2." in line for line in printed_lines))
         self.assertTrue(any("[Handler] Max workflow steps reached. Exiting." in line for line in printed_lines))
 
+    def test_poll_stops_when_reviewer_completes_without_result_artifact(self):
+        with patch.object(handler, "REPO", "owner/repo"):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(
+                    handler,
+                    "validate_required_executables",
+                    return_value={"gh": "gh", "git": "git", "junie": "junie", "codex": "codex"},
+                ):
+                    with patch.object(handler, "validate_target_repo_workspace", return_value=True):
+                        with patch.object(handler, "verify_github_repo_access", return_value=True):
+                            with patch.object(handler, "get_max_steps_per_run", return_value=2):
+                                with patch.object(
+                                    handler,
+                                    "get_labeled_items",
+                                    side_effect=[
+                                        ([], [], [{"number": 9}], True),
+                                        ([], [], [{"number": 10}], True),
+                                    ],
+                                ) as mock_get_labeled_items:
+                                    with patch.object(handler, "process_one_item", side_effect=["review-result-missing", "success"]) as mock_process:
+                                        with patch("builtins.print") as mock_print:
+                                            handler.poll()
+
+        self.assertEqual(mock_get_labeled_items.call_count, 1)
+        self.assertEqual(mock_process.call_count, 1)
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("[Handler] Stopping run: reviewer completed without review-result artifact." in line for line in printed_lines))
+        self.assertFalse(any("[Handler] Re-polling for next eligible workflow step." in line for line in printed_lines))
+
     def test_get_candidates_fetches_without_label_filter(self):
         with patch.object(handler, "REPO", "owner/repo"):
             with patch.object(handler, "run_command", return_value="[]") as mock_run:
@@ -402,6 +431,30 @@ class HandlerObservabilityTests(unittest.TestCase):
             )
 
         self.assertIn("- execution branch: main", prompt)
+
+    def test_build_thin_prompt_for_reviewer_includes_exact_review_result_path_instruction(self):
+        item = {
+            "type": "issue",
+            "number": 9,
+            "title": "Review changes",
+        }
+        review_result_path = "C:/abs/Watchtower/runs/issue-9/run-001-reviewer/review-result.md"
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            prompt = handler.build_thin_prompt(
+                item,
+                "state:ready-for-review",
+                "reviewer",
+                os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
+                "Watchtower/runs/issue-9/run-001-reviewer/launch-brief.md",
+                review_result_path=review_result_path,
+            )
+
+        self.assertIn("- reviewer artifact contract: You must write `review-result.md` before exiting.", prompt)
+        self.assertIn(f"- reviewer result artifact absolute path: {review_result_path}", prompt)
+        self.assertIn("  - Outcome: APPROVED", prompt)
+        self.assertIn("  - Outcome: CHANGES_REQUESTED", prompt)
+        self.assertIn("  - Outcome: BLOCKED", prompt)
 
     def test_launch_agent_junie_runs_with_target_workspace_and_task_handoff(self):
         item = {
@@ -847,6 +900,30 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(disabled_command[4:6], ["--cd", "C:/target/repo"])
         self.assertEqual(disabled_command[-1], "Prompt text")
 
+    def test_build_codex_reviewer_task_text_contains_required_contract_and_safety_instructions(self):
+        task_text = handler.build_codex_reviewer_task_text(
+            "C:/abs/Watchtower/runs/issue-9/run-001-reviewer/launch-brief.md",
+            "https://github.com/owner/repo/pull/99",
+            "C:/abs/Watchtower/runs/issue-9/run-001-reviewer/review-result.md",
+        )
+
+        self.assertIn(
+            "Read the launch brief at C:/abs/Watchtower/runs/issue-9/run-001-reviewer/launch-brief.md",
+            task_text,
+        )
+        self.assertIn("execute the reviewer workflow", task_text)
+        self.assertIn("Review the linked pull request at https://github.com/owner/repo/pull/99", task_text)
+        self.assertIn(
+            "Write review-result.md to this exact absolute path: C:/abs/Watchtower/runs/issue-9/run-001-reviewer/review-result.md",
+            task_text,
+        )
+        self.assertIn("Outcome: APPROVED", task_text)
+        self.assertIn("Outcome: CHANGES_REQUESTED", task_text)
+        self.assertIn("Outcome: BLOCKED", task_text)
+        self.assertIn("Leave a review comment on the pull request", task_text)
+        self.assertIn("Do not modify workflow labels directly", task_text)
+        self.assertIn("Do not auto-merge", task_text)
+
     def test_launch_agent_codex_architect_runs_with_exec_cd_and_task_handoff(self):
         item = {
             "type": "issue",
@@ -1136,7 +1213,37 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIsNone(result["pr"])
 
-    def test_launch_agent_codex_reviewer_runs_codex_review_with_pr_url_and_context(self):
+    def test_parse_review_result_outcome_accepts_exact_first_non_empty_line_marker(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            review_result_path = os.path.join(temp_dir, "review-result.md")
+            with open(review_result_path, "w", encoding="utf-8") as artifact:
+                artifact.write("\n\nOutcome: CHANGES_REQUESTED\nAdditional reviewer notes.\n")
+
+            outcome = handler.parse_review_result_outcome(review_result_path)
+
+        self.assertEqual(outcome, "CHANGES_REQUESTED")
+
+    def test_parse_review_result_outcome_rejects_malformed_first_non_empty_line(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            review_result_path = os.path.join(temp_dir, "review-result.md")
+            with open(review_result_path, "w", encoding="utf-8") as artifact:
+                artifact.write("Outcome: APPROVED ✅\nOutcome: APPROVED\n")
+
+            outcome = handler.parse_review_result_outcome(review_result_path)
+
+        self.assertIsNone(outcome)
+
+    def test_parse_review_result_outcome_rejects_missing_marker_on_first_non_empty_line(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            review_result_path = os.path.join(temp_dir, "review-result.md")
+            with open(review_result_path, "w", encoding="utf-8") as artifact:
+                artifact.write("Reviewer summary without deterministic marker.\nOutcome: APPROVED\n")
+
+            outcome = handler.parse_review_result_outcome(review_result_path)
+
+        self.assertIsNone(outcome)
+
+    def test_launch_agent_codex_reviewer_runs_codex_exec_with_pr_url_and_context(self):
         item = {
             "type": "issue",
             "number": 9,
@@ -1157,30 +1264,89 @@ class HandlerObservabilityTests(unittest.TestCase):
         review_result_path = "Watchtower/runs/issue-9/run-001-reviewer/review-result.md"
         absolute_launch_brief_path = "C:/abs/Watchtower/runs/issue-9/run-001-reviewer/launch-brief.md"
 
-        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
-            with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
-                with patch.object(handler, "build_reviewer_result_path", return_value=review_result_path):
-                    with patch.object(handler, "parse_review_result_outcome", return_value="APPROVED"):
-                        with patch.object(handler, "advance_reviewer_workflow_on_approved", return_value=True) as mock_transition:
-                            with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
-                                launched = handler.launch_agent(
-                                    item,
-                                    "state:ready-for-review",
-                                    config,
-                                    os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
-                                    launch_brief_path,
-                                )
+        with patch.dict(os.environ, {}, clear=True):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
+                    with patch.object(handler, "build_reviewer_result_path", return_value=review_result_path):
+                        with patch.object(handler.os.path, "exists", return_value=True):
+                            with patch.object(handler, "parse_review_result_outcome", return_value="APPROVED"):
+                                with patch.object(handler, "advance_reviewer_workflow_on_approved", return_value=True) as mock_transition:
+                                    with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
+                                        launched = handler.launch_agent(
+                                            item,
+                                            "state:ready-for-review",
+                                            config,
+                                            os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
+                                            launch_brief_path,
+                                        )
 
         self.assertTrue(launched)
         mock_subprocess_run.assert_called_once()
         args, kwargs = mock_subprocess_run.call_args
-        self.assertEqual(args[0], ["codex", "review", "https://github.com/owner/repo/pull/77"])
+        command = args[0]
+        self.assertEqual(command[0], "codex")
+        self.assertEqual(command[1], "exec")
+        self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
+        self.assertEqual(command[4:6], ["--cd", "C:/target/repo"])
+        self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", command[-1])
+        self.assertIn("execute the reviewer workflow", command[-1])
+        self.assertIn("Review the linked pull request at https://github.com/owner/repo/pull/77", command[-1])
+        self.assertIn(f"Write review-result.md to this exact absolute path: {review_result_path}", command[-1])
+        self.assertIn("Leave a review comment on the pull request", command[-1])
+        self.assertIn("Do not modify workflow labels directly", command[-1])
+        self.assertIn("Do not auto-merge", command[-1])
         self.assertEqual(kwargs["cwd"], "C:/target/repo")
         self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_PR_URL"], "https://github.com/owner/repo/pull/77")
         self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_ISSUE_NUMBER"], "9")
         self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_LAUNCH_BRIEF"], absolute_launch_brief_path)
         self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_RESULT_PATH"], review_result_path)
         mock_transition.assert_called_once_with(item)
+
+    def test_launch_agent_codex_reviewer_adds_sandbox_bypass_flag_when_enabled(self):
+        item = {
+            "type": "issue",
+            "number": 9,
+            "title": "Review changes",
+            "url": "https://github.com/owner/repo/issues/9",
+            "review_pr": {
+                "number": 77,
+                "url": "https://github.com/owner/repo/pull/77",
+            },
+        }
+        config = {
+            "agent": "codex",
+            "mode": "reviewer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with patch.dict(os.environ, {"CIRCUS_CODEX_BYPASS_SANDBOX": "true"}, clear=True):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(handler, "build_reviewer_result_path", return_value="Watchtower/runs/issue-9/run-001-reviewer/review-result.md"):
+                    with patch.object(handler.os.path, "exists", return_value=True):
+                        with patch.object(handler, "parse_review_result_outcome", return_value="APPROVED"):
+                            with patch.object(handler, "advance_reviewer_workflow_on_approved", return_value=True):
+                                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
+                                    with patch("builtins.print") as mock_print:
+                                        launched = handler.launch_agent(
+                                            item,
+                                            "state:ready-for-review",
+                                            config,
+                                            os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
+                                            "Watchtower/runs/issue-9/run-001-reviewer/launch-brief.md",
+                                        )
+
+        self.assertTrue(launched)
+        command = mock_subprocess_run.call_args.args[0]
+        self.assertEqual(command[0], "codex")
+        self.assertEqual(command[1], "exec")
+        self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
+        self.assertEqual(command[4:6], ["--cd", "C:/target/repo"])
+        self.assertIn("--dangerously-bypass-approvals-and-sandbox", command)
+        self.assertIn("Review the linked pull request at https://github.com/owner/repo/pull/77", command[-1])
+
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("WARNING: Codex sandbox bypass ENABLED" in line for line in printed_lines))
 
     def test_launch_agent_codex_reviewer_ambiguous_output_does_not_transition_labels(self):
         item = {
@@ -1200,26 +1366,111 @@ class HandlerObservabilityTests(unittest.TestCase):
             "effort": "Medium",
         }
 
-        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
-            with patch.object(handler, "build_reviewer_result_path", return_value="Watchtower/runs/issue-9/run-001-reviewer/review-result.md"):
-                with patch.object(handler, "parse_review_result_outcome", return_value=None):
-                    with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
-                        with patch.object(handler, "advance_reviewer_workflow_on_approved") as mock_approved:
-                            with patch.object(handler, "advance_reviewer_workflow_on_changes_requested") as mock_changes:
-                                with patch.object(handler, "add_comment") as mock_add_comment:
-                                    launched = handler.launch_agent(
-                                        item,
-                                        "state:ready-for-review",
-                                        config,
-                                        os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
-                                        "Watchtower/runs/issue-9/run-001-reviewer/launch-brief.md",
-                                    )
+        with patch.dict(os.environ, {}, clear=True):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(handler, "build_reviewer_result_path", return_value="Watchtower/runs/issue-9/run-001-reviewer/review-result.md"):
+                    with patch.object(handler.os.path, "exists", return_value=True):
+                        with patch.object(handler, "parse_review_result_outcome", return_value=None):
+                            with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                                with patch.object(handler, "advance_reviewer_workflow_on_approved") as mock_approved:
+                                    with patch.object(handler, "advance_reviewer_workflow_on_changes_requested") as mock_changes:
+                                        with patch.object(handler, "add_comment") as mock_add_comment:
+                                            launched = handler.launch_agent(
+                                                item,
+                                                "state:ready-for-review",
+                                                config,
+                                                os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
+                                                "Watchtower/runs/issue-9/run-001-reviewer/launch-brief.md",
+                                            )
 
         self.assertTrue(launched)
         mock_approved.assert_not_called()
         mock_changes.assert_not_called()
         mock_add_comment.assert_called_once_with(item)
         self.assertIn("no unambiguous review outcome marker", item["comment"])
+
+    def test_launch_agent_codex_reviewer_changes_requested_routes_to_changes_requested_transition(self):
+        item = {
+            "type": "issue",
+            "number": 10,
+            "title": "Review changes",
+            "url": "https://github.com/owner/repo/issues/10",
+            "review_pr": {
+                "number": 88,
+                "url": "https://github.com/owner/repo/pull/88",
+            },
+        }
+        config = {
+            "agent": "codex",
+            "mode": "reviewer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with patch.dict(os.environ, {}, clear=True):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(handler, "build_reviewer_result_path", return_value="Watchtower/runs/issue-10/run-001-reviewer/review-result.md"):
+                    with patch.object(handler.os.path, "exists", return_value=True):
+                        with patch.object(handler, "parse_review_result_outcome", return_value="CHANGES_REQUESTED"):
+                            with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                                with patch.object(handler, "advance_reviewer_workflow_on_approved") as mock_approved:
+                                    with patch.object(handler, "advance_reviewer_workflow_on_changes_requested", return_value=True) as mock_changes:
+                                        launched = handler.launch_agent(
+                                            item,
+                                            "state:ready-for-review",
+                                            config,
+                                            os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
+                                            "Watchtower/runs/issue-10/run-001-reviewer/launch-brief.md",
+                                        )
+
+        self.assertTrue(launched)
+        mock_approved.assert_not_called()
+        mock_changes.assert_called_once_with(item)
+
+    def test_launch_agent_codex_reviewer_missing_review_result_artifact_does_not_transition(self):
+        item = {
+            "type": "issue",
+            "number": 10,
+            "title": "Review changes",
+            "url": "https://github.com/owner/repo/issues/10",
+            "review_pr": {
+                "number": 88,
+                "url": "https://github.com/owner/repo/pull/88",
+            },
+        }
+        config = {
+            "agent": "codex",
+            "mode": "reviewer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        review_result_path = "C:/abs/Watchtower/runs/issue-10/run-001-reviewer/review-result.md"
+
+        with patch.dict(os.environ, {}, clear=True):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(handler, "build_reviewer_result_path", return_value=review_result_path):
+                    with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                        with patch.object(handler.os.path, "exists", return_value=False):
+                            with patch.object(handler, "parse_review_result_outcome") as mock_parse_outcome:
+                                with patch.object(handler, "advance_reviewer_workflow_on_approved") as mock_approved:
+                                    with patch.object(handler, "advance_reviewer_workflow_on_changes_requested") as mock_changes:
+                                        with patch.object(handler, "add_comment") as mock_add_comment:
+                                            launched = handler.launch_agent(
+                                                item,
+                                                "state:ready-for-review",
+                                                config,
+                                                os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
+                                                "Watchtower/runs/issue-10/run-001-reviewer/launch-brief.md",
+                                            )
+
+        self.assertFalse(launched)
+        mock_parse_outcome.assert_not_called()
+        mock_approved.assert_not_called()
+        mock_changes.assert_not_called()
+        mock_add_comment.assert_called_once_with(item)
+        self.assertTrue(item.get("missing_review_result_artifact"))
+        self.assertIn("was not created", item["comment"])
+        self.assertIn(review_result_path, item["comment"])
 
     def test_junie_command_generation_is_unchanged(self):
         command = handler.build_junie_command(
@@ -1320,6 +1571,38 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertNotIn("\\", markdown)
         self.assertNotIn("docs\\doctrine.md", markdown)
         self.assertNotIn("docs\\operations-status.md", markdown)
+
+    def test_build_launch_brief_markdown_for_reviewer_includes_result_contract_and_absolute_path(self):
+        item = {
+            "type": "issue",
+            "number": 15,
+            "title": "Review changes",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "reviewer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        review_result_path = "C:/abs/Watchtower/runs/issue-15/run-001-reviewer/review-result.md"
+
+        with patch.object(handler, "REPO", "owner/repo"):
+            markdown = handler.build_launch_brief_markdown(
+                item,
+                "state:ready-for-review",
+                config,
+                os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
+                "2026-05-25T10:00:00",
+                "C:/target/repo",
+                review_result_path=review_result_path,
+            )
+
+        self.assertIn("## Reviewer Result Contract", markdown)
+        self.assertIn(f"- review result artifact absolute path: `{review_result_path}`", markdown)
+        self.assertIn("- You must write `review-result.md` to this exact absolute path before exiting.", markdown)
+        self.assertIn("  - `Outcome: APPROVED`", markdown)
+        self.assertIn("  - `Outcome: CHANGES_REQUESTED`", markdown)
+        self.assertIn("  - `Outcome: BLOCKED`", markdown)
 
     def test_build_launch_brief_markdown_includes_working_branch_when_present(self):
         item = {
