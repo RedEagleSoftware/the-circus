@@ -420,7 +420,11 @@ class HandlerObservabilityTests(unittest.TestCase):
         with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
             with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
                 with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
-                    with patch.object(handler, "advance_developer_workflow_on_success", return_value=True) as mock_advance:
+                    with patch.object(
+                        handler,
+                        "finalize_developer_success_with_pull_request",
+                        return_value=True,
+                    ) as mock_finalize:
                         with patch("builtins.print") as mock_print:
                             launched = handler.launch_agent(
                                 item,
@@ -445,7 +449,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(mock_subprocess_run.call_args.kwargs["cwd"], "C:/target/repo")
         self.assertTrue(mock_subprocess_run.call_args.kwargs["text"])
         self.assertNotIn("input", mock_subprocess_run.call_args.kwargs)
-        mock_advance.assert_called_once_with(item)
+        mock_finalize.assert_called_once_with(item, launch_brief_path)
 
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any(f"[Dispatch] Launch brief display path: {launch_brief_path}" in line for line in printed_lines))
@@ -500,7 +504,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertTrue(any("[Dispatch] Junie exit code: 7" in line for line in printed_lines))
         self.assertTrue(any("human inspection is required" in line for line in printed_lines))
 
-    def test_launch_agent_junie_developer_success_advances_workflow_labels(self):
+    def test_launch_agent_junie_developer_success_runs_post_run_pr_flow(self):
         item = {
             "type": "issue",
             "number": 16,
@@ -517,7 +521,11 @@ class HandlerObservabilityTests(unittest.TestCase):
         with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
             with patch.object(handler.os.path, "abspath", return_value="C:/abs/brief.md"):
                 with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
-                    with patch.object(handler, "advance_developer_workflow_on_success", return_value=True) as mock_advance:
+                    with patch.object(
+                        handler,
+                        "finalize_developer_success_with_pull_request",
+                        return_value=True,
+                    ) as mock_finalize:
                         launched = handler.launch_agent(
                             item,
                             "state:ready-for-dev",
@@ -527,7 +535,10 @@ class HandlerObservabilityTests(unittest.TestCase):
                         )
 
         self.assertTrue(launched)
-        mock_advance.assert_called_once_with(item)
+        mock_finalize.assert_called_once_with(
+            item,
+            "Watchtower/runs/issue-16/run-001-developer/launch-brief.md",
+        )
 
     def test_launch_agent_junie_developer_non_zero_exit_does_not_advance_workflow_labels(self):
         item = {
@@ -559,6 +570,186 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertFalse(launched)
         mock_add_comment.assert_called_once_with(item)
         mock_advance.assert_not_called()
+
+    def test_finalize_developer_success_with_changes_commits_pushes_creates_pr_then_transitions(self):
+        item = {
+            "type": "issue",
+            "number": 31,
+            "title": "Add PR automation",
+            "url": "https://github.com/owner/repo/issues/31",
+            "working_branch": "circus/issue-31-add-pr-automation",
+        }
+
+        git_results = [
+            Mock(returncode=0, stdout=" M Handler/handler.py\n", stderr=""),
+            Mock(returncode=0, stdout="", stderr=""),
+            Mock(returncode=0, stdout="[circus/issue-31-add-pr-automation abc123] commit\n", stderr=""),
+            Mock(returncode=0, stdout="branch set up\n", stderr=""),
+        ]
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "run_git_command_in_repo", side_effect=git_results) as mock_git:
+                    with patch.object(
+                        handler,
+                        "run_command",
+                        side_effect=["[]", "https://github.com/owner/repo/pull/41"],
+                    ) as mock_run_command:
+                        with patch.object(handler, "advance_developer_workflow_on_success", return_value=True) as mock_advance:
+                            with patch.object(handler, "add_comment") as mock_add_comment:
+                                transitioned = handler.finalize_developer_success_with_pull_request(
+                                    item,
+                                    "Watchtower/runs/issue-31/run-001-developer/launch-brief.md",
+                                )
+
+        self.assertTrue(transitioned)
+        self.assertEqual(
+            mock_git.call_args_list,
+            [
+                unittest.mock.call("C:/target/repo", ["status", "--porcelain"]),
+                unittest.mock.call("C:/target/repo", ["add", "-A"]),
+                unittest.mock.call("C:/target/repo", ["commit", "-m", "Implement issue #31: Add PR automation"]),
+                unittest.mock.call("C:/target/repo", ["push", "-u", "origin", "circus/issue-31-add-pr-automation"]),
+            ],
+        )
+        self.assertEqual(len(mock_run_command.call_args_list), 2)
+        self.assertIn("gh pr list --repo owner/repo", mock_run_command.call_args_list[0].args[0])
+        self.assertIn("gh pr create --repo owner/repo", mock_run_command.call_args_list[1].args[0])
+        self.assertIn('"Issue #31: Add PR automation"', mock_run_command.call_args_list[1].args[0])
+        mock_advance.assert_called_once_with(item)
+        mock_add_comment.assert_not_called()
+
+    def test_finalize_developer_success_reuses_existing_pr_without_duplicate_creation(self):
+        item = {
+            "type": "issue",
+            "number": 32,
+            "title": "Use existing PR",
+            "url": "https://github.com/owner/repo/issues/32",
+            "working_branch": "circus/issue-32-use-existing-pr",
+        }
+
+        git_results = [
+            Mock(returncode=0, stdout=" M Handler/handler.py\n", stderr=""),
+            Mock(returncode=0, stdout="", stderr=""),
+            Mock(returncode=0, stdout="[circus/issue-32-use-existing-pr abc123] commit\n", stderr=""),
+            Mock(returncode=0, stdout="branch set up\n", stderr=""),
+        ]
+
+        existing_pr_payload = '[{"url":"https://github.com/owner/repo/pull/77"}]'
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "run_git_command_in_repo", side_effect=git_results):
+                    with patch.object(handler, "run_command", return_value=existing_pr_payload) as mock_run_command:
+                        with patch.object(handler, "advance_developer_workflow_on_success", return_value=True) as mock_advance:
+                            transitioned = handler.finalize_developer_success_with_pull_request(
+                                item,
+                                "Watchtower/runs/issue-32/run-001-developer/launch-brief.md",
+                            )
+
+        self.assertTrue(transitioned)
+        self.assertEqual(len(mock_run_command.call_args_list), 1)
+        self.assertIn("gh pr list --repo owner/repo", mock_run_command.call_args_list[0].args[0])
+        self.assertNotIn("gh pr create", mock_run_command.call_args_list[0].args[0])
+        mock_advance.assert_called_once_with(item)
+
+    def test_finalize_developer_success_push_failure_prevents_transition(self):
+        item = {
+            "type": "issue",
+            "number": 33,
+            "title": "Push fails",
+            "url": "https://github.com/owner/repo/issues/33",
+            "working_branch": "circus/issue-33-push-fails",
+        }
+
+        git_results = [
+            Mock(returncode=0, stdout=" M Handler/handler.py\n", stderr=""),
+            Mock(returncode=0, stdout="", stderr=""),
+            Mock(returncode=0, stdout="[circus/issue-33-push-fails abc123] commit\n", stderr=""),
+            Mock(returncode=1, stdout="", stderr="remote rejected"),
+        ]
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "run_git_command_in_repo", side_effect=git_results):
+                with patch.object(handler, "run_command") as mock_run_command:
+                    with patch.object(handler, "advance_developer_workflow_on_success") as mock_advance:
+                        with patch.object(handler, "add_comment") as mock_add_comment:
+                            transitioned = handler.finalize_developer_success_with_pull_request(
+                                item,
+                                "Watchtower/runs/issue-33/run-001-developer/launch-brief.md",
+                            )
+
+        self.assertFalse(transitioned)
+        mock_run_command.assert_not_called()
+        mock_advance.assert_not_called()
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("failed to prepare a pull request", item["comment"])
+        self.assertIn("unable to push developer branch", item["comment"])
+
+    def test_finalize_developer_success_pr_creation_failure_prevents_transition(self):
+        item = {
+            "type": "issue",
+            "number": 34,
+            "title": "PR create fails",
+            "url": "https://github.com/owner/repo/issues/34",
+            "working_branch": "circus/issue-34-pr-create-fails",
+        }
+
+        git_results = [
+            Mock(returncode=0, stdout=" M Handler/handler.py\n", stderr=""),
+            Mock(returncode=0, stdout="", stderr=""),
+            Mock(returncode=0, stdout="[circus/issue-34-pr-create-fails abc123] commit\n", stderr=""),
+            Mock(returncode=0, stdout="branch set up\n", stderr=""),
+        ]
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "run_git_command_in_repo", side_effect=git_results):
+                with patch.object(handler, "run_command", side_effect=["[]", None]) as mock_run_command:
+                    with patch.object(handler, "advance_developer_workflow_on_success") as mock_advance:
+                        with patch.object(handler, "add_comment") as mock_add_comment:
+                            transitioned = handler.finalize_developer_success_with_pull_request(
+                                item,
+                                "Watchtower/runs/issue-34/run-001-developer/launch-brief.md",
+                            )
+
+        self.assertFalse(transitioned)
+        self.assertEqual(len(mock_run_command.call_args_list), 2)
+        self.assertIn("gh pr list", mock_run_command.call_args_list[0].args[0])
+        self.assertIn("gh pr create", mock_run_command.call_args_list[1].args[0])
+        mock_advance.assert_not_called()
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("failed to prepare a pull request", item["comment"])
+        self.assertIn("unable to create pull request", item["comment"])
+
+    def test_finalize_developer_success_without_changes_adds_no_change_comment(self):
+        item = {
+            "type": "issue",
+            "number": 35,
+            "title": "No-op run",
+            "url": "https://github.com/owner/repo/issues/35",
+            "working_branch": "circus/issue-35-no-op-run",
+        }
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(
+                handler,
+                "run_git_command_in_repo",
+                return_value=Mock(returncode=0, stdout="", stderr=""),
+            ):
+                with patch.object(handler, "run_command") as mock_run_command:
+                    with patch.object(handler, "advance_developer_workflow_on_success") as mock_advance:
+                        with patch.object(handler, "add_comment") as mock_add_comment:
+                            transitioned = handler.finalize_developer_success_with_pull_request(
+                                item,
+                                "Watchtower/runs/issue-35/run-001-developer/launch-brief.md",
+                            )
+
+        self.assertFalse(transitioned)
+        mock_run_command.assert_not_called()
+        mock_advance.assert_not_called()
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("detected no changes", item["comment"])
+        self.assertIn("No pull request was created", item["comment"])
 
     def test_build_codex_architect_task_text_includes_handoff_and_comment_requirements(self):
         task_text = handler.build_codex_architect_task_text("C:/abs/Watchtower/runs/issue-9/run-001-architect/launch-brief.md")
@@ -677,6 +868,37 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("codex exec --model gpt-5.3-codex --cd C:/target/repo", executing_lines[0])
         self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", executing_lines[0])
         self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", executing_lines[0])
+
+    def test_launch_agent_codex_architect_success_does_not_trigger_developer_pr_flow(self):
+        item = {
+            "type": "issue",
+            "number": 62,
+            "title": "Architect should not create PR",
+            "url": "https://github.com/owner/repo/issues/62",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "architect",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with patch.dict(os.environ, {}, clear=True):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(handler.os.path, "abspath", return_value="C:/abs/brief.md"):
+                    with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                        with patch.object(handler, "advance_architect_workflow_on_success", return_value=True):
+                            with patch.object(handler, "finalize_developer_success_with_pull_request") as mock_finalize:
+                                launched = handler.launch_agent(
+                                    item,
+                                    "state:ready-for-architecture",
+                                    config,
+                                    os.path.normpath(os.path.join("TheFarm", "roles", "architect.md")),
+                                    "Watchtower/runs/issue-62/run-001-architect/launch-brief.md",
+                                )
+
+        self.assertTrue(launched)
+        mock_finalize.assert_not_called()
 
     def test_launch_agent_codex_architect_adds_sandbox_bypass_flag_when_enabled(self):
         item = {
