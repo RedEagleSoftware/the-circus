@@ -4,9 +4,12 @@ import re
 import shutil
 import subprocess
 import tempfile
-import time
-from datetime import datetime
+from datetime import datetime, UTC
 from dotenv import load_dotenv
+
+from Handler import config as handler_config
+from Handler import git_workspace
+from Handler import paths as handler_paths
 
 load_dotenv()
 
@@ -14,8 +17,8 @@ load_dotenv()
 REPO = os.getenv("CIRCUS_REPO")  # Format: owner/repo
 TARGET_REPO_PATH = os.getenv("CIRCUS_TARGET_REPO_PATH")
 POLL_INTERVAL = 60  # seconds
-DEFAULT_MAX_STEPS_PER_RUN = 1
-MAX_STEPS_PER_RUN_ENV = "CIRCUS_MAX_WORKFLOW_STEPS_PER_ISSUE"
+DEFAULT_MAX_STEPS_PER_RUN = handler_config.DEFAULT_MAX_STEPS_PER_RUN
+MAX_STEPS_PER_RUN_ENV = handler_config.MAX_STEPS_PER_RUN_ENV
 MAX_BRANCH_SLUG_LENGTH = 60
 
 # Label to Agent Mapping
@@ -106,22 +109,18 @@ RUN_STATUS_FIELDS = [
 
 
 def utc_timestamp_now():
-    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def get_circus_runtime_root():
-    handler_module_dir = os.path.dirname(os.path.abspath(__file__))
-    return os.path.normpath(os.path.join(handler_module_dir, os.pardir))
+    return handler_paths.get_circus_runtime_root(__file__, env_getter=os.getenv)
 
 
 def resolve_circus_runtime_path(path):
     if path is None:
         return None
 
-    if os.path.isabs(path):
-        return os.path.normpath(path)
-
-    return os.path.normpath(os.path.join(get_circus_runtime_root(), path))
+    return handler_paths.resolve_circus_runtime_path(path, get_runtime_root=get_circus_runtime_root)
 
 
 def run_command(cmd):
@@ -752,34 +751,12 @@ def finalize_developer_success_with_pull_request(item, launch_brief_path, from_s
 
 
 def get_max_steps_per_run():
-    raw_value = os.getenv(MAX_STEPS_PER_RUN_ENV)
-    if raw_value is None:
-        return DEFAULT_MAX_STEPS_PER_RUN
-
-    stripped_value = raw_value.strip()
-    if not stripped_value:
-        print(
-            f"[Handler] {MAX_STEPS_PER_RUN_ENV} is blank; using default {DEFAULT_MAX_STEPS_PER_RUN}."
-        )
-        return DEFAULT_MAX_STEPS_PER_RUN
-
-    try:
-        parsed_value = int(stripped_value)
-    except ValueError:
-        print(
-            f"[Handler] Invalid {MAX_STEPS_PER_RUN_ENV} value '{raw_value}'; "
-            f"using default {DEFAULT_MAX_STEPS_PER_RUN}."
-        )
-        return DEFAULT_MAX_STEPS_PER_RUN
-
-    if parsed_value < 1:
-        print(
-            f"[Handler] {MAX_STEPS_PER_RUN_ENV} must be >= 1; "
-            f"using default {DEFAULT_MAX_STEPS_PER_RUN}."
-        )
-        return DEFAULT_MAX_STEPS_PER_RUN
-
-    return parsed_value
+    return handler_config.get_max_steps_per_run(
+        max_steps_env=MAX_STEPS_PER_RUN_ENV,
+        default_max_steps=DEFAULT_MAX_STEPS_PER_RUN,
+        env_getter=os.getenv,
+        log=print,
+    )
 
 
 def add_prelaunch_setup_failure_comment(item, error, lock_released):
@@ -975,8 +952,9 @@ def build_codex_command(model, project_path, task_text):
 
 
 def is_codex_sandbox_bypass_enabled():
-    bypass_value = os.getenv("CIRCUS_CODEX_BYPASS_SANDBOX", "")
-    return str(bypass_value).strip().lower() == "true"
+    return handler_config.is_codex_sandbox_bypass_enabled(
+        env_getter=os.getenv,
+    )
 
 
 def build_codex_command_with_optional_sandbox_bypass(model, project_path, task_text, bypass_sandbox=False):
@@ -1017,343 +995,134 @@ def parse_review_result_outcome(review_result_path):
 
 
 def extract_github_repo_slug(value):
-    if not value:
-        return None
-
-    normalized = str(value).strip().replace("\\", "/")
-    if normalized.endswith(".git"):
-        normalized = normalized[: -len(".git")]
-
-    if "github.com/" in normalized:
-        return normalized.split("github.com/", 1)[1].strip("/").lower()
-
-    if "github.com:" in normalized:
-        return normalized.split("github.com:", 1)[1].strip("/").lower()
-
-    if re.match(r"^[^/]+/[^/]+$", normalized):
-        return normalized.lower()
-
-    return None
+    return git_workspace.extract_github_repo_slug(value)
 
 
 def get_git_remote_origin_url(repo_path):
-    try:
-        result = subprocess.run(
-            ["git", "config", "--get", "remote.origin.url"],
-            cwd=repo_path,
-            capture_output=True,
-            text=True,
-            shell=False,
-        )
-    except (OSError, ValueError) as error:
-        print(f"[Startup] Warning: Unable to inspect git remote for '{repo_path}': {error}")
-        return None
-
-    if result.returncode != 0:
-        stderr = result.stderr.strip()
-        if stderr:
-            print(f"[Startup] Warning: Unable to read git remote.origin.url for '{repo_path}': {stderr}")
-        else:
-            print(f"[Startup] Warning: Unable to read git remote.origin.url for '{repo_path}'.")
-        return None
-
-    remote_url = result.stdout.strip()
-    return remote_url or None
+    return git_workspace.get_git_remote_origin_url(
+        repo_path,
+        run_subprocess=subprocess.run,
+        log=print,
+    )
 
 
 def validate_target_repo_workspace(target_repo_path, expected_repo):
-    if not target_repo_path:
-        print("[Startup] Error: CIRCUS_TARGET_REPO_PATH is required.")
-        print("[Startup] Startup aborted: set CIRCUS_TARGET_REPO_PATH to a local target repository working copy.")
-        return False
-
-    if not os.path.exists(target_repo_path):
-        print(f"[Startup] Error: CIRCUS_TARGET_REPO_PATH does not exist: {target_repo_path}")
-        print("[Startup] Startup aborted: configure a valid existing target repository path.")
-        return False
-
-    if not os.path.isdir(target_repo_path):
-        print(f"[Startup] Error: CIRCUS_TARGET_REPO_PATH is not a directory: {target_repo_path}")
-        print("[Startup] Startup aborted: configure CIRCUS_TARGET_REPO_PATH to a repository directory.")
-        return False
-
-    git_dir = os.path.join(target_repo_path, ".git")
-    if not os.path.exists(git_dir):
-        print(f"[Startup] Error: CIRCUS_TARGET_REPO_PATH does not appear to be a git repository: {target_repo_path}")
-        print("[Startup] Startup aborted: expected a .git directory or file in the target repository path.")
-        return False
-
-    expected_slug = extract_github_repo_slug(expected_repo)
-    remote_url = get_git_remote_origin_url(target_repo_path)
-    remote_slug = extract_github_repo_slug(remote_url)
-    if expected_slug and remote_slug and expected_slug != remote_slug:
-        print(
-            f"[Startup] Warning: target repo remote appears to mismatch CIRCUS_REPO "
-            f"(expected '{expected_repo}', remote '{remote_url}')."
-        )
-
-    return True
+    return git_workspace.validate_target_repo_workspace(
+        target_repo_path,
+        expected_repo,
+        path_exists=os.path.exists,
+        is_dir=os.path.isdir,
+        join_path=os.path.join,
+        extract_repo_slug=extract_github_repo_slug,
+        get_remote_origin_url=get_git_remote_origin_url,
+        log=print,
+    )
 
 
 def slugify_branch_title(value, max_length=MAX_BRANCH_SLUG_LENGTH):
-    normalized = re.sub(r"[^a-z0-9]+", "-", str(value).lower()).strip("-")
-    if max_length > 0:
-        normalized = normalized[:max_length].strip("-")
-
-    return normalized or "untitled"
+    return git_workspace.slugify_branch_title(value, max_length=max_length)
 
 
 def build_developer_branch_name(item):
-    item_number = item.get("number")
-    title_slug = slugify_branch_title(item.get("title", ""))
-    return f"circus/issue-{item_number}-{title_slug}"
+    return git_workspace.build_developer_branch_name(
+        item,
+        max_branch_slug_length=MAX_BRANCH_SLUG_LENGTH,
+        slugify=slugify_branch_title,
+    )
 
 
 def run_git_command_in_repo(repo_path, git_args):
-    try:
-        return subprocess.run(
-            ["git", *git_args],
-            cwd=repo_path,
-            capture_output=True,
-            text=True,
-            shell=False,
-        )
-    except (OSError, ValueError) as error:
-        print(f"[Dispatch] Git command failed to start in '{repo_path}': {' '.join(['git', *git_args])}")
-        print(f"[Dispatch] Git launch error: {error}")
-        return None
+    return git_workspace.run_git_command_in_repo(
+        repo_path,
+        git_args,
+        run_subprocess=subprocess.run,
+        log=print,
+    )
 
 
 def get_current_git_branch(repo_path):
-    result = run_git_command_in_repo(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"])
-    if result is None or result.returncode != 0:
-        stderr = result.stderr.strip() if result and result.stderr else "unknown error"
-        print(f"[Dispatch] Unable to determine current git branch: {stderr}")
-        return None
-
-    branch_name = result.stdout.strip()
-    return branch_name or None
+    return git_workspace.get_current_git_branch(
+        repo_path,
+        run_git_command=run_git_command_in_repo,
+        log=print,
+    )
 
 
 def is_working_tree_clean(repo_path):
-    result = run_git_command_in_repo(repo_path, ["status", "--porcelain"])
-    if result is None or result.returncode != 0:
-        stderr = result.stderr.strip() if result and result.stderr else "unknown error"
-        print(f"[Dispatch] Unable to inspect working tree status: {stderr}")
-        return None
-
-    return result.stdout.strip() == ""
+    return git_workspace.is_working_tree_clean(
+        repo_path,
+        run_git_command=run_git_command_in_repo,
+        log=print,
+    )
 
 
 def local_branch_exists(repo_path, branch_name):
-    result = run_git_command_in_repo(repo_path, ["branch", "--list", branch_name])
-    if result is None or result.returncode != 0:
-        stderr = result.stderr.strip() if result and result.stderr else "unknown error"
-        print(f"[Dispatch] Unable to check local branch '{branch_name}': {stderr}")
-        return None
-
-    return bool(result.stdout.strip())
+    return git_workspace.local_branch_exists(
+        repo_path,
+        branch_name,
+        run_git_command=run_git_command_in_repo,
+        log=print,
+    )
 
 
 def checkout_or_create_local_branch(repo_path, branch_name, branch_exists):
-    if branch_exists:
-        checkout_command = ["checkout", branch_name]
-    else:
-        checkout_command = ["checkout", "-b", branch_name]
-
-    result = run_git_command_in_repo(repo_path, checkout_command)
-    if result is None or result.returncode != 0:
-        stderr = result.stderr.strip() if result and result.stderr else "unknown error"
-        print(f"[Dispatch] Failed to switch to branch '{branch_name}': {stderr}")
-        return False
-
-    return True
+    return git_workspace.checkout_or_create_local_branch(
+        repo_path,
+        branch_name,
+        branch_exists,
+        run_git_command=run_git_command_in_repo,
+        log=print,
+    )
 
 
 def prepare_developer_branch(item):
-    repo_path = TARGET_REPO_PATH
-    if not repo_path:
-        return {
-            "ok": False,
-            "reason": "git-error",
-            "error": "CIRCUS_TARGET_REPO_PATH is not configured",
-        }
-
-    selected_branch = build_developer_branch_name(item)
-
-    print(f"[Dispatch] Selected developer working branch: {selected_branch}")
-
-    current_branch = get_current_git_branch(repo_path)
-    print(f"[Dispatch] Current branch before switch: {current_branch or '<unknown>'}")
-
-    clean_working_tree = is_working_tree_clean(repo_path)
-    if clean_working_tree is None:
-        return {
-            "ok": False,
-            "reason": "git-error",
-            "error": "unable to determine working tree status",
-        }
-
-    status_label = "clean" if clean_working_tree else "dirty"
-    print(f"[Dispatch] Working tree status before developer launch: {status_label}")
-
-    if not clean_working_tree:
-        return {
-            "ok": False,
-            "reason": "dirty-working-tree",
-            "branch": selected_branch,
-            "current_branch": current_branch,
-        }
-
-    branch_exists = local_branch_exists(repo_path, selected_branch)
-    if branch_exists is None:
-        return {
-            "ok": False,
-            "reason": "git-error",
-            "error": f"unable to verify local branch '{selected_branch}'",
-        }
-
-    if not checkout_or_create_local_branch(repo_path, selected_branch, branch_exists):
-        return {
-            "ok": False,
-            "reason": "git-error",
-            "error": f"unable to switch to branch '{selected_branch}'",
-        }
-
-    if branch_exists:
-        print(f"[Dispatch] Checked out existing branch: {selected_branch}")
-    else:
-        print(f"[Dispatch] Created and checked out branch: {selected_branch}")
-
-    final_branch = get_current_git_branch(repo_path)
-    print(f"[Dispatch] Final branch before launching Junie: {final_branch or '<unknown>'}")
-
-    return {
-        "ok": True,
-        "branch": selected_branch,
-    }
+    return git_workspace.prepare_developer_branch(
+        item,
+        TARGET_REPO_PATH,
+        build_branch_name=build_developer_branch_name,
+        get_current_branch=get_current_git_branch,
+        check_working_tree_clean=is_working_tree_clean,
+        check_local_branch_exists=local_branch_exists,
+        checkout_or_create_branch=checkout_or_create_local_branch,
+        log=print,
+    )
 
 
 def detect_default_base_branch(repo_path):
-    remote_head = run_git_command_in_repo(repo_path, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])
-    if remote_head is not None and remote_head.returncode == 0:
-        remote_ref = remote_head.stdout.strip()
-        if remote_ref and "/" in remote_ref:
-            return remote_ref.split("/", 1)[1], "remote-head"
-
-    if remote_head is not None and remote_head.returncode != 0:
-        stderr = remote_head.stderr.strip() if remote_head.stderr else "unknown error"
-        print(f"[Dispatch] Unable to resolve origin/HEAD symbolic ref: {stderr}")
-
-    remote_show = run_git_command_in_repo(repo_path, ["remote", "show", "origin"])
-    if remote_show is not None and remote_show.returncode == 0:
-        for line in remote_show.stdout.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("HEAD branch:"):
-                detected_branch = stripped.split(":", 1)[1].strip()
-                if detected_branch:
-                    return detected_branch, "remote-show"
-
-    if remote_show is not None and remote_show.returncode != 0:
-        stderr = remote_show.stderr.strip() if remote_show.stderr else "unknown error"
-        print(f"[Dispatch] Unable to inspect remote origin metadata for default branch: {stderr}")
-
-    return "main", "fallback"
+    return git_workspace.detect_default_base_branch(
+        repo_path,
+        run_git_command=run_git_command_in_repo,
+        log=print,
+    )
 
 
 def checkout_branch(repo_path, branch_name):
-    result = run_git_command_in_repo(repo_path, ["checkout", branch_name])
-    if result is None or result.returncode != 0:
-        stderr = result.stderr.strip() if result and result.stderr else "unknown error"
-        print(f"[Dispatch] Failed to checkout branch '{branch_name}': {stderr}")
-        return False
-
-    return True
+    return git_workspace.checkout_branch(
+        repo_path,
+        branch_name,
+        run_git_command=run_git_command_in_repo,
+        log=print,
+    )
 
 
 def prepare_architect_execution_branch(item):
-    repo_path = TARGET_REPO_PATH
-    if not repo_path:
-        return {
-            "ok": False,
-            "reason": "git-error",
-            "error": "CIRCUS_TARGET_REPO_PATH is not configured",
-        }
-
-    print("[Dispatch] Preparing architect repository context...")
-    current_branch = get_current_git_branch(repo_path)
-    print(f"[Dispatch] Current branch: {current_branch or '<unknown>'}")
-
-    clean_working_tree = is_working_tree_clean(repo_path)
-    if clean_working_tree is None:
-        return {
-            "ok": False,
-            "reason": "git-error",
-            "error": "unable to determine working tree status",
-        }
-
-    status_label = "clean" if clean_working_tree else "dirty"
-    print(f"[Dispatch] Working tree status before architect launch: {status_label}")
-
-    if not clean_working_tree:
-        return {
-            "ok": False,
-            "reason": "dirty-working-tree",
-            "current_branch": current_branch,
-        }
-
-    base_branch, detection_source = detect_default_base_branch(repo_path)
-    if detection_source == "fallback":
-        print("[Dispatch] Default branch detection failed; falling back to base branch: main")
-    else:
-        print(f"[Dispatch] Detected base branch: {base_branch}")
-
-    if current_branch != base_branch:
-        print("[Dispatch] Checking out base branch for architect execution...")
-        if not checkout_branch(repo_path, base_branch):
-            return {
-                "ok": False,
-                "reason": "git-error",
-                "error": f"unable to checkout base branch '{base_branch}'",
-            }
-    else:
-        print("[Dispatch] Checkout not required; already on base branch.")
-
-    final_branch = get_current_git_branch(repo_path)
-    print(f"[Dispatch] Architect execution branch: {final_branch or '<unknown>'}")
-    if final_branch != base_branch:
-        return {
-            "ok": False,
-            "reason": "git-error",
-            "error": f"base branch checkout verification failed (expected '{base_branch}', got '{final_branch or '<unknown>'}')",
-        }
-
-    return {
-        "ok": True,
-        "branch": final_branch,
-    }
+    return git_workspace.prepare_architect_execution_branch(
+        item,
+        TARGET_REPO_PATH,
+        get_current_branch=get_current_git_branch,
+        check_working_tree_clean=is_working_tree_clean,
+        detect_default_branch=detect_default_base_branch,
+        checkout_repo_branch=checkout_branch,
+        log=print,
+    )
 
 
 def sanitize_filename_part(value):
-    safe = []
-    for char in str(value).lower():
-        if char.isalnum() or char in {"-", "_"}:
-            safe.append(char)
-        else:
-            safe.append("-")
-
-    normalized = "".join(safe).strip("-")
-    while "--" in normalized:
-        normalized = normalized.replace("--", "-")
-
-    return normalized or "unknown"
+    return handler_paths.sanitize_filename_part(value)
 
 
 def normalize_path_for_display(path):
-    if path is None:
-        return None
-
-    return path.replace("\\", "/")
+    return handler_paths.normalize_path_for_display(path)
 
 
 def initialize_run_status(item, state_label, config, launch_brief_path):
