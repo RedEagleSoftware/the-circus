@@ -58,28 +58,22 @@
 
 ## Last Completed Work
 
-- Added explicit target repository workspace configuration.
-- Synchronized required workflow labels to target repositories.
-- Define issue-level shared handoff artifacts.
-- Pass launch brief and handoff context to developer agent
-- Create v1 orchestration proposal/specification document.
-- Expand architect role doctrine.
-- Enable architect execution flow.
-- Generate architecture handoff artifacts from architect runs.
-- Route developer implementation context through architecture handoffs.
-- Create developer branches automatically.
 - Ensure architect runs inspect the target repo base branch
 - Create pull requests automatically.
 - Set up review flow.
 - Set up architect review flow.
+- Add per-run result/status artifacts to Watchtower runs.
  
 ## Current Task
 
+- Refactor Handler into focused modules.
 
 ## Next Likely Tasks
 
-- Add per-run result/status artifacts to Watchtower runs. 
 - Add target-repo instruction discovery conventions.
+- Refactor Handler into focused modules.
+- Add configurable agent provider routing.
+- Explore converting role doctrine/reusable workflows into skills.
 
 ## Future Roadmap Ideas
 

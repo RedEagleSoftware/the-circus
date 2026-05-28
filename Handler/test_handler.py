@@ -1907,24 +1907,43 @@ class HandlerObservabilityTests(unittest.TestCase):
             "model": "gpt-5.3-codex",
             "effort": "Medium",
         }
-        review_result_path = "C:/abs/Watchtower/runs/issue-10/run-001-reviewer/review-result.md"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            launch_brief_path = os.path.join(temp_dir, "issue-10", "run-001-reviewer", "launch-brief.md")
+            os.makedirs(os.path.dirname(launch_brief_path), exist_ok=True)
+            with open(launch_brief_path, "w", encoding="utf-8") as launch_brief_file:
+                launch_brief_file.write("# Launch Brief\n")
 
-        with patch.dict(os.environ, {}, clear=True):
-            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
-                with patch.object(handler, "build_reviewer_result_path", return_value=review_result_path):
-                    with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
-                        with patch.object(handler.os.path, "exists", return_value=False):
-                            with patch.object(handler, "parse_review_result_outcome") as mock_parse_outcome:
-                                with patch.object(handler, "advance_reviewer_workflow_on_approved") as mock_approved:
-                                    with patch.object(handler, "advance_reviewer_workflow_on_changes_requested") as mock_changes:
-                                        with patch.object(handler, "add_comment") as mock_add_comment:
-                                            launched = handler.launch_agent(
-                                                item,
-                                                "state:ready-for-review",
-                                                config,
-                                                os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
-                                                "Watchtower/runs/issue-10/run-001-reviewer/launch-brief.md",
-                                            )
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                    handler.initialize_run_status(item, "state:ready-for-review", config, launch_brief_path)
+
+                    review_result_path = "C:/abs/Watchtower/runs/issue-10/run-001-reviewer/review-result.md"
+                    with patch.dict(os.environ, {}, clear=True):
+                        with patch.object(handler, "build_reviewer_result_path", return_value=review_result_path):
+                            with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                                with patch.object(handler.os.path, "exists", return_value=False):
+                                    with patch.object(handler, "parse_review_result_outcome") as mock_parse_outcome:
+                                        with patch.object(handler, "advance_reviewer_workflow_on_approved") as mock_approved:
+                                            with patch.object(handler, "advance_reviewer_workflow_on_changes_requested") as mock_changes:
+                                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                                    launched = handler.launch_agent(
+                                                        item,
+                                                        "state:ready-for-review",
+                                                        config,
+                                                        os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
+                                                        launch_brief_path,
+                                                    )
+
+            status_path = os.path.join(os.path.dirname(launch_brief_path), "status.json")
+            result_path = os.path.join(os.path.dirname(launch_brief_path), "result.md")
+            with open(status_path, "r", encoding="utf-8") as status_file:
+                status_payload = json.load(status_file)
+
+            self.assertEqual(status_payload["outcome"], "missing result artifact")
+            self.assertFalse(status_payload["success"])
+            self.assertEqual(status_payload["exit_code"], 0)
+            self.assertIn("review_result", status_payload["artifacts"])
+            self.assertTrue(os.path.isfile(result_path))
 
         self.assertFalse(launched)
         mock_parse_outcome.assert_not_called()
@@ -2253,7 +2272,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(dispatched, "prelaunch-failed")
         mock_unlock.assert_called_once_with(item)
         mock_add_comment.assert_called_once_with(item)
-        mock_write_launch_brief.assert_not_called()
+        mock_write_launch_brief.assert_called_once()
         self.assertIn("working tree is dirty", item["comment"])
         self.assertIn("lock label `state:agent-in-progress` was released", item["comment"])
 
@@ -2327,7 +2346,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(dispatched, "prelaunch-failed")
         mock_unlock.assert_called_once_with(item)
         mock_add_comment.assert_called_once_with(item)
-        mock_write_launch_brief.assert_not_called()
+        mock_write_launch_brief.assert_called_once()
         self.assertIn("blocked architect launch", item["comment"])
         self.assertIn("working tree is dirty", item["comment"])
         self.assertIn("lock label `state:agent-in-progress` was released", item["comment"])
@@ -2406,6 +2425,14 @@ class HandlerObservabilityTests(unittest.TestCase):
             with open(decision_log_path, "r", encoding="utf-8") as decision_log_file:
                 decision_log_content = decision_log_file.read()
 
+            run_dir = os.path.dirname(brief_path)
+            status_path = os.path.join(run_dir, "status.json")
+            result_path = os.path.join(run_dir, "result.md")
+            self.assertTrue(os.path.isfile(status_path))
+            self.assertFalse(os.path.exists(result_path))
+            with open(status_path, "r", encoding="utf-8") as status_file:
+                status_payload = json.load(status_file)
+
         self.assertIn("# Launch Brief", content)
         self.assertIn("## Runtime Roots", content)
         self.assertIn(
@@ -2439,6 +2466,15 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertNotIn("\\", content)
         self.assertNotIn("docs\\doctrine.md", content)
         self.assertNotIn("docs\\operations-status.md", content)
+        self.assertEqual(status_payload["repository"], "owner/repo")
+        self.assertEqual(status_payload["item_type"], "issue")
+        self.assertEqual(status_payload["item_number"], 3)
+        self.assertEqual(status_payload["state_label"], "state:ready-for-dev")
+        self.assertEqual(status_payload["agent"], "junie")
+        self.assertEqual(status_payload["mode"], "developer")
+        self.assertIsNone(status_payload["started_at"])
+        self.assertIsNone(status_payload["exit_code"])
+        self.assertEqual(status_payload["artifacts"]["launch_brief"], brief_path.replace("\\", "/"))
 
         self.assertEqual(
             architecture_handoff_content,

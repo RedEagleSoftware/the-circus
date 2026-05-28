@@ -76,6 +76,38 @@ AGENT_EXECUTABLE_ENV_OVERRIDES = {
 
 EXECUTABLE_PATHS = {}
 
+RUN_STATUS_FILENAME = "status.json"
+RUN_RESULT_FILENAME = "result.md"
+
+RUN_STATUS_FIELDS = [
+    "repository",
+    "item_type",
+    "item_number",
+    "item_title",
+    "state_label",
+    "agent",
+    "mode",
+    "model",
+    "effort",
+    "target_repo_path",
+    "run_dir",
+    "launch_brief_path",
+    "started_at",
+    "completed_at",
+    "exit_code",
+    "success",
+    "outcome",
+    "stop_reason",
+    "linked_pr",
+    "working_branch",
+    "label_transition",
+    "artifacts",
+]
+
+
+def utc_timestamp_now():
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
 
 def get_circus_runtime_root():
     handler_module_dir = os.path.dirname(os.path.abspath(__file__))
@@ -301,6 +333,16 @@ def execute_label_transition(item, workflow_name, transition_steps, success_mess
         print(success_message.format(number=number))
     else:
         print(failure_message.format(number=number))
+
+    item["last_label_transition"] = {
+        "ok": transition_ok,
+        "workflow": workflow_name,
+        "steps": [
+            {"operation": operation, "label": label}
+            for operation, label in transition_steps
+        ],
+    }
+    update_run_status(item, label_transition=item["last_label_transition"])
 
     return transition_ok
 
@@ -1314,6 +1356,178 @@ def normalize_path_for_display(path):
     return path.replace("\\", "/")
 
 
+def initialize_run_status(item, state_label, config, launch_brief_path):
+    run_dir = os.path.normpath(os.path.dirname(launch_brief_path))
+    status_path = os.path.join(run_dir, RUN_STATUS_FILENAME)
+    result_path = os.path.join(run_dir, RUN_RESULT_FILENAME)
+    normalized_run_dir = normalize_path_for_display(run_dir)
+    normalized_brief_path = normalize_path_for_display(launch_brief_path)
+    normalized_status_path = normalize_path_for_display(status_path)
+    normalized_result_path = normalize_path_for_display(result_path)
+
+    status_payload = {
+        "repository": REPO,
+        "item_type": item.get("type"),
+        "item_number": item.get("number"),
+        "item_title": item.get("title"),
+        "state_label": state_label,
+        "agent": config.get("agent"),
+        "mode": config.get("mode"),
+        "model": config.get("model"),
+        "effort": config.get("effort"),
+        "target_repo_path": normalize_path_for_display(TARGET_REPO_PATH),
+        "run_dir": normalized_run_dir,
+        "launch_brief_path": normalized_brief_path,
+        "started_at": None,
+        "completed_at": None,
+        "exit_code": None,
+        "success": None,
+        "outcome": None,
+        "stop_reason": None,
+        "linked_pr": item.get("review_pr", {}).get("url"),
+        "working_branch": item.get("working_branch"),
+        "label_transition": None,
+        "artifacts": {
+            "launch_brief": normalized_brief_path,
+            "status": normalized_status_path,
+            "result": normalized_result_path,
+        },
+    }
+
+    for field in RUN_STATUS_FIELDS:
+        status_payload.setdefault(field, None)
+
+    with open(status_path, "w", encoding="utf-8") as status_file:
+        json.dump(status_payload, status_file, indent=2)
+        status_file.write("\n")
+
+    run_state = {
+        "run_dir": run_dir,
+        "status_path": status_path,
+        "result_path": result_path,
+        "launch_brief_path": launch_brief_path,
+    }
+
+    item["_run_state"] = run_state
+    return run_state
+
+
+def get_run_state(item):
+    return item.get("_run_state")
+
+
+def read_run_status(run_state):
+    status_path = run_state["status_path"]
+    try:
+        with open(status_path, "r", encoding="utf-8") as status_file:
+            status_payload = json.load(status_file)
+    except (FileNotFoundError, json.JSONDecodeError):
+        status_payload = {field: None for field in RUN_STATUS_FIELDS}
+
+    for field in RUN_STATUS_FIELDS:
+        status_payload.setdefault(field, None)
+
+    artifacts = status_payload.get("artifacts")
+    if not isinstance(artifacts, dict):
+        artifacts = {}
+        status_payload["artifacts"] = artifacts
+
+    artifacts.setdefault("status", normalize_path_for_display(run_state["status_path"]))
+    artifacts.setdefault("result", normalize_path_for_display(run_state["result_path"]))
+    artifacts.setdefault("launch_brief", normalize_path_for_display(run_state["launch_brief_path"]))
+    return status_payload
+
+
+def write_run_status(run_state, status_payload):
+    with open(run_state["status_path"], "w", encoding="utf-8") as status_file:
+        json.dump(status_payload, status_file, indent=2)
+        status_file.write("\n")
+
+
+def update_run_status(item, **updates):
+    run_state = get_run_state(item)
+    if not run_state:
+        return
+
+    status_payload = read_run_status(run_state)
+    for key, value in updates.items():
+        if key == "artifacts" and isinstance(value, dict):
+            status_payload["artifacts"].update(value)
+            continue
+        status_payload[key] = value
+
+    status_payload["linked_pr"] = item.get("review_pr", {}).get("url") or status_payload.get("linked_pr")
+    status_payload["working_branch"] = item.get("working_branch") or status_payload.get("working_branch")
+    if item.get("last_label_transition") is not None:
+        status_payload["label_transition"] = item.get("last_label_transition")
+
+    write_run_status(run_state, status_payload)
+
+
+def write_run_result(item):
+    run_state = get_run_state(item)
+    if not run_state:
+        return
+
+    status_payload = read_run_status(run_state)
+    artifacts = status_payload.get("artifacts") or {}
+    label_transition = status_payload.get("label_transition")
+
+    lines = [
+        "# Run Result",
+        "",
+        "## Summary",
+        f"- outcome: `{status_payload.get('outcome')}`",
+        f"- success: `{status_payload.get('success')}`",
+        f"- exit code: `{status_payload.get('exit_code')}`",
+        "",
+        "## Assignment",
+        f"- repository: `{status_payload.get('repository')}`",
+        f"- item: `{status_payload.get('item_type')} #{status_payload.get('item_number')}`",
+        f"- title: `{status_payload.get('item_title')}`",
+        f"- state label: `{status_payload.get('state_label')}`",
+        f"- agent/mode: `{status_payload.get('agent')} / {status_payload.get('mode')}`",
+        f"- model/effort: `{status_payload.get('model')} / {status_payload.get('effort')}`",
+        "",
+        "## Execution",
+        f"- started at: `{status_payload.get('started_at')}`",
+        f"- completed at: `{status_payload.get('completed_at')}`",
+        f"- stop reason: `{status_payload.get('stop_reason')}`",
+        f"- target repo path: `{status_payload.get('target_repo_path')}`",
+        f"- run dir: `{status_payload.get('run_dir')}`",
+        "",
+        "## Outcome",
+        f"- linked PR: `{status_payload.get('linked_pr')}`",
+        f"- working branch: `{status_payload.get('working_branch')}`",
+        "",
+        "## Artifacts",
+    ]
+
+    for key in sorted(artifacts.keys()):
+        lines.append(f"- {key}: `{artifacts.get(key)}`")
+
+    lines.extend(["", "## Label Transition"])
+
+    if isinstance(label_transition, dict):
+        lines.append(f"- ok: `{label_transition.get('ok')}`")
+        lines.append(f"- workflow: `{label_transition.get('workflow')}`")
+        lines.append(f"- steps: `{label_transition.get('steps')}`")
+    else:
+        lines.append("- no transition recorded")
+
+    lines.extend(["", "## Notes / Blockers"])
+    if item.get("comment"):
+        lines.append(f"- {item.get('comment')}")
+    elif status_payload.get("stop_reason"):
+        lines.append(f"- {status_payload.get('stop_reason')}")
+    else:
+        lines.append("- none")
+
+    with open(run_state["result_path"], "w", encoding="utf-8") as result_file:
+        result_file.write("\n".join(lines))
+        result_file.write("\n")
+
+
 def get_next_run_number(item_run_root):
     next_run_number = 1
 
@@ -1503,6 +1717,18 @@ def write_launch_brief(item, state_label, config, role_prompt_path):
     with open(brief_path, "w", encoding="utf-8") as brief_file:
         brief_file.write(f"{brief_content}\n")
 
+    initialize_run_status(item, state_label, config, brief_path)
+    artifact_updates = {
+        "architecture_handoff": shared_context_paths["architecture_handoff"],
+        "running_notes": shared_context_paths["running_notes"],
+        "decision_log": shared_context_paths["decision_log"],
+    }
+
+    if review_result_path:
+        artifact_updates["result_contract"] = normalize_path_for_display(review_result_path)
+
+    update_run_status(item, launch_brief_path=normalize_path_for_display(brief_path), artifacts=artifact_updates)
+
     print(f"[Dispatch] Shared artifact path (architecture handoff): {shared_context_paths['architecture_handoff']}")
     print(f"[Dispatch] Shared artifact path (running notes): {shared_context_paths['running_notes']}")
     print(f"[Dispatch] Shared artifact path (decision log): {shared_context_paths['decision_log']}")
@@ -1537,6 +1763,22 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
     print("[Dispatch] Generated thin prompt:")
     print(thin_prompt)
 
+    update_run_status(
+        item,
+        started_at=utc_timestamp_now(),
+        completed_at=None,
+        exit_code=None,
+        success=None,
+        outcome="running",
+        stop_reason=None,
+        agent=agent,
+        mode=mode,
+        model=model,
+        effort=effort,
+        state_label=state_label,
+        launch_brief_path=normalize_path_for_display(launch_brief_path),
+    )
+
     if agent == "junie":
         absolute_launch_brief_path = os.path.abspath(launch_brief_path)
         junie_task_text = build_junie_task_text(absolute_launch_brief_path)
@@ -1559,6 +1801,15 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         except OSError as error:
             item["prelaunch_error"] = str(error)
             print(f"[Dispatch] Junie failed to launch before execution started: {error}")
+            update_run_status(
+                item,
+                completed_at=utc_timestamp_now(),
+                exit_code=None,
+                success=False,
+                outcome="failed pre-launch",
+                stop_reason=str(error),
+            )
+            write_run_result(item)
             return False
 
         print(f"[Dispatch] Junie exit code: {result.returncode}")
@@ -1574,17 +1825,46 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             )
             add_comment(item)
             item["agent_exit_non_zero"] = True
+            update_run_status(
+                item,
+                completed_at=utc_timestamp_now(),
+                exit_code=result.returncode,
+                success=False,
+                outcome="failed agent execution",
+                stop_reason=f"agent exited with code {result.returncode}",
+            )
+            write_run_result(item)
             return False
         else:
             item.pop("agent_exit_non_zero", None)
             if mode == "developer" and state_label in {"state:ready-for-dev", "state:changes-requested"}:
-                return finalize_developer_success_with_pull_request(
+                launch_ok = finalize_developer_success_with_pull_request(
                     item,
                     launch_brief_path,
                     from_state_label=state_label,
                 )
+                outcome_value = "developer PR created" if launch_ok else "no changes detected"
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=0,
+                    success=launch_ok,
+                    outcome=outcome_value,
+                    stop_reason=None if launch_ok else "developer post-run PR finalization did not complete",
+                )
+                write_run_result(item)
+                return launch_ok
 
             print(f"[Dispatch] Junie completed with exit code 0 for {item['type']} #{number}; lock remains in place.")
+            update_run_status(
+                item,
+                completed_at=utc_timestamp_now(),
+                exit_code=0,
+                success=True,
+                outcome="completed",
+                stop_reason=None,
+            )
+            write_run_result(item)
             return True
     elif agent == "codex":
         print(f"[Dispatch] Codex routing metadata: mode={mode}, effort={effort}")
@@ -1608,6 +1888,15 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             if not review_pr_url:
                 item["prelaunch_error"] = "missing linked pull request metadata"
                 print("[Dispatch] Reviewer launch aborted: linked pull request metadata is missing.")
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=None,
+                    success=False,
+                    outcome="failed pre-launch",
+                    stop_reason="missing linked pull request metadata",
+                )
+                write_run_result(item)
                 return False
 
             absolute_launch_brief_path = os.path.abspath(launch_brief_path)
@@ -1652,6 +1941,15 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             except OSError as error:
                 item["prelaunch_error"] = str(error)
                 print(f"[Dispatch] Codex reviewer failed to launch before execution started: {error}")
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=None,
+                    success=False,
+                    outcome="failed pre-launch",
+                    stop_reason=str(error),
+                )
+                write_run_result(item)
                 return False
 
             print(f"[Dispatch] Codex reviewer exit code: {result.returncode}")
@@ -1666,6 +1964,15 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     f"[Dispatch] Codex reviewer exited non-zero for {item['type']} #{number}; "
                     "lock remains and human inspection is required."
                 )
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=result.returncode,
+                    success=False,
+                    outcome="failed agent execution",
+                    stop_reason=f"agent exited with code {result.returncode}",
+                )
+                write_run_result(item)
                 return False
 
             item.pop("agent_exit_non_zero", None)
@@ -1683,18 +1990,50 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 )
                 add_comment(item)
                 item["missing_review_result_artifact"] = True
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=result.returncode,
+                    success=False,
+                    outcome="missing result artifact",
+                    stop_reason=f"missing reviewer result artifact at {normalize_path_for_display(review_result_path)}",
+                    artifacts={"review_result": normalize_path_for_display(review_result_path)},
+                )
+                write_run_result(item)
                 return False
 
             review_outcome = parse_review_result_outcome(review_result_path)
+            update_run_status(item, artifacts={"review_result": normalize_path_for_display(review_result_path)})
             if review_outcome == "APPROVED":
                 print("[Dispatch] Review result handling: APPROVED.")
-                return advance_reviewer_workflow_on_approved(item)
+                advanced = advance_reviewer_workflow_on_approved(item)
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=result.returncode,
+                    success=advanced,
+                    outcome="reviewer approved",
+                    stop_reason=None if advanced else "label transition failed",
+                )
+                write_run_result(item)
+                return advanced
 
             if review_outcome == "CHANGES_REQUESTED":
                 print("[Dispatch] Review result handling: CHANGES_REQUESTED.")
                 running_notes_path = append_reviewer_feedback_note(item_run_root, review_result_path, review_pr_url)
                 print(f"[Dispatch] Reviewer feedback context appended to running notes: {running_notes_path}")
-                return advance_reviewer_workflow_on_changes_requested(item)
+                advanced = advance_reviewer_workflow_on_changes_requested(item)
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=result.returncode,
+                    success=advanced,
+                    outcome="reviewer changes requested",
+                    stop_reason=None if advanced else "label transition failed",
+                    artifacts={"running_notes": normalize_path_for_display(running_notes_path)},
+                )
+                write_run_result(item)
+                return advanced
 
             if review_outcome == "BLOCKED":
                 print(
@@ -1707,6 +2046,15 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     "for human inspection."
                 )
                 add_comment(item)
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=result.returncode,
+                    success=True,
+                    outcome="blocked",
+                    stop_reason="reviewer reported BLOCKED",
+                )
+                write_run_result(item)
                 return True
 
             print(
@@ -1719,6 +2067,15 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 "Workflow labels were not transitioned automatically; human review of reviewer output is required."
             )
             add_comment(item)
+            update_run_status(
+                item,
+                completed_at=utc_timestamp_now(),
+                exit_code=result.returncode,
+                success=True,
+                outcome="reviewer outcome ambiguous",
+                stop_reason="no unambiguous review outcome marker found",
+            )
+            write_run_result(item)
             return True
 
         if mode == "architect-review":
@@ -1728,6 +2085,15 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             if not review_pr_url:
                 item["prelaunch_error"] = "missing linked pull request metadata"
                 print("[Dispatch] Architect review launch aborted: linked pull request metadata is missing.")
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=None,
+                    success=False,
+                    outcome="failed pre-launch",
+                    stop_reason="missing linked pull request metadata",
+                )
+                write_run_result(item)
                 return False
 
             absolute_launch_brief_path = os.path.abspath(launch_brief_path)
@@ -1779,6 +2145,15 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             except OSError as error:
                 item["prelaunch_error"] = str(error)
                 print(f"[Dispatch] Codex architect review failed to launch before execution started: {error}")
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=None,
+                    success=False,
+                    outcome="failed pre-launch",
+                    stop_reason=str(error),
+                )
+                write_run_result(item)
                 return False
 
             print(f"[Dispatch] Codex architect review exit code: {result.returncode}")
@@ -1793,6 +2168,15 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     f"[Dispatch] Codex architect review exited non-zero for {item['type']} #{number}; "
                     "lock remains and human inspection is required."
                 )
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=result.returncode,
+                    success=False,
+                    outcome="failed agent execution",
+                    stop_reason=f"agent exited with code {result.returncode}",
+                )
+                write_run_result(item)
                 return False
 
             item.pop("agent_exit_non_zero", None)
@@ -1810,13 +2194,40 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 )
                 add_comment(item)
                 item["missing_review_result_artifact"] = True
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=result.returncode,
+                    success=False,
+                    outcome="missing result artifact",
+                    stop_reason=(
+                        "missing architect review result artifact at "
+                        f"{normalize_path_for_display(architect_review_result_path)}"
+                    ),
+                    artifacts={"architect_review_result": normalize_path_for_display(architect_review_result_path)},
+                )
+                write_run_result(item)
                 return False
 
             review_outcome = parse_review_result_outcome(architect_review_result_path)
+            update_run_status(
+                item,
+                artifacts={"architect_review_result": normalize_path_for_display(architect_review_result_path)},
+            )
             print(f"[Dispatch] Architect review outcome: {review_outcome or 'NO_UNAMBIGUOUS_OUTCOME'}.")
             if review_outcome == "APPROVED":
                 print("[Dispatch] Architect review passed; implementation is ready for human review.")
-                return advance_architect_review_workflow_on_approved(item)
+                advanced = advance_architect_review_workflow_on_approved(item)
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=result.returncode,
+                    success=advanced,
+                    outcome="architect review approved",
+                    stop_reason=None if advanced else "label transition failed",
+                )
+                write_run_result(item)
+                return advanced
 
             if review_outcome == "CHANGES_REQUESTED":
                 print("[Dispatch] Architect review result handling: CHANGES_REQUESTED.")
@@ -1826,7 +2237,18 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     review_pr_url,
                 )
                 print(f"[Dispatch] Architect review feedback context appended to running notes: {running_notes_feedback_path}")
-                return advance_architect_review_workflow_on_changes_requested(item)
+                advanced = advance_architect_review_workflow_on_changes_requested(item)
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=result.returncode,
+                    success=advanced,
+                    outcome="reviewer changes requested",
+                    stop_reason=None if advanced else "label transition failed",
+                    artifacts={"running_notes": normalize_path_for_display(running_notes_feedback_path)},
+                )
+                write_run_result(item)
+                return advanced
 
             if review_outcome == "BLOCKED":
                 print(
@@ -1839,6 +2261,15 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     "for human inspection."
                 )
                 add_comment(item)
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=result.returncode,
+                    success=True,
+                    outcome="blocked",
+                    stop_reason="architect reviewer reported BLOCKED",
+                )
+                write_run_result(item)
                 return True
 
             print(
@@ -1851,10 +2282,28 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 "Workflow labels were not transitioned automatically; human review of architect review output is required."
             )
             add_comment(item)
+            update_run_status(
+                item,
+                completed_at=utc_timestamp_now(),
+                exit_code=result.returncode,
+                success=True,
+                outcome="reviewer outcome ambiguous",
+                stop_reason="no unambiguous architect review outcome marker found",
+            )
+            write_run_result(item)
             return True
 
         if mode != "architect":
             print("[Dispatch] TODO: Codex execution flow currently enabled only for architect/reviewer modes.")
+            update_run_status(
+                item,
+                completed_at=utc_timestamp_now(),
+                exit_code=0,
+                success=True,
+                outcome="completed",
+                stop_reason="codex mode not implemented for this workflow path",
+            )
+            write_run_result(item)
             return True
 
         absolute_launch_brief_path = os.path.abspath(launch_brief_path)
@@ -1881,6 +2330,15 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         except OSError as error:
             item["prelaunch_error"] = str(error)
             print(f"[Dispatch] Codex failed to launch before execution started: {error}")
+            update_run_status(
+                item,
+                completed_at=utc_timestamp_now(),
+                exit_code=None,
+                success=False,
+                outcome="failed pre-launch",
+                stop_reason=str(error),
+            )
+            write_run_result(item)
             return False
 
         print(f"[Dispatch] Codex exit code: {result.returncode}")
@@ -1896,16 +2354,53 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             )
             add_comment(item)
             item["agent_exit_non_zero"] = True
+            update_run_status(
+                item,
+                completed_at=utc_timestamp_now(),
+                exit_code=result.returncode,
+                success=False,
+                outcome="failed agent execution",
+                stop_reason=f"agent exited with code {result.returncode}",
+            )
+            write_run_result(item)
             return False
         else:
             item.pop("agent_exit_non_zero", None)
             if mode == "architect" and state_label == "state:ready-for-architecture":
-                return advance_architect_workflow_on_success(item)
+                advanced = advance_architect_workflow_on_success(item)
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=0,
+                    success=advanced,
+                    outcome="architect handoff generated",
+                    stop_reason=None if advanced else "label transition failed",
+                )
+                write_run_result(item)
+                return advanced
             else:
                 print(f"[Dispatch] Codex completed with exit code 0 for {item['type']} #{number}; lock remains in place.")
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=0,
+                    success=True,
+                    outcome="completed",
+                    stop_reason=None,
+                )
+                write_run_result(item)
                 return True
     else:
         print(f"[Dispatch] Unknown agent: {agent}")
+        update_run_status(
+            item,
+            completed_at=utc_timestamp_now(),
+            exit_code=None,
+            success=False,
+            outcome="failed pre-launch",
+            stop_reason=f"unknown agent: {agent}",
+        )
+        write_run_result(item)
         return False
 
 
@@ -1949,6 +2444,7 @@ def process_one_item(items):
             branch_setup = prepare_developer_branch(item)
             if not branch_setup.get("ok"):
                 if branch_setup.get("reason") == "dirty-working-tree":
+                    failure_launch_brief_path = write_launch_brief(item, state_label, config, resolve_role_prompt_path(config["mode"]))
                     print(
                         f"[Dispatch] Blocking developer launch for {item['type']} #{item['number']}: "
                         "target repository working tree is dirty."
@@ -1973,6 +2469,16 @@ def process_one_item(items):
                         "Please clean the workspace and retry dispatch."
                     )
                     add_comment(item)
+                    update_run_status(
+                        item,
+                        completed_at=utc_timestamp_now(),
+                        exit_code=None,
+                        success=False,
+                        outcome="failed pre-launch",
+                        stop_reason="target repository working tree is dirty",
+                        launch_brief_path=normalize_path_for_display(failure_launch_brief_path),
+                    )
+                    write_run_result(item)
                     return "prelaunch-failed"
 
                 print(
@@ -1989,6 +2495,15 @@ def process_one_item(items):
 
                 add_prelaunch_setup_failure_comment(item, branch_setup.get("error", "developer branch setup failed"), lock_released)
                 add_comment(item)
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=None,
+                    success=False,
+                    outcome="failed pre-launch",
+                    stop_reason=branch_setup.get("error", "developer branch setup failed"),
+                )
+                write_run_result(item)
                 return "prelaunch-failed"
 
             item["working_branch"] = branch_setup["branch"]
@@ -1997,6 +2512,7 @@ def process_one_item(items):
             branch_setup = prepare_architect_execution_branch(item)
             if not branch_setup.get("ok"):
                 if branch_setup.get("reason") == "dirty-working-tree":
+                    failure_launch_brief_path = write_launch_brief(item, state_label, config, resolve_role_prompt_path(config["mode"]))
                     print(
                         f"[Dispatch] Blocking architect launch for {item['type']} #{item['number']}: "
                         "target repository working tree is dirty."
@@ -2021,6 +2537,16 @@ def process_one_item(items):
                         "Please clean the workspace and retry dispatch."
                     )
                     add_comment(item)
+                    update_run_status(
+                        item,
+                        completed_at=utc_timestamp_now(),
+                        exit_code=None,
+                        success=False,
+                        outcome="failed pre-launch",
+                        stop_reason="target repository working tree is dirty",
+                        launch_brief_path=normalize_path_for_display(failure_launch_brief_path),
+                    )
+                    write_run_result(item)
                     return "prelaunch-failed"
 
                 print(
@@ -2037,6 +2563,15 @@ def process_one_item(items):
 
                 add_prelaunch_setup_failure_comment(item, branch_setup.get("error", "architect branch setup failed"), lock_released)
                 add_comment(item)
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=None,
+                    success=False,
+                    outcome="failed pre-launch",
+                    stop_reason=branch_setup.get("error", "architect branch setup failed"),
+                )
+                write_run_result(item)
                 return "prelaunch-failed"
 
             item["execution_branch"] = branch_setup["branch"]
@@ -2056,6 +2591,15 @@ def process_one_item(items):
                     f"The lock label `{LOCK_LABEL}` was {lock_result}."
                 )
                 add_comment(item)
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=None,
+                    success=False,
+                    outcome="failed pre-launch",
+                    stop_reason="review dispatch expected issue item type",
+                )
+                write_run_result(item)
                 return "prelaunch-failed"
 
             review_mode_name = "architect review" if config["mode"] == "architect-review" else "review"
@@ -2077,6 +2621,15 @@ def process_one_item(items):
                     f"workflow labels were left unchanged. The lock label `{LOCK_LABEL}` was {lock_result}."
                 )
                 add_comment(item)
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=None,
+                    success=False,
+                    outcome="failed pre-launch",
+                    stop_reason=review_pr_lookup.get("error", "review PR discovery failed"),
+                )
+                write_run_result(item)
                 return "prelaunch-failed"
 
             review_pr = review_pr_lookup.get("pr")
@@ -2093,6 +2646,15 @@ def process_one_item(items):
                     f"The lock label `{LOCK_LABEL}` was {lock_result}."
                 )
                 add_comment(item)
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=None,
+                    success=False,
+                    outcome="failed pre-launch",
+                    stop_reason="no linked open PR discovered for review dispatch",
+                )
+                write_run_result(item)
                 return "prelaunch-failed"
 
             item["review_pr"] = {
