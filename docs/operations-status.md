@@ -26,7 +26,7 @@
 - state:ready-for-architecture
 - state:ready-for-dev
 - state:ready-for-review
-- state:ready-for-architect
+- state:ready-for-architect-review
 - state:ready-for-human-review
 - state:changes-requested
 - state:blocked
@@ -71,15 +71,15 @@
 - Ensure architect runs inspect the target repo base branch
 - Create pull requests automatically.
 - Set up review flow.
+- Set up architect review flow.
  
 ## Current Task
 
 
 ## Next Likely Tasks
 
-1. Set up architect review flow.
-2. Add per-run result/status artifacts to Watchtower runs.
-3. Add target-repo instruction discovery conventions.
+- Add per-run result/status artifacts to Watchtower runs. 
+- Add target-repo instruction discovery conventions.
 
 ## Future Roadmap Ideas
 

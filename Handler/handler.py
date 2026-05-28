@@ -44,12 +44,12 @@ LABEL_MAP = {
         "model": "gpt-5.3-codex",
         "effort": "Medium",
     },
-    "state:ready-for-architect": {
+    "state:ready-for-architect-review": {
         "agent": "codex",
-        "mode": "architect-approval",
+        "mode": "architect-review",
         "model": "gpt-5.3-codex",
         "effort": "Medium",
-    },
+    }
 }
 
 LOCK_LABEL = "state:agent-in-progress"
@@ -61,6 +61,7 @@ SHARED_ARTIFACT_PLACEHOLDERS = {
 }
 
 REVIEW_RESULT_FILENAME = "review-result.md"
+ARCHITECT_REVIEW_RESULT_FILENAME = "architect-review-result.md"
 REVIEW_OUTCOMES = {"APPROVED", "CHANGES_REQUESTED", "BLOCKED"}
 REVIEW_OUTCOME_MARKERS = {
     "Outcome: APPROVED": "APPROVED",
@@ -380,6 +381,44 @@ def advance_reviewer_workflow_on_changes_requested(item):
     )
 
 
+def advance_architect_review_workflow_on_approved(item):
+    transition_steps = [
+        ("remove", LOCK_LABEL),
+        ("remove", "state:ready-for-architect-review"),
+        ("add", "state:ready-for-human-review"),
+    ]
+
+    return execute_label_transition(
+        item,
+        workflow_name="Architect review",
+        transition_steps=transition_steps,
+        success_message="[Dispatch] Workflow advanced to human review stage for issue #{number}.",
+        failure_message=(
+            "[Dispatch] Architect review workflow transition encountered label update failures for issue #{number}; "
+            "manual inspection is required."
+        ),
+    )
+
+
+def advance_architect_review_workflow_on_changes_requested(item):
+    transition_steps = [
+        ("remove", LOCK_LABEL),
+        ("remove", "state:ready-for-architect-review"),
+        ("add", "state:changes-requested"),
+    ]
+
+    return execute_label_transition(
+        item,
+        workflow_name="Architect review",
+        transition_steps=transition_steps,
+        success_message="[Dispatch] Architect review routed workflow back to development for issue #{number}.",
+        failure_message=(
+            "[Dispatch] Architect review workflow transition encountered label update failures for issue #{number}; "
+            "manual inspection is required."
+        ),
+    )
+
+
 def append_reviewer_feedback_note(item_run_root, review_result_path, review_pr_url=None):
     shared_context_paths = build_shared_context_paths(item_run_root)
     running_notes_path = shared_context_paths["running_notes"]
@@ -394,6 +433,29 @@ def append_reviewer_feedback_note(item_run_root, review_result_path, review_pr_u
         note_lines.append(f"- review discussion: {review_pr_url}")
 
     note_lines.append("- status: reviewer requested implementation changes; use this artifact during follow-up development.")
+
+    with open(running_notes_path, "a", encoding="utf-8") as running_notes_file:
+        running_notes_file.write("\n".join(note_lines) + "\n")
+
+    return running_notes_path
+
+
+def append_architect_review_feedback_note(item_run_root, architect_review_result_path, review_pr_url=None):
+    shared_context_paths = build_shared_context_paths(item_run_root)
+    running_notes_path = shared_context_paths["running_notes"]
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    note_lines = [
+        "",
+        f"## Architect Review Follow-up ({timestamp})",
+        f"- latest architect review result: `{normalize_path_for_display(architect_review_result_path)}`",
+    ]
+
+    if review_pr_url:
+        note_lines.append(f"- review discussion: {review_pr_url}")
+
+    note_lines.append(
+        "- status: architect review requested architectural corrections; use this artifact during follow-up development."
+    )
 
     with open(running_notes_path, "a", encoding="utf-8") as running_notes_file:
         running_notes_file.write("\n".join(note_lines) + "\n")
@@ -760,10 +822,27 @@ def build_codex_reviewer_task_text(absolute_launch_brief_path, review_pr_url, re
     )
 
 
+def build_codex_architect_review_task_text(absolute_launch_brief_path, review_pr_url, architect_review_result_path):
+    return (
+        f"Read the launch brief at {absolute_launch_brief_path} and execute the architect review workflow. "
+        f"Review the linked pull request at {review_pr_url}. "
+        f"Write architect-review-result.md to this exact absolute path: {architect_review_result_path}. "
+        "The first non-empty line of architect-review-result.md must be exactly one of: "
+        "Outcome: APPROVED, Outcome: CHANGES_REQUESTED, or Outcome: BLOCKED. "
+        "Use the strict architect-review-result.md outcome contract. "
+        "Comment on the pull request with architectural review findings. "
+        "Do not modify workflow labels directly. "
+        "Do not auto-merge."
+    )
+
+
 def resolve_role_prompt_path(mode):
     candidates = [os.path.join("TheFarm", "roles", f"{mode}.md")]
     if mode.endswith("-approval"):
         base_mode = mode[: -len("-approval")]
+        candidates.append(os.path.join("TheFarm", "roles", f"{base_mode}.md"))
+    if mode.endswith("-review"):
+        base_mode = mode[: -len("-review")]
         candidates.append(os.path.join("TheFarm", "roles", f"{base_mode}.md"))
 
     for path in candidates:
@@ -824,6 +903,19 @@ def build_thin_prompt(item, state_label, mode, role_prompt_path, launch_brief_pa
             ]
         )
 
+    if mode == "architect-review":
+        prompt_lines.extend(
+            [
+                "- architect review artifact contract: You must write `architect-review-result.md` before exiting.",
+                f"- architect review result artifact absolute path: {review_result_path or '<not available>'}",
+                "- architect review outcome first non-empty line must be exactly one of:",
+                "  - Outcome: APPROVED",
+                "  - Outcome: CHANGES_REQUESTED",
+                "  - Outcome: BLOCKED",
+                "- architect review failure fallback: if you cannot write the file, use `Outcome: BLOCKED` and explain why.",
+            ]
+        )
+
     return "\n".join(prompt_lines)
 
 
@@ -856,6 +948,11 @@ def build_codex_command_with_optional_sandbox_bypass(model, project_path, task_t
 
 def build_reviewer_result_path(launch_brief_path):
     absolute_path = os.path.abspath(os.path.join(os.path.dirname(launch_brief_path), REVIEW_RESULT_FILENAME))
+    return normalize_path_for_display(absolute_path)
+
+
+def build_architect_review_result_path(launch_brief_path):
+    absolute_path = os.path.abspath(os.path.join(os.path.dirname(launch_brief_path), ARCHITECT_REVIEW_RESULT_FILENAME))
     return normalize_path_for_display(absolute_path)
 
 
@@ -1363,6 +1460,21 @@ def build_launch_brief_markdown(
             ]
         )
 
+    if config.get("mode") == "architect-review":
+        lines.extend(
+            [
+                "",
+                "## Architect Review Result Contract",
+                f"- architect review result artifact absolute path: `{review_result_path or '<not available>'}`",
+                "- You must write `architect-review-result.md` to this exact absolute path before exiting.",
+                "- The first non-empty line must be exactly one of:",
+                "  - `Outcome: APPROVED`",
+                "  - `Outcome: CHANGES_REQUESTED`",
+                "  - `Outcome: BLOCKED`",
+                "- If you cannot write the artifact file, set the first non-empty line to `Outcome: BLOCKED` and explain why.",
+            ]
+        )
+
     return "\n".join(lines)
 
 
@@ -1374,6 +1486,8 @@ def write_launch_brief(item, state_label, config, role_prompt_path):
     review_result_path = None
     if config.get("mode") == "reviewer":
         review_result_path = build_reviewer_result_path(brief_path)
+    if config.get("mode") == "architect-review":
+        review_result_path = build_architect_review_result_path(brief_path)
     brief_content = build_launch_brief_markdown(
         item,
         state_label,
@@ -1405,6 +1519,8 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
     reviewer_result_path_for_prompt = None
     if mode == "reviewer":
         reviewer_result_path_for_prompt = build_reviewer_result_path(launch_brief_path)
+    if mode == "architect-review":
+        reviewer_result_path_for_prompt = build_architect_review_result_path(launch_brief_path)
     thin_prompt = build_thin_prompt(
         item,
         state_label,
@@ -1605,6 +1721,138 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             add_comment(item)
             return True
 
+        if mode == "architect-review":
+            review_pr = item.get("review_pr") or {}
+            review_pr_url = review_pr.get("url")
+            review_pr_number = review_pr.get("number")
+            if not review_pr_url:
+                item["prelaunch_error"] = "missing linked pull request metadata"
+                print("[Dispatch] Architect review launch aborted: linked pull request metadata is missing.")
+                return False
+
+            absolute_launch_brief_path = os.path.abspath(launch_brief_path)
+            item_run_root = get_item_run_root(item)
+            shared_context_paths = build_shared_context_paths(item_run_root)
+            architecture_handoff_path = shared_context_paths["architecture_handoff"]
+            running_notes_path = shared_context_paths["running_notes"]
+            decision_log_path = shared_context_paths["decision_log"]
+            review_result_path = build_reviewer_result_path(launch_brief_path)
+            architect_review_result_path = build_architect_review_result_path(launch_brief_path)
+            architect_review_task_text = build_codex_architect_review_task_text(
+                absolute_launch_brief_path,
+                review_pr_url,
+                architect_review_result_path,
+            )
+            cmd = build_codex_command_with_optional_sandbox_bypass(
+                model,
+                TARGET_REPO_PATH or "",
+                architect_review_task_text,
+                bypass_sandbox=codex_bypass_sandbox,
+            )
+            command_arguments = cmd[1:-1]
+            command_shape = f"{cmd[0]} {' '.join(command_arguments)} \"{cmd[-1]}\""
+
+            architect_review_env = os.environ.copy()
+            architect_review_env["CIRCUS_ARCHITECT_REVIEW_PR_URL"] = str(review_pr_url)
+            architect_review_env["CIRCUS_ARCHITECT_REVIEW_PR_NUMBER"] = str(review_pr_number or "")
+            architect_review_env["CIRCUS_ARCHITECT_REVIEW_ISSUE_NUMBER"] = str(number)
+            architect_review_env["CIRCUS_ARCHITECT_REVIEW_LAUNCH_BRIEF"] = absolute_launch_brief_path
+            architect_review_env["CIRCUS_ARCHITECT_REVIEW_ARCHITECTURE_HANDOFF"] = architecture_handoff_path
+            architect_review_env["CIRCUS_ARCHITECT_REVIEW_RUNNING_NOTES"] = running_notes_path
+            architect_review_env["CIRCUS_ARCHITECT_REVIEW_DECISION_LOG"] = decision_log_path
+            architect_review_env["CIRCUS_ARCHITECT_REVIEW_REVIEW_RESULT_PATH"] = review_result_path
+            architect_review_env["CIRCUS_ARCHITECT_REVIEW_RESULT_PATH"] = architect_review_result_path
+            architect_review_env["CIRCUS_ARCHITECT_REVIEW_TARGET_REPO_PATH"] = TARGET_REPO_PATH or ""
+
+            print(f"[Dispatch] Architect review target issue: #{number}")
+            print(f"[Dispatch] Architect review target PR: #{review_pr_number} ({review_pr_url})")
+            print(f"[Dispatch] Architect review launch brief absolute path: {absolute_launch_brief_path}")
+            print(f"[Dispatch] Architecture handoff path: {architecture_handoff_path}")
+            print(f"[Dispatch] Reviewer result artifact path: {review_result_path}")
+            print(f"[Dispatch] Architect review result artifact path: {architect_review_result_path}")
+            print("[Dispatch] Architect reviewer command: codex exec")
+            print(f"[Dispatch] Executing: {command_shape}")
+            print(f"[Dispatch] Codex architect review execution cwd: {TARGET_REPO_PATH}")
+
+            try:
+                result = subprocess.run(cmd, cwd=TARGET_REPO_PATH, text=True, env=architect_review_env)
+            except OSError as error:
+                item["prelaunch_error"] = str(error)
+                print(f"[Dispatch] Codex architect review failed to launch before execution started: {error}")
+                return False
+
+            print(f"[Dispatch] Codex architect review exit code: {result.returncode}")
+            if result.returncode != 0:
+                item["comment"] = (
+                    f"Codex architect review launched for {item['type']} #{number} and exited with non-zero status "
+                    f"({result.returncode}). The lock label `{LOCK_LABEL}` remains in place for human inspection."
+                )
+                add_comment(item)
+                item["agent_exit_non_zero"] = True
+                print(
+                    f"[Dispatch] Codex architect review exited non-zero for {item['type']} #{number}; "
+                    "lock remains and human inspection is required."
+                )
+                return False
+
+            item.pop("agent_exit_non_zero", None)
+            if not os.path.exists(architect_review_result_path):
+                print(
+                    "[Dispatch] Architect review result handling: expected architect-review-result artifact is missing; "
+                    f"expected path={architect_review_result_path}; exists=False; "
+                    "workflow progression stopped with no label transition and lock remains in place."
+                )
+                item["comment"] = (
+                    f"Codex architect review completed for issue #{number}, but expected architect review result artifact "
+                    f"`{architect_review_result_path}` was not created. Workflow labels were not transitioned automatically, "
+                    f"and lock label `{LOCK_LABEL}` remains in place for human inspection. "
+                    "Handler stopped workflow progression for this run."
+                )
+                add_comment(item)
+                item["missing_review_result_artifact"] = True
+                return False
+
+            review_outcome = parse_review_result_outcome(architect_review_result_path)
+            print(f"[Dispatch] Architect review outcome: {review_outcome or 'NO_UNAMBIGUOUS_OUTCOME'}.")
+            if review_outcome == "APPROVED":
+                print("[Dispatch] Architect review passed; implementation is ready for human review.")
+                return advance_architect_review_workflow_on_approved(item)
+
+            if review_outcome == "CHANGES_REQUESTED":
+                print("[Dispatch] Architect review result handling: CHANGES_REQUESTED.")
+                running_notes_feedback_path = append_architect_review_feedback_note(
+                    item_run_root,
+                    architect_review_result_path,
+                    review_pr_url,
+                )
+                print(f"[Dispatch] Architect review feedback context appended to running notes: {running_notes_feedback_path}")
+                return advance_architect_review_workflow_on_changes_requested(item)
+
+            if review_outcome == "BLOCKED":
+                print(
+                    "[Dispatch] Architect review result handling: BLOCKED (no automatic label transition); "
+                    "human inspection required and lock remains in place."
+                )
+                item["comment"] = (
+                    f"Codex architect review reported `BLOCKED` for issue #{number}. "
+                    f"Workflow labels were not transitioned automatically; the lock label `{LOCK_LABEL}` remains in place "
+                    "for human inspection."
+                )
+                add_comment(item)
+                return True
+
+            print(
+                "[Dispatch] Architect review result handling: no unambiguous review outcome marker found; "
+                "labels were not transitioned automatically."
+            )
+            item["comment"] = (
+                f"Codex architect review completed for issue #{number}, but no unambiguous review outcome marker "
+                f"(`APPROVED`, `CHANGES_REQUESTED`, or `BLOCKED`) was found in `{architect_review_result_path}`. "
+                "Workflow labels were not transitioned automatically; human review of architect review output is required."
+            )
+            add_comment(item)
+            return True
+
         if mode != "architect":
             print("[Dispatch] TODO: Codex execution flow currently enabled only for architect/reviewer modes.")
             return True
@@ -1793,34 +2041,39 @@ def process_one_item(items):
 
             item["execution_branch"] = branch_setup["branch"]
 
-        if config["agent"] == "codex" and config["mode"] == "reviewer":
+        if config["agent"] == "codex" and config["mode"] in {"reviewer", "architect-review"}:
             if item["type"] != "issue":
+                review_mode_name = "architect review" if config["mode"] == "architect-review" else "review"
                 print(
-                    f"[Dispatch] Skipping reviewer launch for {item['type']} #{item['number']}: "
+                    f"[Dispatch] Skipping {review_mode_name} launch for {item['type']} #{item['number']}: "
                     "review dispatch is issue-driven in v1."
                 )
                 lock_released = unlock_item(item)
                 lock_result = "released" if lock_released else "could not be released"
                 item["comment"] = (
-                    "Handler skipped review dispatch because workflow review state is issue-owned in v1. "
+                    "Handler skipped review dispatch because workflow review states are issue-owned in v1. "
                     f"Expected an issue, but got `{item['type']}` #{item['number']}. "
                     f"The lock label `{LOCK_LABEL}` was {lock_result}."
                 )
                 add_comment(item)
                 return "prelaunch-failed"
 
-            print(f"[Dispatch] Review candidate selected for issue #{item['number']}; discovering linked open PR...")
+            review_mode_name = "architect review" if config["mode"] == "architect-review" else "review"
+            print(
+                f"[Dispatch] {review_mode_name.capitalize()} candidate selected for issue #{item['number']}; "
+                "discovering linked open PR..."
+            )
             review_pr_lookup = find_open_review_pr_for_issue(item["number"])
             if not review_pr_lookup.get("ok"):
                 print(
-                    f"[Dispatch] Review PR discovery failed for issue #{item['number']}: "
+                    f"[Dispatch] {review_mode_name.capitalize()} PR discovery failed for issue #{item['number']}: "
                     f"{review_pr_lookup.get('error', 'unknown error')}"
                 )
                 lock_released = unlock_item(item)
                 lock_result = "released" if lock_released else "could not be released"
                 item["comment"] = (
                     f"Handler could not discover a linked open pull request for issue #{item['number']} "
-                    f"({review_pr_lookup.get('error', 'unknown error')}). Reviewer launch was skipped and "
+                    f"({review_pr_lookup.get('error', 'unknown error')}). {review_mode_name.capitalize()} launch was skipped and "
                     f"workflow labels were left unchanged. The lock label `{LOCK_LABEL}` was {lock_result}."
                 )
                 add_comment(item)
@@ -1835,8 +2088,8 @@ def process_one_item(items):
                 lock_released = unlock_item(item)
                 lock_result = "released" if lock_released else "could not be released"
                 item["comment"] = (
-                    f"Handler found issue #{item['number']} in `state:ready-for-review`, but no linked open PR "
-                    "was discovered. Reviewer launch was skipped and workflow labels were left unchanged. "
+                    f"Handler found issue #{item['number']} in `{state_label}`, but no linked open PR "
+                    f"was discovered. {review_mode_name.capitalize()} launch was skipped and workflow labels were left unchanged. "
                     f"The lock label `{LOCK_LABEL}` was {lock_result}."
                 )
                 add_comment(item)

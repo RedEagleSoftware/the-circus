@@ -66,7 +66,7 @@
 - `state:ready-for-architecture` -> Codex Architect
 - `state:ready-for-dev` -> Junie Developer
 - `state:ready-for-review` -> Codex PR Reviewer
-- `state:ready-for-architect` -> Codex Architect Approval
+- `state:ready-for-architect-review` -> Codex Architect Approval
 - `state:ready-for-human-review` -> Human Review
 
 ## Tool Stack
