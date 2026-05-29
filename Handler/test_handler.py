@@ -1605,7 +1605,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                             return_value=architect_review_result_path,
                         ):
                             with patch.object(handler.os.path, "exists", return_value=True):
-                                with patch.object(handler, "parse_review_result_outcome", return_value="APPROVED"):
+                                with patch.object(handler, "parse_architect_review_result_outcome", return_value="APPROVED"):
                                     with patch.object(
                                         handler,
                                         "advance_architect_review_workflow_on_approved",
@@ -1684,7 +1684,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                             return_value="Watchtower/runs/issue-13/run-001-architect-review/architect-review-result.md",
                         ):
                             with patch.object(handler.os.path, "exists", return_value=True):
-                                with patch.object(handler, "parse_review_result_outcome", return_value="CHANGES_REQUESTED"):
+                                with patch.object(handler, "parse_architect_review_result_outcome", return_value="CHANGES_REQUESTED"):
                                     with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
                                         with patch.object(
                                             handler,

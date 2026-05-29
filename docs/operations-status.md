@@ -70,7 +70,7 @@
 
 ## Next Likely Tasks
 
-- Add target-repo instruction discovery conventions.
+- Add target-repo instruction discovery and context-loading conventions.
 - Refactor Handler into focused modules.
 - Add configurable agent provider routing.
 - Explore converting role doctrine/reusable workflows into skills.

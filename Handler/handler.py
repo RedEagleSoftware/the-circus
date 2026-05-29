@@ -3,13 +3,16 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 from datetime import datetime, UTC
 from dotenv import load_dotenv
 
+from Handler import agents
 from Handler import config as handler_config
 from Handler import git_workspace
+from Handler import github_client
 from Handler import paths as handler_paths
+from Handler import watchtower
+from Handler import workflow
 
 load_dotenv()
 
@@ -22,55 +25,16 @@ MAX_STEPS_PER_RUN_ENV = handler_config.MAX_STEPS_PER_RUN_ENV
 MAX_BRANCH_SLUG_LENGTH = 60
 
 # Label to Agent Mapping
-LABEL_MAP = {
-    "state:ready-for-architecture": {
-        "agent": "codex",
-        "mode": "architect",
-        "model": "gpt-5.3-codex",
-        "effort": "Medium",
-    },
-    "state:ready-for-dev": {
-        "agent": "junie",
-        "mode": "developer",
-        "model": "gpt-5.3-codex",
-        "effort": "Medium",
-    },
-    "state:changes-requested": {
-        "agent": "junie",
-        "mode": "developer",
-        "model": "gpt-5.3-codex",
-        "effort": "Medium",
-    },
-    "state:ready-for-review": {
-        "agent": "codex",
-        "mode": "reviewer",
-        "model": "gpt-5.3-codex",
-        "effort": "Medium",
-    },
-    "state:ready-for-architect-review": {
-        "agent": "codex",
-        "mode": "architect-review",
-        "model": "gpt-5.3-codex",
-        "effort": "Medium",
-    }
-}
+LABEL_MAP = workflow.LABEL_MAP
 
-LOCK_LABEL = "state:agent-in-progress"
+LOCK_LABEL = workflow.LOCK_LABEL
 LAUNCH_ARTIFACT_DIR = os.path.join("Watchtower", "runs")
-SHARED_ARTIFACT_PLACEHOLDERS = {
-    "architecture-handoff.md": "# Architecture Handoff\n\nNo architecture handoff has been recorded yet.",
-    "running-notes.md": "# Running Notes\n\nNo running notes have been recorded yet.",
-    "decision-log.md": "# Decision Log\n\nNo decisions have been recorded yet.",
-}
+SHARED_ARTIFACT_PLACEHOLDERS = watchtower.SHARED_ARTIFACT_PLACEHOLDERS
 
-REVIEW_RESULT_FILENAME = "review-result.md"
-ARCHITECT_REVIEW_RESULT_FILENAME = "architect-review-result.md"
-REVIEW_OUTCOMES = {"APPROVED", "CHANGES_REQUESTED", "BLOCKED"}
-REVIEW_OUTCOME_MARKERS = {
-    "Outcome: APPROVED": "APPROVED",
-    "Outcome: CHANGES_REQUESTED": "CHANGES_REQUESTED",
-    "Outcome: BLOCKED": "BLOCKED",
-}
+REVIEW_RESULT_FILENAME = watchtower.REVIEW_RESULT_FILENAME
+ARCHITECT_REVIEW_RESULT_FILENAME = watchtower.ARCHITECT_REVIEW_RESULT_FILENAME
+REVIEW_OUTCOMES = workflow.REVIEW_OUTCOMES
+REVIEW_OUTCOME_MARKERS = workflow.REVIEW_OUTCOME_MARKERS
 
 AGENT_EXECUTABLE_ENV_OVERRIDES = {
     "junie": "CIRCUS_JUNIE_EXECUTABLE",
@@ -79,33 +43,10 @@ AGENT_EXECUTABLE_ENV_OVERRIDES = {
 
 EXECUTABLE_PATHS = {}
 
-RUN_STATUS_FILENAME = "status.json"
-RUN_RESULT_FILENAME = "result.md"
+RUN_STATUS_FILENAME = watchtower.RUN_STATUS_FILENAME
+RUN_RESULT_FILENAME = watchtower.RUN_RESULT_FILENAME
 
-RUN_STATUS_FIELDS = [
-    "repository",
-    "item_type",
-    "item_number",
-    "item_title",
-    "state_label",
-    "agent",
-    "mode",
-    "model",
-    "effort",
-    "target_repo_path",
-    "run_dir",
-    "launch_brief_path",
-    "started_at",
-    "completed_at",
-    "exit_code",
-    "success",
-    "outcome",
-    "stop_reason",
-    "linked_pr",
-    "working_branch",
-    "label_transition",
-    "artifacts",
-]
+RUN_STATUS_FIELDS = watchtower.RUN_STATUS_FIELDS
 
 
 def utc_timestamp_now():
@@ -124,44 +65,15 @@ def resolve_circus_runtime_path(path):
 
 
 def run_command(cmd):
-    result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
-    if result.returncode != 0:
-        print(f"[GitHub] Error executing command for repo '{REPO}': {cmd}")
-        print(f"[GitHub] Stderr: {result.stderr}")
-        return None
-    return result.stdout.strip()
+    return github_client.run_command(cmd, repo=REPO, run_subprocess=subprocess.run, log=print)
 
 
 def add_comment(item):
-    target = item["type"]
-    number = item["number"]
-    body = item["comment"]
-
-    cmd = f"gh {target} comment {number} --repo {REPO} --body {json.dumps(body)}"
-    run_command(cmd)
+    github_client.add_comment(item, repo=REPO, run_command_fn=run_command)
 
 
 def verify_github_repo_access():
-    print(f"[GitHub] Validating access to repo '{REPO}'...")
-    # Note: gh subcommands use different explicit repo-targeting syntax (`gh repo view <repo>` vs `gh issue/pr ... --repo <repo>`).
-    payload = run_command(f"gh repo view {REPO} --json nameWithOwner")
-    if payload is None:
-        print(f"[GitHub] Failed to connect to target repo '{REPO}'.")
-        return False
-
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError:
-        print(f"[GitHub] Unexpected response while validating repo '{REPO}'.")
-        return False
-
-    repo_name = data.get("nameWithOwner")
-    if repo_name != REPO:
-        print(f"[GitHub] Repo check returned '{repo_name}' (expected '{REPO}').")
-        return False
-
-    print(f"[GitHub] Repo access confirmed: {repo_name}")
-    return True
+    return github_client.verify_github_repo_access(repo=REPO, run_command_fn=run_command, log=print)
 
 
 def get_required_executables():
@@ -237,20 +149,7 @@ def validate_required_executables():
 
 
 def get_candidates(item_type, list_cmd):
-    cmd = f"gh {list_cmd} --repo {REPO} --json number,labels,title,url"
-    payload = run_command(cmd)
-    if payload is None:
-        return [], False
-
-    if not payload:
-        return [], True
-
-    raw_items = json.loads(payload)
-    items = []
-    for item in raw_items:
-        item["type"] = item_type
-        items.append(item)
-    return items, True
+    return github_client.get_candidates(item_type, list_cmd, repo=REPO, run_command_fn=run_command)
 
 
 def get_labeled_items():
@@ -280,228 +179,128 @@ def get_labeled_items():
 
 
 def get_primary_state_labels(labels):
-    return [label for label in labels if label in LABEL_MAP]
+    return workflow.get_primary_state_labels(labels)
 
 
 def get_state_labels(labels):
-    return [label for label in labels if label.startswith("state:")]
+    return workflow.get_state_labels(labels)
 
 
 def is_locked(labels):
-    return LOCK_LABEL in labels
+    return workflow.is_locked(labels)
 
 
 def lock_item(item):
-    cmd = f"gh {item['type']} edit {item['number']} --repo {REPO} --add-label \"{LOCK_LABEL}\""
-    return run_command(cmd) is not None
+    return github_client.lock_item(item, repo=REPO, lock_label=LOCK_LABEL, run_command_fn=run_command)
 
 
 def unlock_item(item):
-    cmd = f"gh {item['type']} edit {item['number']} --repo {REPO} --remove-label \"{LOCK_LABEL}\""
-    return run_command(cmd) is not None
+    return github_client.unlock_item(item, repo=REPO, lock_label=LOCK_LABEL, run_command_fn=run_command)
 
 
 def remove_label(item, label):
-    cmd = f"gh {item['type']} edit {item['number']} --repo {REPO} --remove-label \"{label}\""
-    return run_command(cmd) is not None
+    return github_client.remove_label(item, label, repo=REPO, run_command_fn=run_command)
 
 
 def add_label(item, label):
-    cmd = f"gh {item['type']} edit {item['number']} --repo {REPO} --add-label \"{label}\""
-    return run_command(cmd) is not None
+    return github_client.add_label(item, label, repo=REPO, run_command_fn=run_command)
 
 
 def execute_label_transition(item, workflow_name, transition_steps, success_message, failure_message):
-    number = item["number"]
-    print(f"[Dispatch] {workflow_name} workflow completed successfully for issue #{number}.")
-
-    transition_ok = True
-    for operation, label in transition_steps:
-        if operation == "remove":
-            print(f"[Dispatch] Removing label: {label}")
-            if not remove_label(item, label):
-                transition_ok = False
-                print(f"[Dispatch] Failed to remove label: {label}")
-        else:
-            print(f"[Dispatch] Adding label: {label}")
-            if not add_label(item, label):
-                transition_ok = False
-                print(f"[Dispatch] Failed to add label: {label}")
-
-    if transition_ok:
-        print(success_message.format(number=number))
-    else:
-        print(failure_message.format(number=number))
-
-    item["last_label_transition"] = {
-        "ok": transition_ok,
-        "workflow": workflow_name,
-        "steps": [
-            {"operation": operation, "label": label}
-            for operation, label in transition_steps
-        ],
-    }
-    update_run_status(item, label_transition=item["last_label_transition"])
-
-    return transition_ok
+    return workflow.execute_label_transition(
+        item,
+        workflow_name,
+        transition_steps,
+        success_message,
+        failure_message,
+        remove_label_fn=remove_label,
+        add_label_fn=add_label,
+        update_run_status_fn=update_run_status,
+        log=print,
+    )
 
 
 def advance_architect_workflow_on_success(item):
-    transition_steps = [
-        ("remove", LOCK_LABEL),
-        ("remove", "state:ready-for-architecture"),
-        ("add", "state:ready-for-dev"),
-    ]
-
-    return execute_label_transition(
+    return workflow.advance_architect_workflow_on_success(
         item,
-        workflow_name="Architect",
-        transition_steps=transition_steps,
-        success_message="[Dispatch] Workflow advanced to developer stage for issue #{number}.",
-        failure_message=(
-            "[Dispatch] Architect workflow transition encountered label update failures for issue #{number}; "
-            "manual inspection is required."
-        ),
+        remove_label_fn=remove_label,
+        add_label_fn=add_label,
+        update_run_status_fn=update_run_status,
+        log=print,
     )
 
 
 def advance_developer_workflow_on_success(item, from_state_label="state:ready-for-dev"):
-    transition_steps = [
-        ("remove", LOCK_LABEL),
-        ("remove", from_state_label),
-        ("add", "state:ready-for-review"),
-    ]
-
-    return execute_label_transition(
+    return workflow.advance_developer_workflow_on_success(
         item,
-        workflow_name="Developer",
-        transition_steps=transition_steps,
-        success_message="[Dispatch] Workflow advanced to review stage for issue #{number}.",
-        failure_message=(
-            "[Dispatch] Developer workflow transition encountered label update failures for issue #{number}; "
-            "manual inspection is required."
-        ),
+        remove_label_fn=remove_label,
+        add_label_fn=add_label,
+        update_run_status_fn=update_run_status,
+        log=print,
+        from_state_label=from_state_label,
     )
 
 
 def advance_reviewer_workflow_on_approved(item):
-    transition_steps = [
-        ("remove", LOCK_LABEL),
-        ("remove", "state:ready-for-review"),
-        ("add", "state:ready-for-architect-review"),
-    ]
-
-    return execute_label_transition(
+    return workflow.advance_reviewer_workflow_on_approved(
         item,
-        workflow_name="Reviewer",
-        transition_steps=transition_steps,
-        success_message="[Dispatch] Implementation review passed; workflow advanced to architect review stage for issue #{number}.",
-        failure_message=(
-            "[Dispatch] Reviewer workflow transition encountered label update failures for issue #{number}; "
-            "manual inspection is required."
-        ),
+        remove_label_fn=remove_label,
+        add_label_fn=add_label,
+        update_run_status_fn=update_run_status,
+        log=print,
     )
 
 
 def advance_reviewer_workflow_on_changes_requested(item):
-    transition_steps = [
-        ("remove", LOCK_LABEL),
-        ("remove", "state:ready-for-review"),
-        ("add", "state:changes-requested"),
-    ]
-
-    return execute_label_transition(
+    return workflow.advance_reviewer_workflow_on_changes_requested(
         item,
-        workflow_name="Reviewer",
-        transition_steps=transition_steps,
-        success_message="[Dispatch] Workflow routed back to development for issue #{number}.",
-        failure_message=(
-            "[Dispatch] Reviewer workflow transition encountered label update failures for issue #{number}; "
-            "manual inspection is required."
-        ),
+        remove_label_fn=remove_label,
+        add_label_fn=add_label,
+        update_run_status_fn=update_run_status,
+        log=print,
     )
 
 
 def advance_architect_review_workflow_on_approved(item):
-    transition_steps = [
-        ("remove", LOCK_LABEL),
-        ("remove", "state:ready-for-architect-review"),
-        ("add", "state:ready-for-human-review"),
-    ]
-
-    return execute_label_transition(
+    return workflow.advance_architect_review_workflow_on_approved(
         item,
-        workflow_name="Architect review",
-        transition_steps=transition_steps,
-        success_message="[Dispatch] Workflow advanced to human review stage for issue #{number}.",
-        failure_message=(
-            "[Dispatch] Architect review workflow transition encountered label update failures for issue #{number}; "
-            "manual inspection is required."
-        ),
+        remove_label_fn=remove_label,
+        add_label_fn=add_label,
+        update_run_status_fn=update_run_status,
+        log=print,
     )
 
 
 def advance_architect_review_workflow_on_changes_requested(item):
-    transition_steps = [
-        ("remove", LOCK_LABEL),
-        ("remove", "state:ready-for-architect-review"),
-        ("add", "state:changes-requested"),
-    ]
-
-    return execute_label_transition(
+    return workflow.advance_architect_review_workflow_on_changes_requested(
         item,
-        workflow_name="Architect review",
-        transition_steps=transition_steps,
-        success_message="[Dispatch] Architect review routed workflow back to development for issue #{number}.",
-        failure_message=(
-            "[Dispatch] Architect review workflow transition encountered label update failures for issue #{number}; "
-            "manual inspection is required."
-        ),
+        remove_label_fn=remove_label,
+        add_label_fn=add_label,
+        update_run_status_fn=update_run_status,
+        log=print,
     )
 
 
 def append_reviewer_feedback_note(item_run_root, review_result_path, review_pr_url=None):
-    shared_context_paths = build_shared_context_paths(item_run_root)
-    running_notes_path = shared_context_paths["running_notes"]
-    timestamp = datetime.now().isoformat(timespec="seconds")
-    note_lines = [
-        "",
-        f"## Reviewer Follow-up ({timestamp})",
-        f"- latest review result: `{normalize_path_for_display(review_result_path)}`",
-    ]
-
-    if review_pr_url:
-        note_lines.append(f"- review discussion: {review_pr_url}")
-
-    note_lines.append("- status: reviewer requested implementation changes; use this artifact during follow-up development.")
-
-    with open(running_notes_path, "a", encoding="utf-8") as running_notes_file:
-        running_notes_file.write("\n".join(note_lines) + "\n")
-
-    return running_notes_path
+    return watchtower.append_reviewer_feedback_note(
+        item_run_root,
+        review_result_path,
+        review_pr_url=review_pr_url,
+        build_shared_context_paths_fn=build_shared_context_paths,
+        normalize_path_for_display_fn=normalize_path_for_display,
+        timestamp_now_fn=lambda: datetime.now().isoformat(timespec="seconds"),
+    )
 
 
 def append_architect_review_feedback_note(item_run_root, architect_review_result_path, review_pr_url=None):
-    shared_context_paths = build_shared_context_paths(item_run_root)
-    running_notes_path = shared_context_paths["running_notes"]
-    timestamp = datetime.now().isoformat(timespec="seconds")
-    note_lines = [
-        "",
-        f"## Architect Review Follow-up ({timestamp})",
-        f"- latest architect review result: `{normalize_path_for_display(architect_review_result_path)}`",
-    ]
-
-    if review_pr_url:
-        note_lines.append(f"- review discussion: {review_pr_url}")
-
-    note_lines.append(
-        "- status: architect review requested architectural corrections; use this artifact during follow-up development."
+    return watchtower.append_architect_review_feedback_note(
+        item_run_root,
+        architect_review_result_path,
+        review_pr_url=review_pr_url,
+        build_shared_context_paths_fn=build_shared_context_paths,
+        normalize_path_for_display_fn=normalize_path_for_display,
+        timestamp_now_fn=lambda: datetime.now().isoformat(timespec="seconds"),
     )
-
-    with open(running_notes_path, "a", encoding="utf-8") as running_notes_file:
-        running_notes_file.write("\n".join(note_lines) + "\n")
-
-    return running_notes_path
 
 
 def build_developer_commit_message(item):
@@ -545,76 +344,11 @@ def build_developer_pr_body(item, launch_brief_path):
 
 
 def find_existing_open_pr_for_branch(branch_name):
-    cmd = (
-        f"gh pr list --repo {REPO} --head {json.dumps(branch_name)} "
-        "--state open --json url --limit 1"
-    )
-    payload = run_command(cmd)
-    if payload is None:
-        return {
-            "ok": False,
-            "error": "unable to query existing pull requests",
-        }
-
-    try:
-        prs = json.loads(payload)
-    except json.JSONDecodeError:
-        return {
-            "ok": False,
-            "error": "unable to parse pull request listing response",
-        }
-
-    if not prs:
-        return {
-            "ok": True,
-            "url": None,
-        }
-
-    return {
-        "ok": True,
-        "url": prs[0].get("url"),
-    }
+    return github_client.find_existing_open_pr_for_branch(branch_name, repo=REPO, run_command_fn=run_command)
 
 
 def find_open_review_pr_for_issue(issue_number):
-    cmd = "gh pr list --repo {repo} --state open --json number,url,body --limit 100".format(repo=REPO)
-    payload = run_command(cmd)
-    if payload is None:
-        return {
-            "ok": False,
-            "error": "unable to query open pull requests",
-            "pr": None,
-        }
-
-    try:
-        prs = json.loads(payload)
-    except json.JSONDecodeError:
-        return {
-            "ok": False,
-            "error": "unable to parse pull request listing response",
-            "pr": None,
-        }
-
-    preferred_pattern = re.compile(rf"\bcloses\s*#{issue_number}\b", re.IGNORECASE)
-    fallback_pattern = re.compile(rf"#{issue_number}\b")
-    preferred_match = None
-    fallback_match = None
-
-    for pr in prs:
-        body = pr.get("body") or ""
-        if preferred_pattern.search(body):
-            preferred_match = pr
-            break
-
-        if fallback_match is None and fallback_pattern.search(body):
-            fallback_match = pr
-
-    selected_pr = preferred_match or fallback_match
-    return {
-        "ok": True,
-        "pr": selected_pr,
-        "match_reason": "preferred-closes" if preferred_match else ("fallback-issue-reference" if fallback_match else None),
-    }
+    return github_client.find_open_review_pr_for_issue(issue_number, repo=REPO, run_command_fn=run_command)
 
 
 def add_developer_pr_failure_comment(item, details):
@@ -627,27 +361,14 @@ def add_developer_pr_failure_comment(item, details):
 
 
 def create_pull_request_with_body_file(branch_name, pr_title, pr_body):
-    temp_body_file_path = None
-
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".md", delete=False) as body_file:
-            body_file.write(pr_body)
-            temp_body_file_path = body_file.name
-
-        create_pr_cmd = (
-            f"gh pr create --repo {REPO} --head {json.dumps(branch_name)} "
-            f"--title {json.dumps(pr_title)} --body-file {json.dumps(temp_body_file_path)}"
-        )
-        return run_command(create_pr_cmd)
-    finally:
-        if temp_body_file_path and os.path.exists(temp_body_file_path):
-            try:
-                os.remove(temp_body_file_path)
-            except OSError as error:
-                print(
-                    f"[Dispatch] Warning: unable to remove temporary PR body file "
-                    f"'{temp_body_file_path}': {error}"
-                )
+    return github_client.create_pull_request_with_body_file(
+        branch_name,
+        pr_title,
+        pr_body,
+        repo=REPO,
+        run_command_fn=run_command,
+        log=print,
+    )
 
 
 def finalize_developer_success_with_pull_request(item, launch_brief_path, from_state_label="state:ready-for-dev"):
@@ -768,90 +489,40 @@ def add_prelaunch_setup_failure_comment(item, error, lock_released):
 
 
 def resolve_dispatch_config(item, labels):
-    primary_states = get_primary_state_labels(labels)
-    state_labels = get_state_labels(labels)
-
-    if not primary_states:
-        if state_labels:
-            item["comment"] = (
-                "Handler skipped this item: unsupported workflow state label(s) were found "
-                f"({', '.join(state_labels)}). Please use one supported state label from the doctrine."
-            )
-            item["skip_reason"] = f"unsupported workflow state label(s): {', '.join(state_labels)}"
-        else:
-            item["comment"] = (
-                "Handler skipped this item: no supported workflow state label was found. "
-                "Please add exactly one primary `state:*` label to continue."
-            )
-            item["skip_reason"] = "no supported workflow state label"
-        return None
-
-    if len(primary_states) > 1:
-        item["comment"] = (
-            "Handler skipped this item: multiple workflow state labels were found "
-            f"({', '.join(primary_states)}). Please keep exactly one primary `state:*` label."
-        )
-        item["skip_reason"] = f"ambiguous workflow state labels: {', '.join(primary_states)}"
-        return None
-
-    return primary_states[0], LABEL_MAP[primary_states[0]]
+    return workflow.resolve_dispatch_config(item, labels)
 
 
 def build_junie_command(model, effort, project_path, task_text):
-    junie_executable = EXECUTABLE_PATHS.get("junie", "junie")
-    normalized_effort = str(effort).lower()
-    return [
-        junie_executable,
-        "--project",
-        str(project_path),
-        "--model",
-        str(model),
-        "--effort",
-        normalized_effort,
-        str(task_text),
-    ]
+    return agents.build_junie_command(
+        model,
+        effort,
+        project_path,
+        task_text,
+        executable_paths=EXECUTABLE_PATHS,
+    )
 
 
 def build_junie_task_text(absolute_launch_brief_path):
-    return (
-        f"Read the launch brief at {absolute_launch_brief_path} "
-        "and execute the assigned workflow."
-    )
+    return agents.build_junie_task_text(absolute_launch_brief_path)
 
 
 def build_codex_architect_task_text(absolute_launch_brief_path):
-    return (
-        f"Read the launch brief at {absolute_launch_brief_path} and execute the architect workflow. "
-        "Produce or update the architecture handoff artifact referenced by the launch brief. "
-        "Then leave a GitHub comment summarizing the handoff or blocker."
-    )
+    return agents.build_codex_architect_task_text(absolute_launch_brief_path)
 
 
 def build_codex_reviewer_task_text(absolute_launch_brief_path, review_pr_url, review_result_path):
-    return (
-        f"Read the launch brief at {absolute_launch_brief_path} and execute the reviewer workflow. "
-        f"Review the linked pull request at {review_pr_url}. "
-        f"Write review-result.md to this exact absolute path: {review_result_path}. "
-        "The first non-empty line of review-result.md must be exactly one of: "
-        "Outcome: APPROVED, Outcome: CHANGES_REQUESTED, or Outcome: BLOCKED. "
-        "Use the strict review-result.md outcome contract. "
-        "Leave a review comment on the pull request. "
-        "Do not modify workflow labels directly. "
-        "Do not auto-merge."
+    return agents.build_codex_reviewer_task_text(
+        absolute_launch_brief_path,
+        review_pr_url,
+        review_result_path,
     )
 
 
 def build_codex_architect_review_task_text(absolute_launch_brief_path, review_pr_url, architect_review_result_path):
-    return (
-        f"Read the launch brief at {absolute_launch_brief_path} and execute the architect review workflow. "
-        f"Review the linked pull request at {review_pr_url}. "
-        f"Write architect-review-result.md to this exact absolute path: {architect_review_result_path}. "
-        "The first non-empty line of architect-review-result.md must be exactly one of: "
-        "Outcome: APPROVED, Outcome: CHANGES_REQUESTED, or Outcome: BLOCKED. "
-        "Use the strict architect-review-result.md outcome contract. "
-        "Comment on the pull request with architectural review findings. "
-        "Do not modify workflow labels directly. "
-        "Do not auto-merge."
+    return agents.build_codex_architect_review_task_text(
+        absolute_launch_brief_path,
+        review_pr_url,
+        architect_review_result_path,
     )
 
 
@@ -939,59 +610,52 @@ def build_thin_prompt(item, state_label, mode, role_prompt_path, launch_brief_pa
 
 
 def build_codex_command(model, project_path, task_text):
-    codex_executable = EXECUTABLE_PATHS.get("codex", "codex")
-    return [
-        codex_executable,
-        "exec",
-        "--model",
-        str(model),
-        "--cd",
-        str(project_path),
-        str(task_text),
-    ]
+    return agents.build_codex_command(
+        model,
+        project_path,
+        task_text,
+        executable_paths=EXECUTABLE_PATHS,
+    )
 
 
 def is_codex_sandbox_bypass_enabled():
-    return handler_config.is_codex_sandbox_bypass_enabled(
+    return agents.is_codex_sandbox_bypass_enabled(
         env_getter=os.getenv,
     )
 
 
 def build_codex_command_with_optional_sandbox_bypass(model, project_path, task_text, bypass_sandbox=False):
-    command = build_codex_command(model, project_path, task_text)
-
-    if bypass_sandbox:
-        command.insert(-1, "--dangerously-bypass-approvals-and-sandbox")
-
-    return command
+    return agents.build_codex_command_with_optional_sandbox_bypass(
+        model,
+        project_path,
+        task_text,
+        bypass_sandbox,
+        executable_paths=EXECUTABLE_PATHS,
+    )
 
 
 def build_reviewer_result_path(launch_brief_path):
-    absolute_path = os.path.abspath(os.path.join(os.path.dirname(launch_brief_path), REVIEW_RESULT_FILENAME))
-    return normalize_path_for_display(absolute_path)
+    return watchtower.build_reviewer_result_path(
+        launch_brief_path,
+        normalize_path_for_display_fn=normalize_path_for_display,
+        review_result_filename=REVIEW_RESULT_FILENAME,
+    )
 
 
 def build_architect_review_result_path(launch_brief_path):
-    absolute_path = os.path.abspath(os.path.join(os.path.dirname(launch_brief_path), ARCHITECT_REVIEW_RESULT_FILENAME))
-    return normalize_path_for_display(absolute_path)
+    return watchtower.build_architect_review_result_path(
+        launch_brief_path,
+        normalize_path_for_display_fn=normalize_path_for_display,
+        architect_review_result_filename=ARCHITECT_REVIEW_RESULT_FILENAME,
+    )
 
 
 def parse_review_result_outcome(review_result_path):
-    if not os.path.exists(review_result_path):
-        return None
+    return workflow.parse_review_result_outcome(review_result_path)
 
-    try:
-        with open(review_result_path, "r", encoding="utf-8") as result_file:
-            for raw_line in result_file:
-                line_without_newline = raw_line.rstrip("\r\n")
-                if not line_without_newline.strip():
-                    continue
 
-                return REVIEW_OUTCOME_MARKERS.get(line_without_newline)
-    except OSError:
-        return None
-
-    return None
+def parse_architect_review_result_outcome(architect_review_result_path):
+    return workflow.parse_architect_review_result_outcome(architect_review_result_path)
 
 
 def extract_github_repo_slug(value):
@@ -1126,59 +790,18 @@ def normalize_path_for_display(path):
 
 
 def initialize_run_status(item, state_label, config, launch_brief_path):
-    run_dir = os.path.normpath(os.path.dirname(launch_brief_path))
-    status_path = os.path.join(run_dir, RUN_STATUS_FILENAME)
-    result_path = os.path.join(run_dir, RUN_RESULT_FILENAME)
-    normalized_run_dir = normalize_path_for_display(run_dir)
-    normalized_brief_path = normalize_path_for_display(launch_brief_path)
-    normalized_status_path = normalize_path_for_display(status_path)
-    normalized_result_path = normalize_path_for_display(result_path)
-
-    status_payload = {
-        "repository": REPO,
-        "item_type": item.get("type"),
-        "item_number": item.get("number"),
-        "item_title": item.get("title"),
-        "state_label": state_label,
-        "agent": config.get("agent"),
-        "mode": config.get("mode"),
-        "model": config.get("model"),
-        "effort": config.get("effort"),
-        "target_repo_path": normalize_path_for_display(TARGET_REPO_PATH),
-        "run_dir": normalized_run_dir,
-        "launch_brief_path": normalized_brief_path,
-        "started_at": None,
-        "completed_at": None,
-        "exit_code": None,
-        "success": None,
-        "outcome": None,
-        "stop_reason": None,
-        "linked_pr": item.get("review_pr", {}).get("url"),
-        "working_branch": item.get("working_branch"),
-        "label_transition": None,
-        "artifacts": {
-            "launch_brief": normalized_brief_path,
-            "status": normalized_status_path,
-            "result": normalized_result_path,
-        },
-    }
-
-    for field in RUN_STATUS_FIELDS:
-        status_payload.setdefault(field, None)
-
-    with open(status_path, "w", encoding="utf-8") as status_file:
-        json.dump(status_payload, status_file, indent=2)
-        status_file.write("\n")
-
-    run_state = {
-        "run_dir": run_dir,
-        "status_path": status_path,
-        "result_path": result_path,
-        "launch_brief_path": launch_brief_path,
-    }
-
-    item["_run_state"] = run_state
-    return run_state
+    return watchtower.initialize_run_status(
+        item,
+        state_label,
+        config,
+        launch_brief_path,
+        repo=REPO,
+        target_repo_path=TARGET_REPO_PATH,
+        normalize_path_for_display_fn=normalize_path_for_display,
+        run_status_filename=RUN_STATUS_FILENAME,
+        run_result_filename=RUN_RESULT_FILENAME,
+        run_status_fields=RUN_STATUS_FIELDS,
+    )
 
 
 def get_run_state(item):
@@ -1186,171 +809,72 @@ def get_run_state(item):
 
 
 def read_run_status(run_state):
-    status_path = run_state["status_path"]
-    try:
-        with open(status_path, "r", encoding="utf-8") as status_file:
-            status_payload = json.load(status_file)
-    except (FileNotFoundError, json.JSONDecodeError):
-        status_payload = {field: None for field in RUN_STATUS_FIELDS}
-
-    for field in RUN_STATUS_FIELDS:
-        status_payload.setdefault(field, None)
-
-    artifacts = status_payload.get("artifacts")
-    if not isinstance(artifacts, dict):
-        artifacts = {}
-        status_payload["artifacts"] = artifacts
-
-    artifacts.setdefault("status", normalize_path_for_display(run_state["status_path"]))
-    artifacts.setdefault("result", normalize_path_for_display(run_state["result_path"]))
-    artifacts.setdefault("launch_brief", normalize_path_for_display(run_state["launch_brief_path"]))
-    return status_payload
+    return watchtower.read_run_status(
+        run_state,
+        run_status_fields=RUN_STATUS_FIELDS,
+        normalize_path_for_display_fn=normalize_path_for_display,
+    )
 
 
 def write_run_status(run_state, status_payload):
-    with open(run_state["status_path"], "w", encoding="utf-8") as status_file:
-        json.dump(status_payload, status_file, indent=2)
-        status_file.write("\n")
+    watchtower.write_run_status(run_state, status_payload)
 
 
 def update_run_status(item, **updates):
-    run_state = get_run_state(item)
-    if not run_state:
-        return
-
-    status_payload = read_run_status(run_state)
-    for key, value in updates.items():
-        if key == "artifacts" and isinstance(value, dict):
-            status_payload["artifacts"].update(value)
-            continue
-        status_payload[key] = value
-
-    status_payload["linked_pr"] = item.get("review_pr", {}).get("url") or status_payload.get("linked_pr")
-    status_payload["working_branch"] = item.get("working_branch") or status_payload.get("working_branch")
-    if item.get("last_label_transition") is not None:
-        status_payload["label_transition"] = item.get("last_label_transition")
-
-    write_run_status(run_state, status_payload)
+    watchtower.update_run_status(
+        item,
+        get_run_state_fn=get_run_state,
+        read_run_status_fn=read_run_status,
+        write_run_status_fn=write_run_status,
+        updates=updates,
+    )
 
 
 def write_run_result(item):
-    run_state = get_run_state(item)
-    if not run_state:
-        return
-
-    status_payload = read_run_status(run_state)
-    artifacts = status_payload.get("artifacts") or {}
-    label_transition = status_payload.get("label_transition")
-
-    lines = [
-        "# Run Result",
-        "",
-        "## Summary",
-        f"- outcome: `{status_payload.get('outcome')}`",
-        f"- success: `{status_payload.get('success')}`",
-        f"- exit code: `{status_payload.get('exit_code')}`",
-        "",
-        "## Assignment",
-        f"- repository: `{status_payload.get('repository')}`",
-        f"- item: `{status_payload.get('item_type')} #{status_payload.get('item_number')}`",
-        f"- title: `{status_payload.get('item_title')}`",
-        f"- state label: `{status_payload.get('state_label')}`",
-        f"- agent/mode: `{status_payload.get('agent')} / {status_payload.get('mode')}`",
-        f"- model/effort: `{status_payload.get('model')} / {status_payload.get('effort')}`",
-        "",
-        "## Execution",
-        f"- started at: `{status_payload.get('started_at')}`",
-        f"- completed at: `{status_payload.get('completed_at')}`",
-        f"- stop reason: `{status_payload.get('stop_reason')}`",
-        f"- target repo path: `{status_payload.get('target_repo_path')}`",
-        f"- run dir: `{status_payload.get('run_dir')}`",
-        "",
-        "## Outcome",
-        f"- linked PR: `{status_payload.get('linked_pr')}`",
-        f"- working branch: `{status_payload.get('working_branch')}`",
-        "",
-        "## Artifacts",
-    ]
-
-    for key in sorted(artifacts.keys()):
-        lines.append(f"- {key}: `{artifacts.get(key)}`")
-
-    lines.extend(["", "## Label Transition"])
-
-    if isinstance(label_transition, dict):
-        lines.append(f"- ok: `{label_transition.get('ok')}`")
-        lines.append(f"- workflow: `{label_transition.get('workflow')}`")
-        lines.append(f"- steps: `{label_transition.get('steps')}`")
-    else:
-        lines.append("- no transition recorded")
-
-    lines.extend(["", "## Notes / Blockers"])
-    if item.get("comment"):
-        lines.append(f"- {item.get('comment')}")
-    elif status_payload.get("stop_reason"):
-        lines.append(f"- {status_payload.get('stop_reason')}")
-    else:
-        lines.append("- none")
-
-    with open(run_state["result_path"], "w", encoding="utf-8") as result_file:
-        result_file.write("\n".join(lines))
-        result_file.write("\n")
+    watchtower.write_run_result(
+        item,
+        get_run_state_fn=get_run_state,
+        read_run_status_fn=read_run_status,
+    )
 
 
 def get_next_run_number(item_run_root):
-    next_run_number = 1
-
-    if not os.path.isdir(item_run_root):
-        return next_run_number
-
-    for entry in os.listdir(item_run_root):
-        match = re.match(r"^run-(\d+)-", entry)
-        if not match:
-            continue
-
-        run_number = int(match.group(1))
-        if run_number >= next_run_number:
-            next_run_number = run_number + 1
-
-    return next_run_number
+    return watchtower.get_next_run_number(item_run_root)
 
 
 def get_item_run_root(item):
-    item_dir = f"{sanitize_filename_part(item['type'])}-{item['number']}"
-    launch_artifact_root = resolve_circus_runtime_path(LAUNCH_ARTIFACT_DIR)
-    return os.path.normpath(os.path.join(launch_artifact_root, item_dir))
+    return watchtower.get_item_run_root(
+        item,
+        launch_artifact_dir=LAUNCH_ARTIFACT_DIR,
+        sanitize_filename_part_fn=sanitize_filename_part,
+        resolve_circus_runtime_path_fn=resolve_circus_runtime_path,
+    )
 
 
 def build_shared_context_paths(item_run_root):
-    shared_dir = os.path.normpath(os.path.join(item_run_root, "shared"))
-    return {
-        "architecture_handoff": normalize_path_for_display(os.path.join(shared_dir, "architecture-handoff.md")),
-        "running_notes": normalize_path_for_display(os.path.join(shared_dir, "running-notes.md")),
-        "decision_log": normalize_path_for_display(os.path.join(shared_dir, "decision-log.md")),
-    }
+    return watchtower.build_shared_context_paths(
+        item_run_root,
+        normalize_path_for_display_fn=normalize_path_for_display,
+    )
 
 
 def ensure_shared_artifacts(item_run_root):
-    shared_dir = os.path.normpath(os.path.join(item_run_root, "shared"))
-    os.makedirs(shared_dir, exist_ok=True)
-
-    for filename, placeholder in SHARED_ARTIFACT_PLACEHOLDERS.items():
-        artifact_path = os.path.join(shared_dir, filename)
-        if os.path.exists(artifact_path):
-            continue
-
-        with open(artifact_path, "x", encoding="utf-8") as artifact_file:
-            artifact_file.write(f"{placeholder}\n")
-
-    return build_shared_context_paths(item_run_root)
+    return watchtower.ensure_shared_artifacts(
+        item_run_root,
+        shared_artifact_placeholders=SHARED_ARTIFACT_PLACEHOLDERS,
+        build_shared_context_paths_fn=build_shared_context_paths,
+    )
 
 
 def build_launch_brief_path(item, mode):
-    item_run_root = get_item_run_root(item)
-    run_number = get_next_run_number(item_run_root)
-    run_dir = f"run-{run_number:03d}-{sanitize_filename_part(mode)}"
-    brief_path = os.path.normpath(os.path.join(item_run_root, run_dir, "launch-brief.md"))
-    return normalize_path_for_display(brief_path)
+    return watchtower.build_launch_brief_path(
+        item,
+        mode,
+        get_item_run_root_fn=get_item_run_root,
+        get_next_run_number_fn=get_next_run_number,
+        sanitize_filename_part_fn=sanitize_filename_part,
+        normalize_path_for_display_fn=normalize_path_for_display,
+    )
 
 
 def build_launch_brief_markdown(
@@ -1363,146 +887,41 @@ def build_launch_brief_markdown(
     shared_context_paths=None,
     review_result_path=None,
 ):
-    # TODO: Discover target-repo agent instructions by convention (AGENTS.md,
-    # .circus/roles/<mode>.md, .circus/workflows/<mode>.md) once routing contracts are finalized.
-    profile_source = resolve_profile_source(role_prompt_path)
-    normalized_target_repo_path = normalize_path_for_display(target_repo_path)
-    normalized_circus_runtime_root = normalize_path_for_display(get_circus_runtime_root())
-
-    lines = [
-        "# Launch Brief",
-        "",
-        "## Runtime Roots",
-        f"- circus repo root: `{normalized_circus_runtime_root}`",
-        f"- target repo root: `{normalized_target_repo_path}`",
-        "",
-        "## Assignment",
-        f"- repository: `{REPO}`",
-        f"- target repo path: `{normalized_target_repo_path}`",
-    ]
-
-    if item.get("working_branch"):
-        lines.append(f"- working branch: `{item['working_branch']}`")
-
-    if item.get("execution_branch"):
-        lines.append(f"- execution branch: `{item['execution_branch']}`")
-
-    lines.extend(
-        [
-        f"- item type: `{item['type']}`",
-        f"- item number: `{item['number']}`",
-        f"- title: `{item['title']}`",
-        f"- workflow state: `{state_label}`",
-        f"- target agent: `{config['agent']}`",
-        f"- mode: `{config['mode']}`",
-        f"- model: `{config['model']}`",
-        f"- effort: `{config['effort']}`",
-        f"- timestamp: `{timestamp}`",
-        "- generated-by: `Handler`",
-        "",
-        "## Source of Truth",
-        "- GitHub issue/PR metadata is the source of truth.",
-        "- If local files, git state, or launch metadata conflict with GitHub metadata, stop and report the mismatch.",
-        "",
-        "## Operating Instructions",
-        "- Perform only this workflow step.",
-        "- Follow the referenced agent profile.",
-        "- Do not auto-merge.",
-        "- Do not change unrelated workflow labels.",
-        "- Leave a clear GitHub comment when finished or blocked.",
-        "- If required metadata or repository context is unavailable, stop and report what is missing.",
-        "",
-        "## Agent Profile",
-        f"- profile source: `{profile_source or '<not available>'}`",
-        ]
-    )
-
-    if shared_context_paths:
-        lines.extend(
-            [
-                "",
-                "## Shared Context",
-                f"- architecture handoff: `{shared_context_paths['architecture_handoff']}`",
-                f"- running notes: `{shared_context_paths['running_notes']}`",
-                f"- decision log: `{shared_context_paths['decision_log']}`",
-            ]
-        )
-
-    if config.get("mode") == "reviewer":
-        lines.extend(
-            [
-                "",
-                "## Reviewer Result Contract",
-                f"- review result artifact absolute path: `{review_result_path or '<not available>'}`",
-                "- You must write `review-result.md` to this exact absolute path before exiting.",
-                "- The first non-empty line must be exactly one of:",
-                "  - `Outcome: APPROVED`",
-                "  - `Outcome: CHANGES_REQUESTED`",
-                "  - `Outcome: BLOCKED`",
-                "- If you cannot write the artifact file, set the first non-empty line to `Outcome: BLOCKED` and explain why.",
-            ]
-        )
-
-    if config.get("mode") == "architect-review":
-        lines.extend(
-            [
-                "",
-                "## Architect Review Result Contract",
-                f"- architect review result artifact absolute path: `{review_result_path or '<not available>'}`",
-                "- You must write `architect-review-result.md` to this exact absolute path before exiting.",
-                "- The first non-empty line must be exactly one of:",
-                "  - `Outcome: APPROVED`",
-                "  - `Outcome: CHANGES_REQUESTED`",
-                "  - `Outcome: BLOCKED`",
-                "- If you cannot write the artifact file, set the first non-empty line to `Outcome: BLOCKED` and explain why.",
-            ]
-        )
-
-    return "\n".join(lines)
-
-
-def write_launch_brief(item, state_label, config, role_prompt_path):
-    timestamp = datetime.now().isoformat(timespec="seconds")
-    item_run_root = get_item_run_root(item)
-    shared_context_paths = ensure_shared_artifacts(item_run_root)
-    brief_path = build_launch_brief_path(item, config["mode"])
-    review_result_path = None
-    if config.get("mode") == "reviewer":
-        review_result_path = build_reviewer_result_path(brief_path)
-    if config.get("mode") == "architect-review":
-        review_result_path = build_architect_review_result_path(brief_path)
-    brief_content = build_launch_brief_markdown(
+    return watchtower.build_launch_brief_markdown(
         item,
         state_label,
         config,
         role_prompt_path,
         timestamp,
-        TARGET_REPO_PATH or "<not configured>",
-        shared_context_paths,
-        review_result_path,
+        target_repo_path,
+        repo=REPO,
+        resolve_profile_source_fn=resolve_profile_source,
+        normalize_path_for_display_fn=normalize_path_for_display,
+        get_circus_runtime_root_fn=get_circus_runtime_root,
+        shared_context_paths=shared_context_paths,
+        review_result_path=review_result_path,
     )
-    os.makedirs(os.path.dirname(brief_path), exist_ok=True)
 
-    with open(brief_path, "w", encoding="utf-8") as brief_file:
-        brief_file.write(f"{brief_content}\n")
 
-    initialize_run_status(item, state_label, config, brief_path)
-    artifact_updates = {
-        "architecture_handoff": shared_context_paths["architecture_handoff"],
-        "running_notes": shared_context_paths["running_notes"],
-        "decision_log": shared_context_paths["decision_log"],
-    }
-
-    if review_result_path:
-        artifact_updates["result_contract"] = normalize_path_for_display(review_result_path)
-
-    update_run_status(item, launch_brief_path=normalize_path_for_display(brief_path), artifacts=artifact_updates)
-
-    print(f"[Dispatch] Shared artifact path (architecture handoff): {shared_context_paths['architecture_handoff']}")
-    print(f"[Dispatch] Shared artifact path (running notes): {shared_context_paths['running_notes']}")
-    print(f"[Dispatch] Shared artifact path (decision log): {shared_context_paths['decision_log']}")
-
-    return brief_path
+def write_launch_brief(item, state_label, config, role_prompt_path):
+    return watchtower.write_launch_brief(
+        item,
+        state_label,
+        config,
+        role_prompt_path,
+        target_repo_path=TARGET_REPO_PATH,
+        build_launch_brief_markdown_fn=build_launch_brief_markdown,
+        get_item_run_root_fn=get_item_run_root,
+        ensure_shared_artifacts_fn=ensure_shared_artifacts,
+        build_launch_brief_path_fn=build_launch_brief_path,
+        build_reviewer_result_path_fn=build_reviewer_result_path,
+        build_architect_review_result_path_fn=build_architect_review_result_path,
+        initialize_run_status_fn=initialize_run_status,
+        update_run_status_fn=update_run_status,
+        normalize_path_for_display_fn=normalize_path_for_display,
+        timestamp_now_fn=lambda: datetime.now().isoformat(timespec="seconds"),
+        log=print,
+    )
 
 
 def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path):
@@ -1978,7 +1397,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 write_run_result(item)
                 return False
 
-            review_outcome = parse_review_result_outcome(architect_review_result_path)
+            review_outcome = parse_architect_review_result_outcome(architect_review_result_path)
             update_run_status(
                 item,
                 artifacts={"architect_review_result": normalize_path_for_display(architect_review_result_path)},
