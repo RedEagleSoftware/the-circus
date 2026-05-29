@@ -11,6 +11,7 @@ from Handler import developer_flow
 from Handler import git_workspace
 from Handler import github_client
 from Handler import paths as handler_paths
+from Handler import review_flow
 from Handler import watchtower
 from Handler import workflow
 
@@ -1005,14 +1006,15 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             command_arguments = cmd[1:-1]
             command_shape = f"{cmd[0]} {' '.join(command_arguments)} \"{cmd[-1]}\""
 
-            reviewer_env = os.environ.copy()
-            reviewer_env["CIRCUS_REVIEW_PR_URL"] = str(review_pr_url)
-            reviewer_env["CIRCUS_REVIEW_PR_NUMBER"] = str(review_pr_number or "")
-            reviewer_env["CIRCUS_REVIEW_ISSUE_NUMBER"] = str(number)
-            reviewer_env["CIRCUS_REVIEW_LAUNCH_BRIEF"] = absolute_launch_brief_path
-            reviewer_env["CIRCUS_REVIEW_ARCHITECTURE_HANDOFF"] = architecture_handoff_path
-            reviewer_env["CIRCUS_REVIEW_TARGET_REPO_PATH"] = TARGET_REPO_PATH or ""
-            reviewer_env["CIRCUS_REVIEW_RESULT_PATH"] = review_result_path
+            reviewer_env = review_flow.build_reviewer_environment(
+                review_pr_url=review_pr_url,
+                review_pr_number=review_pr_number,
+                issue_number=number,
+                absolute_launch_brief_path=absolute_launch_brief_path,
+                architecture_handoff_path=architecture_handoff_path,
+                target_repo_path=TARGET_REPO_PATH,
+                review_result_path=review_result_path,
+            )
 
             print(f"[Dispatch] Review target issue: #{number}")
             print(f"[Dispatch] Review target PR: #{review_pr_number} ({review_pr_url})")
@@ -1063,107 +1065,26 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 return False
 
             item.pop("agent_exit_non_zero", None)
-            if not os.path.exists(review_result_path):
-                print(
-                    "[Dispatch] Review result handling: expected review-result artifact is missing; "
-                    f"expected path={review_result_path}; exists=False; "
-                    "workflow progression stopped with no label transition and lock remains in place."
-                )
-                item["comment"] = (
-                    f"Codex reviewer completed for issue #{number}, but expected review result artifact "
-                    f"`{review_result_path}` was not created. Workflow labels were not transitioned automatically, "
-                    f"and lock label `{LOCK_LABEL}` remains in place for human inspection. "
-                    "Handler stopped workflow progression for this run."
-                )
-                add_comment(item)
-                item["missing_review_result_artifact"] = True
-                update_run_status(
-                    item,
-                    completed_at=utc_timestamp_now(),
-                    exit_code=result.returncode,
-                    success=False,
-                    outcome="missing result artifact",
-                    stop_reason=f"missing reviewer result artifact at {normalize_path_for_display(review_result_path)}",
-                    artifacts={"review_result": normalize_path_for_display(review_result_path)},
-                )
-                write_run_result(item)
-                return False
-
-            review_outcome = parse_review_result_outcome(review_result_path)
-            update_run_status(item, artifacts={"review_result": normalize_path_for_display(review_result_path)})
-            if review_outcome == "APPROVED":
-                print("[Dispatch] Review result handling: APPROVED.")
-                advanced = advance_reviewer_workflow_on_approved(item)
-                update_run_status(
-                    item,
-                    completed_at=utc_timestamp_now(),
-                    exit_code=result.returncode,
-                    success=advanced,
-                    outcome="reviewer approved",
-                    stop_reason=None if advanced else "label transition failed",
-                )
-                write_run_result(item)
-                return advanced
-
-            if review_outcome == "CHANGES_REQUESTED":
-                print("[Dispatch] Review result handling: CHANGES_REQUESTED.")
-                running_notes_path = append_reviewer_feedback_note(item_run_root, review_result_path, review_pr_url)
-                print(f"[Dispatch] Reviewer feedback context appended to running notes: {running_notes_path}")
-                advanced = advance_reviewer_workflow_on_changes_requested(item)
-                update_run_status(
-                    item,
-                    completed_at=utc_timestamp_now(),
-                    exit_code=result.returncode,
-                    success=advanced,
-                    outcome="reviewer changes requested",
-                    stop_reason=None if advanced else "label transition failed",
-                    artifacts={"running_notes": normalize_path_for_display(running_notes_path)},
-                )
-                write_run_result(item)
-                return advanced
-
-            if review_outcome == "BLOCKED":
-                print(
-                    "[Dispatch] Review result handling: BLOCKED (no automatic label transition); "
-                    "human inspection required and lock remains in place."
-                )
-                item["comment"] = (
-                    f"Codex reviewer reported `BLOCKED` for issue #{number}. "
-                    f"Workflow labels were not transitioned automatically; the lock label `{LOCK_LABEL}` remains in place "
-                    "for human inspection."
-                )
-                add_comment(item)
-                update_run_status(
-                    item,
-                    completed_at=utc_timestamp_now(),
-                    exit_code=result.returncode,
-                    success=True,
-                    outcome="blocked",
-                    stop_reason="reviewer reported BLOCKED",
-                )
-                write_run_result(item)
-                return True
-
-            print(
-                "[Dispatch] Review result handling: no unambiguous review outcome marker found; "
-                "labels were not transitioned automatically."
+            return review_flow.handle_reviewer_result(
+                item=item,
+                issue_number=number,
+                result_returncode=result.returncode,
+                item_run_root=item_run_root,
+                review_pr_url=review_pr_url,
+                review_result_path=review_result_path,
+                lock_label=LOCK_LABEL,
+                add_comment_fn=add_comment,
+                update_run_status_fn=update_run_status,
+                write_run_result_fn=write_run_result,
+                parse_review_result_outcome_fn=parse_review_result_outcome,
+                normalize_path_for_display_fn=normalize_path_for_display,
+                append_reviewer_feedback_note_fn=append_reviewer_feedback_note,
+                advance_reviewer_workflow_on_approved_fn=advance_reviewer_workflow_on_approved,
+                advance_reviewer_workflow_on_changes_requested_fn=advance_reviewer_workflow_on_changes_requested,
+                utc_timestamp_now_fn=utc_timestamp_now,
+                path_exists_fn=os.path.exists,
+                log=print,
             )
-            item["comment"] = (
-                f"Codex reviewer completed for issue #{number}, but no unambiguous review outcome marker "
-                f"(`APPROVED`, `CHANGES_REQUESTED`, or `BLOCKED`) was found in `{review_result_path}`. "
-                "Workflow labels were not transitioned automatically; human review of reviewer output is required."
-            )
-            add_comment(item)
-            update_run_status(
-                item,
-                completed_at=utc_timestamp_now(),
-                exit_code=result.returncode,
-                success=True,
-                outcome="reviewer outcome ambiguous",
-                stop_reason="no unambiguous review outcome marker found",
-            )
-            write_run_result(item)
-            return True
 
         if mode == "architect-review":
             review_pr = item.get("review_pr") or {}
@@ -1205,17 +1126,18 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             command_arguments = cmd[1:-1]
             command_shape = f"{cmd[0]} {' '.join(command_arguments)} \"{cmd[-1]}\""
 
-            architect_review_env = os.environ.copy()
-            architect_review_env["CIRCUS_ARCHITECT_REVIEW_PR_URL"] = str(review_pr_url)
-            architect_review_env["CIRCUS_ARCHITECT_REVIEW_PR_NUMBER"] = str(review_pr_number or "")
-            architect_review_env["CIRCUS_ARCHITECT_REVIEW_ISSUE_NUMBER"] = str(number)
-            architect_review_env["CIRCUS_ARCHITECT_REVIEW_LAUNCH_BRIEF"] = absolute_launch_brief_path
-            architect_review_env["CIRCUS_ARCHITECT_REVIEW_ARCHITECTURE_HANDOFF"] = architecture_handoff_path
-            architect_review_env["CIRCUS_ARCHITECT_REVIEW_RUNNING_NOTES"] = running_notes_path
-            architect_review_env["CIRCUS_ARCHITECT_REVIEW_DECISION_LOG"] = decision_log_path
-            architect_review_env["CIRCUS_ARCHITECT_REVIEW_REVIEW_RESULT_PATH"] = review_result_path
-            architect_review_env["CIRCUS_ARCHITECT_REVIEW_RESULT_PATH"] = architect_review_result_path
-            architect_review_env["CIRCUS_ARCHITECT_REVIEW_TARGET_REPO_PATH"] = TARGET_REPO_PATH or ""
+            architect_review_env = review_flow.build_architect_review_environment(
+                review_pr_url=review_pr_url,
+                review_pr_number=review_pr_number,
+                issue_number=number,
+                absolute_launch_brief_path=absolute_launch_brief_path,
+                architecture_handoff_path=architecture_handoff_path,
+                running_notes_path=running_notes_path,
+                decision_log_path=decision_log_path,
+                review_result_path=review_result_path,
+                architect_review_result_path=architect_review_result_path,
+                target_repo_path=TARGET_REPO_PATH,
+            )
 
             print(f"[Dispatch] Architect review target issue: #{number}")
             print(f"[Dispatch] Architect review target PR: #{review_pr_number} ({review_pr_url})")
@@ -1267,118 +1189,26 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 return False
 
             item.pop("agent_exit_non_zero", None)
-            if not os.path.exists(architect_review_result_path):
-                print(
-                    "[Dispatch] Architect review result handling: expected architect-review-result artifact is missing; "
-                    f"expected path={architect_review_result_path}; exists=False; "
-                    "workflow progression stopped with no label transition and lock remains in place."
-                )
-                item["comment"] = (
-                    f"Codex architect review completed for issue #{number}, but expected architect review result artifact "
-                    f"`{architect_review_result_path}` was not created. Workflow labels were not transitioned automatically, "
-                    f"and lock label `{LOCK_LABEL}` remains in place for human inspection. "
-                    "Handler stopped workflow progression for this run."
-                )
-                add_comment(item)
-                item["missing_review_result_artifact"] = True
-                update_run_status(
-                    item,
-                    completed_at=utc_timestamp_now(),
-                    exit_code=result.returncode,
-                    success=False,
-                    outcome="missing result artifact",
-                    stop_reason=(
-                        "missing architect review result artifact at "
-                        f"{normalize_path_for_display(architect_review_result_path)}"
-                    ),
-                    artifacts={"architect_review_result": normalize_path_for_display(architect_review_result_path)},
-                )
-                write_run_result(item)
-                return False
-
-            review_outcome = parse_architect_review_result_outcome(architect_review_result_path)
-            update_run_status(
-                item,
-                artifacts={"architect_review_result": normalize_path_for_display(architect_review_result_path)},
+            return review_flow.handle_architect_review_result(
+                item=item,
+                issue_number=number,
+                result_returncode=result.returncode,
+                item_run_root=item_run_root,
+                review_pr_url=review_pr_url,
+                architect_review_result_path=architect_review_result_path,
+                lock_label=LOCK_LABEL,
+                add_comment_fn=add_comment,
+                update_run_status_fn=update_run_status,
+                write_run_result_fn=write_run_result,
+                parse_architect_review_result_outcome_fn=parse_architect_review_result_outcome,
+                normalize_path_for_display_fn=normalize_path_for_display,
+                append_architect_review_feedback_note_fn=append_architect_review_feedback_note,
+                advance_architect_review_workflow_on_approved_fn=advance_architect_review_workflow_on_approved,
+                advance_architect_review_workflow_on_changes_requested_fn=advance_architect_review_workflow_on_changes_requested,
+                utc_timestamp_now_fn=utc_timestamp_now,
+                path_exists_fn=os.path.exists,
+                log=print,
             )
-            print(f"[Dispatch] Architect review outcome: {review_outcome or 'NO_UNAMBIGUOUS_OUTCOME'}.")
-            if review_outcome == "APPROVED":
-                print("[Dispatch] Architect review passed; implementation is ready for human review.")
-                advanced = advance_architect_review_workflow_on_approved(item)
-                update_run_status(
-                    item,
-                    completed_at=utc_timestamp_now(),
-                    exit_code=result.returncode,
-                    success=advanced,
-                    outcome="architect review approved",
-                    stop_reason=None if advanced else "label transition failed",
-                )
-                write_run_result(item)
-                return advanced
-
-            if review_outcome == "CHANGES_REQUESTED":
-                print("[Dispatch] Architect review result handling: CHANGES_REQUESTED.")
-                running_notes_feedback_path = append_architect_review_feedback_note(
-                    item_run_root,
-                    architect_review_result_path,
-                    review_pr_url,
-                )
-                print(f"[Dispatch] Architect review feedback context appended to running notes: {running_notes_feedback_path}")
-                advanced = advance_architect_review_workflow_on_changes_requested(item)
-                update_run_status(
-                    item,
-                    completed_at=utc_timestamp_now(),
-                    exit_code=result.returncode,
-                    success=advanced,
-                    outcome="reviewer changes requested",
-                    stop_reason=None if advanced else "label transition failed",
-                    artifacts={"running_notes": normalize_path_for_display(running_notes_feedback_path)},
-                )
-                write_run_result(item)
-                return advanced
-
-            if review_outcome == "BLOCKED":
-                print(
-                    "[Dispatch] Architect review result handling: BLOCKED (no automatic label transition); "
-                    "human inspection required and lock remains in place."
-                )
-                item["comment"] = (
-                    f"Codex architect review reported `BLOCKED` for issue #{number}. "
-                    f"Workflow labels were not transitioned automatically; the lock label `{LOCK_LABEL}` remains in place "
-                    "for human inspection."
-                )
-                add_comment(item)
-                update_run_status(
-                    item,
-                    completed_at=utc_timestamp_now(),
-                    exit_code=result.returncode,
-                    success=True,
-                    outcome="blocked",
-                    stop_reason="architect reviewer reported BLOCKED",
-                )
-                write_run_result(item)
-                return True
-
-            print(
-                "[Dispatch] Architect review result handling: no unambiguous review outcome marker found; "
-                "labels were not transitioned automatically."
-            )
-            item["comment"] = (
-                f"Codex architect review completed for issue #{number}, but no unambiguous review outcome marker "
-                f"(`APPROVED`, `CHANGES_REQUESTED`, or `BLOCKED`) was found in `{architect_review_result_path}`. "
-                "Workflow labels were not transitioned automatically; human review of architect review output is required."
-            )
-            add_comment(item)
-            update_run_status(
-                item,
-                completed_at=utc_timestamp_now(),
-                exit_code=result.returncode,
-                success=True,
-                outcome="reviewer outcome ambiguous",
-                stop_reason="no unambiguous architect review outcome marker found",
-            )
-            write_run_result(item)
-            return True
 
         if mode != "architect":
             print("[Dispatch] TODO: Codex execution flow currently enabled only for architect/reviewer modes.")
