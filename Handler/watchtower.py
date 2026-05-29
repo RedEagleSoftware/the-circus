@@ -3,6 +3,8 @@ import os
 import re
 from datetime import datetime
 
+from Handler import target_instructions
+
 
 SHARED_ARTIFACT_PLACEHOLDERS = {
     "architecture-handoff.md": "# Architecture Handoff\n\nNo architecture handoff has been recorded yet.",
@@ -387,11 +389,13 @@ def build_launch_brief_markdown(
     shared_context_paths=None,
     review_result_path=None,
 ):
-    # TODO: Discover target-repo agent instructions by convention (AGENTS.md,
-    # .circus/roles/<mode>.md, .circus/workflows/<mode>.md) once routing contracts are finalized.
     profile_source = resolve_profile_source_fn(role_prompt_path)
     normalized_target_repo_path = normalize_path_for_display_fn(target_repo_path)
     normalized_circus_runtime_root = normalize_path_for_display_fn(get_circus_runtime_root_fn())
+    discovered_target_instruction_paths = target_instructions.discover_target_instruction_paths(
+        target_repo_path,
+        config.get("mode"),
+    )
 
     lines = [
         "# Launch Brief",
@@ -450,6 +454,15 @@ def build_launch_brief_markdown(
                 f"- running notes: `{shared_context_paths['running_notes']}`",
                 f"- decision log: `{shared_context_paths['decision_log']}`",
             ]
+        )
+
+    if discovered_target_instruction_paths:
+        lines.extend(
+            [
+                "",
+                "## Target Repository Guidance",
+            ]
+            + [f"- `{instruction_path}`" for instruction_path in discovered_target_instruction_paths]
         )
 
     if config.get("mode") == "reviewer":

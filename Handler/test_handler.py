@@ -6,6 +6,7 @@ import re
 from unittest.mock import Mock, patch
 
 import Handler.handler as handler
+import Handler.target_instructions as target_instructions
 
 
 class HandlerObservabilityTests(unittest.TestCase):
@@ -412,6 +413,44 @@ class HandlerObservabilityTests(unittest.TestCase):
             "- launch brief artifact path: Watchtower/runs/issue-3/run-001-developer/launch-brief.md",
             prompt,
         )
+
+    def test_build_thin_prompt_mentions_target_repository_guidance_when_discovered(self):
+        item = {"type": "issue", "number": 3, "title": "Implement launch brief"}
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(
+                handler.target_instructions,
+                "discover_target_instruction_paths",
+                return_value=["C:/target/repo/AGENTS.md"],
+            ):
+                prompt = handler.build_thin_prompt(
+                    item,
+                    "state:ready-for-dev",
+                    "developer",
+                    os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                    "Watchtower/runs/issue-3/run-001-developer/launch-brief.md",
+                )
+
+        self.assertIn("- target repository guidance: available in launch brief", prompt)
+
+    def test_build_thin_prompt_omits_target_repository_guidance_note_when_none_discovered(self):
+        item = {"type": "issue", "number": 3, "title": "Implement launch brief"}
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(
+                handler.target_instructions,
+                "discover_target_instruction_paths",
+                return_value=[],
+            ):
+                prompt = handler.build_thin_prompt(
+                    item,
+                    "state:ready-for-dev",
+                    "developer",
+                    os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                    "Watchtower/runs/issue-3/run-001-developer/launch-brief.md",
+                )
+
+        self.assertNotIn("- target repository guidance: available in launch brief", prompt)
 
     def test_build_thin_prompt_includes_execution_branch_when_present(self):
         item = {
@@ -2053,6 +2092,120 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertNotIn("\\", markdown)
         self.assertNotIn("docs\\doctrine.md", markdown)
         self.assertNotIn("docs\\operations-status.md", markdown)
+
+    def test_build_launch_brief_markdown_includes_discovered_target_repository_guidance(self):
+        item = {
+            "type": "issue",
+            "number": 21,
+            "title": "Follow local project instructions",
+        }
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_repo:
+            os.makedirs(os.path.join(temp_repo, ".circus", "roles"), exist_ok=True)
+            os.makedirs(os.path.join(temp_repo, ".circus", "workflows"), exist_ok=True)
+            for relative_path in [
+                "AGENTS.md",
+                os.path.join(".circus", "instructions.md"),
+                os.path.join(".circus", "roles", "developer.md"),
+                os.path.join(".circus", "workflows", "developer.md"),
+            ]:
+                absolute_path = os.path.join(temp_repo, relative_path)
+                with open(absolute_path, "w", encoding="utf-8") as file_handle:
+                    file_handle.write("# local guidance\n")
+
+            with patch.object(handler, "REPO", "owner/repo"):
+                markdown = handler.build_launch_brief_markdown(
+                    item,
+                    "state:ready-for-dev",
+                    config,
+                    os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                    "2026-05-25T10:00:00",
+                    temp_repo,
+                )
+
+        normalized_repo_root = temp_repo.replace("\\", "/")
+        self.assertIn("## Target Repository Guidance", markdown)
+        self.assertIn(f"- `{normalized_repo_root}/AGENTS.md`", markdown)
+        self.assertIn(f"- `{normalized_repo_root}/.circus/instructions.md`", markdown)
+        self.assertIn(f"- `{normalized_repo_root}/.circus/roles/developer.md`", markdown)
+        self.assertIn(f"- `{normalized_repo_root}/.circus/workflows/developer.md`", markdown)
+
+    def test_build_launch_brief_markdown_omits_target_repository_guidance_section_when_absent(self):
+        item = {
+            "type": "issue",
+            "number": 21,
+            "title": "Follow local project instructions",
+        }
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_repo:
+            with patch.object(handler, "REPO", "owner/repo"):
+                markdown = handler.build_launch_brief_markdown(
+                    item,
+                    "state:ready-for-dev",
+                    config,
+                    os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                    "2026-05-25T10:00:00",
+                    temp_repo,
+                )
+
+        self.assertNotIn("## Target Repository Guidance", markdown)
+
+
+    def test_discover_target_instruction_paths_returns_expected_order_for_mode(self):
+        with tempfile.TemporaryDirectory() as temp_repo:
+            os.makedirs(os.path.join(temp_repo, ".circus", "roles"), exist_ok=True)
+            os.makedirs(os.path.join(temp_repo, ".circus", "workflows"), exist_ok=True)
+
+            for relative_path in [
+                "AGENTS.md",
+                os.path.join(".circus", "instructions.md"),
+                os.path.join(".circus", "conventions.md"),
+                os.path.join(".circus", "architecture.md"),
+                os.path.join(".circus", "testing.md"),
+                os.path.join(".circus", "roles", "developer.md"),
+                os.path.join(".circus", "workflows", "developer.md"),
+            ]:
+                absolute_path = os.path.join(temp_repo, relative_path)
+                with open(absolute_path, "w", encoding="utf-8") as file_handle:
+                    file_handle.write("# guidance\n")
+
+            discovered_paths = target_instructions.discover_target_instruction_paths(temp_repo, "developer")
+
+        normalized_root = temp_repo.replace("\\", "/")
+        self.assertEqual(
+            discovered_paths,
+            [
+                f"{normalized_root}/AGENTS.md",
+                f"{normalized_root}/.circus/instructions.md",
+                f"{normalized_root}/.circus/conventions.md",
+                f"{normalized_root}/.circus/architecture.md",
+                f"{normalized_root}/.circus/testing.md",
+                f"{normalized_root}/.circus/roles/developer.md",
+                f"{normalized_root}/.circus/workflows/developer.md",
+            ],
+        )
+
+    def test_discover_target_instruction_paths_ignores_missing_files(self):
+        with tempfile.TemporaryDirectory() as temp_repo:
+            os.makedirs(os.path.join(temp_repo, ".circus", "roles"), exist_ok=True)
+            with open(os.path.join(temp_repo, "AGENTS.md"), "w", encoding="utf-8") as file_handle:
+                file_handle.write("# guidance\n")
+
+            discovered_paths = target_instructions.discover_target_instruction_paths(temp_repo, "developer")
+
+        self.assertEqual(discovered_paths, [f"{temp_repo.replace('\\', '/')}/AGENTS.md"])
 
     def test_build_launch_brief_markdown_for_reviewer_includes_result_contract_and_absolute_path(self):
         item = {

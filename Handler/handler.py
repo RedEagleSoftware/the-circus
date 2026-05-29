@@ -12,6 +12,7 @@ from Handler import git_workspace
 from Handler import github_client
 from Handler import paths as handler_paths
 from Handler import review_flow
+from Handler import target_instructions
 from Handler import watchtower
 from Handler import workflow
 
@@ -452,6 +453,7 @@ def resolve_profile_source(role_prompt_path):
 
 def build_thin_prompt(item, state_label, mode, role_prompt_path, launch_brief_path=None, review_result_path=None):
     profile_source = resolve_profile_source(role_prompt_path)
+    discovered_target_instruction_paths = target_instructions.discover_target_instruction_paths(TARGET_REPO_PATH, mode)
 
     prompt_lines = [
         "Agent launch context:",
@@ -479,6 +481,9 @@ def build_thin_prompt(item, state_label, mode, role_prompt_path, launch_brief_pa
             "- instruction: Use GitHub metadata as the source of truth.",
         ]
     )
+
+    if discovered_target_instruction_paths:
+        prompt_lines.append("- target repository guidance: available in launch brief")
 
     if mode == "reviewer":
         prompt_lines.extend(

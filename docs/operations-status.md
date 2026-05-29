@@ -63,14 +63,14 @@
 - Set up review flow.
 - Set up architect review flow.
 - Add per-run result/status artifacts to Watchtower runs.
+- Refactor Handler into focused modules.
  
 ## Current Task
-
-- Refactor Handler into focused modules.
+- 
+- Add target-repo instruction discovery and context-loading conventions.
 
 ## Next Likely Tasks
 
-- Add target-repo instruction discovery and context-loading conventions.
 - Refactor Handler into focused modules.
 - Add configurable agent provider routing.
 - Explore converting role doctrine/reusable workflows into skills.
