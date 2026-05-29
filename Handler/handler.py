@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import shutil
 import subprocess
 from datetime import datetime, UTC
@@ -8,6 +7,7 @@ from dotenv import load_dotenv
 
 from Handler import agents
 from Handler import config as handler_config
+from Handler import developer_flow
 from Handler import git_workspace
 from Handler import github_client
 from Handler import paths as handler_paths
@@ -304,43 +304,22 @@ def append_architect_review_feedback_note(item_run_root, architect_review_result
 
 
 def build_developer_commit_message(item):
-    return f"Implement issue #{item['number']}: {item.get('title', '').strip()}"
+    return developer_flow.build_developer_commit_message(item)
 
 
 def build_developer_pr_title(item):
-    return f"Issue #{item['number']}: {item.get('title', '').strip()}"
+    return developer_flow.build_developer_pr_title(item)
 
 
 def build_developer_pr_body(item, launch_brief_path):
-    number = item["number"]
-    issue_url = item.get("url") or f"https://github.com/{REPO}/issues/{number}"
-    launch_brief_display_path = normalize_path_for_display(launch_brief_path)
-    item_run_root = get_item_run_root(item)
-    shared_context_paths = build_shared_context_paths(item_run_root)
-    architecture_handoff_path = shared_context_paths["architecture_handoff"]
-
-    body_lines = [
-        f"Closes #{number}",
-        "",
-        "## Linked Issue",
-        f"- {issue_url}",
-        "",
-        "## Summary",
-        f"- Implemented changes for issue #{number} (`{item.get('title', '').strip()}`).",
-        "",
-        "## Validation Notes",
-        "- Validation notes were not provided by the agent run.",
-        "",
-        "## Artifacts",
-        f"- Launch brief: `{launch_brief_display_path}`",
-    ]
-
-    if os.path.exists(architecture_handoff_path):
-        body_lines.append(
-            f"- Architecture handoff: `{normalize_path_for_display(architecture_handoff_path)}`"
-        )
-
-    return "\n".join(body_lines)
+    return developer_flow.build_developer_pr_body(
+        item,
+        launch_brief_path,
+        repo=REPO,
+        normalize_path_for_display_fn=normalize_path_for_display,
+        get_item_run_root_fn=get_item_run_root,
+        build_shared_context_paths_fn=build_shared_context_paths,
+    )
 
 
 def find_existing_open_pr_for_branch(branch_name):
@@ -352,12 +331,12 @@ def find_open_review_pr_for_issue(issue_number):
 
 
 def add_developer_pr_failure_comment(item, details):
-    item["comment"] = (
-        f"Handler failed to prepare a pull request after successful developer execution for "
-        f"{item['type']} #{item['number']} ({details}). The lock label `{LOCK_LABEL}` remains in place "
-        "for human inspection."
+    developer_flow.add_developer_pr_failure_comment(
+        item,
+        details,
+        lock_label=LOCK_LABEL,
+        add_comment_fn=add_comment,
     )
-    add_comment(item)
 
 
 def create_pull_request_with_body_file(branch_name, pr_title, pr_body):
@@ -372,103 +351,23 @@ def create_pull_request_with_body_file(branch_name, pr_title, pr_body):
 
 
 def finalize_developer_success_with_pull_request(item, launch_brief_path, from_state_label="state:ready-for-dev"):
-    repo_path = TARGET_REPO_PATH
-    if not repo_path:
-        print("[Dispatch] Cannot finalize developer success: CIRCUS_TARGET_REPO_PATH is not configured.")
-        add_developer_pr_failure_comment(item, "target repository path is not configured")
-        return False
-
-    developer_branch = item.get("working_branch") or get_current_git_branch(repo_path)
-    if not developer_branch:
-        print("[Dispatch] Cannot determine developer branch after successful run.")
-        add_developer_pr_failure_comment(item, "unable to determine developer branch")
-        return False
-
-    print(f"[Dispatch] Developer branch detected for post-run PR flow: {developer_branch}")
-
-    status_result = run_git_command_in_repo(repo_path, ["status", "--porcelain"])
-    if status_result is None or status_result.returncode != 0:
-        stderr = status_result.stderr.strip() if status_result and status_result.stderr else "unknown error"
-        print(f"[Dispatch] Unable to collect git status for PR flow: {stderr}")
-        add_developer_pr_failure_comment(item, "unable to inspect git status")
-        return False
-
-    git_status = status_result.stdout.strip()
-    print(f"[Dispatch] Git status for developer branch '{developer_branch}':")
-    if git_status:
-        print(git_status)
-    else:
-        print("[Dispatch] <clean>")
-
-    if not git_status:
-        item["comment"] = (
-            f"Handler detected no changes after successful developer execution for {item['type']} "
-            f"#{item['number']} on branch `{developer_branch}`. No pull request was created. "
-            f"The lock label `{LOCK_LABEL}` remains for human inspection."
-        )
-        add_comment(item)
-        print("[Dispatch] No local changes detected after developer success; PR creation skipped.")
-        return False
-
-    stage_result = run_git_command_in_repo(repo_path, ["add", "-A"])
-    if stage_result is None or stage_result.returncode != 0:
-        stderr = stage_result.stderr.strip() if stage_result and stage_result.stderr else "unknown error"
-        print(f"[Dispatch] Failed to stage developer changes: {stderr}")
-        add_developer_pr_failure_comment(item, "unable to stage developer changes")
-        return False
-
-    commit_message = build_developer_commit_message(item)
-    print(f"[Dispatch] Developer commit message: {commit_message}")
-    commit_result = run_git_command_in_repo(repo_path, ["commit", "-m", commit_message])
-    if commit_result is None or commit_result.returncode != 0:
-        stderr = commit_result.stderr.strip() if commit_result and commit_result.stderr else "unknown error"
-        print(f"[Dispatch] Failed to create developer commit: {stderr}")
-        add_developer_pr_failure_comment(item, "unable to create commit")
-        return False
-
-    print(f"[Dispatch] Commit created on branch '{developer_branch}'.")
-
-    push_result = run_git_command_in_repo(repo_path, ["push", "-u", "origin", developer_branch])
-    if push_result is None or push_result.returncode != 0:
-        stderr = push_result.stderr.strip() if push_result and push_result.stderr else "unknown error"
-        print(f"[Dispatch] Failed to push developer branch '{developer_branch}': {stderr}")
-        add_developer_pr_failure_comment(item, "unable to push developer branch")
-        return False
-
-    print(f"[Dispatch] Push succeeded for branch '{developer_branch}'.")
-
-    existing_pr = find_existing_open_pr_for_branch(developer_branch)
-    if not existing_pr.get("ok"):
-        print(
-            f"[Dispatch] Pull request lookup failed for branch '{developer_branch}': "
-            f"{existing_pr.get('error', 'unknown error')}"
-        )
-        add_developer_pr_failure_comment(item, existing_pr.get("error", "unable to query pull requests"))
-        return False
-
-    existing_pr_url = existing_pr.get("url")
-    if existing_pr_url:
-        print(f"[Dispatch] Existing pull request found for branch '{developer_branch}': {existing_pr_url}")
-        transition_ok = advance_developer_workflow_on_success(item, from_state_label=from_state_label)
-        print(f"[Dispatch] Label transition result after confirming existing PR: {transition_ok}")
-        return transition_ok
-
-    pr_title = build_developer_pr_title(item)
-    pr_body = build_developer_pr_body(item, launch_brief_path)
-    print(f"[Dispatch] Creating pull request with title: {pr_title}")
-    create_result = create_pull_request_with_body_file(developer_branch, pr_title, pr_body)
-    if create_result is None:
-        print(f"[Dispatch] Failed to create pull request for branch '{developer_branch}'.")
-        add_developer_pr_failure_comment(item, "unable to create pull request")
-        return False
-
-    pr_url_match = re.search(r"https?://\S+", create_result)
-    pr_url = pr_url_match.group(0) if pr_url_match else create_result.strip()
-    print(f"[Dispatch] Pull request ready for branch '{developer_branch}': {pr_url}")
-
-    transition_ok = advance_developer_workflow_on_success(item, from_state_label=from_state_label)
-    print(f"[Dispatch] Label transition result after PR creation: {transition_ok}")
-    return transition_ok
+    return developer_flow.finalize_developer_success_with_pull_request(
+        item,
+        launch_brief_path,
+        from_state_label=from_state_label,
+        repo=REPO,
+        target_repo_path=TARGET_REPO_PATH,
+        lock_label=LOCK_LABEL,
+        run_git_command_in_repo_fn=run_git_command_in_repo,
+        get_current_git_branch_fn=get_current_git_branch,
+        find_existing_open_pr_for_branch_fn=find_existing_open_pr_for_branch,
+        create_pull_request_with_body_file_fn=create_pull_request_with_body_file,
+        advance_developer_workflow_on_success_fn=advance_developer_workflow_on_success,
+        add_comment_fn=add_comment,
+        normalize_path_for_display_fn=normalize_path_for_display,
+        build_shared_context_paths_fn=build_shared_context_paths,
+        get_item_run_root_fn=get_item_run_root,
+    )
 
 
 def get_max_steps_per_run():
