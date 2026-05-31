@@ -22,7 +22,7 @@ load_dotenv()
 # Configuration
 REPO = os.getenv("CIRCUS_REPO")  # Format: owner/repo
 TARGET_REPO_PATH = os.getenv("CIRCUS_TARGET_REPO_PATH")
-POLL_INTERVAL = 60  # seconds
+POLL_INTERVAL = int(os.getenv("CIRCUS_POLL_INTERVAL", 60))  # seconds
 DEFAULT_MAX_STEPS_PER_RUN = handler_config.DEFAULT_MAX_STEPS_PER_RUN
 MAX_STEPS_PER_RUN_ENV = handler_config.MAX_STEPS_PER_RUN_ENV
 MAX_BRANCH_SLUG_LENGTH = 60
