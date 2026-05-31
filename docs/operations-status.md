@@ -64,18 +64,23 @@
 - Set up architect review flow.
 - Add per-run result/status artifacts to Watchtower runs.
 - Refactor Handler into focused modules.
+- Add target-repo instruction discovery and context-loading conventions.
  
 ## Current Task
-- 
-- Add target-repo instruction discovery and context-loading conventions.
+
 
 ## Next Likely Tasks
 
-- Refactor Handler into focused modules.
+- Add durable per-issue workflow step tracking for long-running polling.
+- Add target repo initialization command (`python main.py --init`).
 - Add configurable agent provider routing.
 - Explore converting role doctrine/reusable workflows into skills.
+- Refactor Handler into focused modules. (round 2)
 
 ## Future Roadmap Ideas
 
-- Add configurable agent provider routing.
-- Explore converting role doctrine and reusable workflows into agent skills.
+- Parallel/multi-issue dispatch.
+- Stale lock detection and recovery.
+- Human review / merge-complete workflow automation.
+- Provider capability detection.
+- Watchtower dashboard.

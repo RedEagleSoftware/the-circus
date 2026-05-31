@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from datetime import datetime, UTC
 from dotenv import load_dotenv
 
@@ -1326,7 +1327,37 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         return False
 
 
-def process_one_item(items):
+def get_item_key(item):
+    return f"{item['type']}-{item['number']}"
+
+
+def log_issue_step_limit_reached(item, state_label, steps_completed_this_run, max_steps_per_run):
+    print(
+        f"[Handler] {item['type']} #{item['number']} reached max workflow steps for this Handler run "
+        f"({steps_completed_this_run}/{max_steps_per_run})."
+    )
+    print(
+        f"[Handler] Current state label for {item['type']} #{item['number']}: {state_label}."
+    )
+    print(
+        "[Handler] Human decision required: restart Handler to allow more steps, "
+        f"increase {MAX_STEPS_PER_RUN_ENV}, or mark the issue blocked if it should not continue."
+    )
+
+
+def process_one_item(
+    items,
+    issue_steps_this_run=None,
+    max_steps_per_run=None,
+    capped_issue_keys=None,
+    on_dispatch_success=None,
+):
+    if issue_steps_this_run is None:
+        issue_steps_this_run = {}
+
+    if capped_issue_keys is None:
+        capped_issue_keys = set()
+
     for item in items:
         labels = [label["name"] for label in item["labels"]]
 
@@ -1342,6 +1373,18 @@ def process_one_item(items):
             continue
 
         state_label, config = dispatch_resolution
+        item_key = get_item_key(item)
+        if max_steps_per_run is not None and issue_steps_this_run.get(item_key, 0) >= max_steps_per_run:
+            if item_key not in capped_issue_keys:
+                capped_issue_keys.add(item_key)
+                log_issue_step_limit_reached(
+                    item,
+                    state_label,
+                    issue_steps_this_run.get(item_key, 0),
+                    max_steps_per_run,
+                )
+            continue
+
         print(
             f"[Dispatch] Candidate selected: type={item['type']} number={item['number']} "
             f"title={json.dumps(item['title'])}"
@@ -1610,6 +1653,8 @@ def process_one_item(items):
         print(f"[Dispatch] Launch brief generated: {launch_brief_path}")
 
         if launch_agent(item, state_label, config, role_prompt_path, launch_brief_path):
+            if on_dispatch_success:
+                on_dispatch_success(item, state_label)
             return "success"
 
         prelaunch_error = item.get("prelaunch_error")
@@ -1674,10 +1719,12 @@ def poll():
     print(f"[Handler] Max workflow steps per issue this run: {max_steps_per_run}")
 
     startup_retrieval_confirmed = False
-    completed_steps = 0
+    cycle_number = 0
+    issue_steps_this_run = {}
+    capped_issue_keys = set()
 
-    while completed_steps < max_steps_per_run:
-        cycle_number = completed_steps + 1
+    while True:
+        cycle_number += 1
         print(f"[Poll] Starting cycle #{cycle_number}...")
         issues, prs, items, retrieval_ok = get_labeled_items()
 
@@ -1692,18 +1739,44 @@ def poll():
 
         if not items:
             print("[Poll] No candidate items matched workflow labels this cycle.")
-            print("[Handler] No eligible workflow step found. Exiting.")
-            return
+            print(f"[Handler] No eligible workflow step found. Sleeping {POLL_INTERVAL} seconds before re-polling.")
+            time.sleep(POLL_INTERVAL)
+            continue
 
-        dispatch_result = process_one_item(items)
-        if dispatch_result == "success":
-            completed_steps += 1
-            print(f"[Handler] Completed workflow step {completed_steps} of {max_steps_per_run}.")
+        def record_dispatch_success(item, state_label):
+            item_key = get_item_key(item)
+            updated_count = issue_steps_this_run.get(item_key, 0) + 1
+            issue_steps_this_run[item_key] = updated_count
+            print(
+                f"[Handler] Completed workflow step {updated_count} of {max_steps_per_run} "
+                f"for {item['type']} #{item['number']} ({state_label})."
+            )
 
-            if completed_steps >= max_steps_per_run:
-                print("[Handler] Max workflow steps reached. Exiting.")
+            if updated_count < max_steps_per_run:
                 return
 
+            if item_key not in capped_issue_keys:
+                capped_issue_keys.add(item_key)
+            log_issue_step_limit_reached(item, state_label, updated_count, max_steps_per_run)
+
+            run_state = get_run_state(item)
+            if not run_state:
+                return
+
+            update_run_status(
+                item,
+                stop_reason=f"max steps reached this handler run ({updated_count}/{max_steps_per_run})",
+            )
+            write_run_result(item)
+
+        dispatch_result = process_one_item(
+            items,
+            issue_steps_this_run=issue_steps_this_run,
+            max_steps_per_run=max_steps_per_run,
+            capped_issue_keys=capped_issue_keys,
+            on_dispatch_success=record_dispatch_success,
+        )
+        if dispatch_result == "success":
             print("[Handler] Re-polling for next eligible workflow step.")
             continue
 
@@ -1723,10 +1796,9 @@ def poll():
             print("[Handler] Stopping run: reviewer completed without review-result artifact.")
             return
         if dispatch_result == "no-dispatch":
-            print("[Handler] No dispatch completed this cycle. Exiting.")
-            return
-
-    print("[Handler] Max workflow steps reached. Exiting.")
+            print(f"[Handler] No dispatch completed this cycle. Sleeping {POLL_INTERVAL} seconds before re-polling.")
+            time.sleep(POLL_INTERVAL)
+            continue
 
 if __name__ == "__main__":
     poll()

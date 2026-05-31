@@ -306,15 +306,38 @@ class HandlerObservabilityTests(unittest.TestCase):
                             with patch.object(handler, "get_max_steps_per_run", return_value=1):
                                 with patch.object(handler, "get_labeled_items", return_value=([], [], [], True)):
                                     with patch.object(handler, "process_one_item", return_value="no-dispatch"):
-                                        with patch("builtins.print") as mock_print:
-                                            handler.poll()
+                                        with patch.object(handler.time, "sleep", side_effect=RuntimeError("stop")) as mock_sleep:
+                                            with patch("builtins.print") as mock_print:
+                                                with self.assertRaises(RuntimeError):
+                                                    handler.poll()
 
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("[Handler] Max workflow steps per issue this run: 1" in line for line in printed_lines))
         self.assertTrue(any("[Poll] Starting cycle #1..." in line for line in printed_lines))
         self.assertTrue(any("[Poll] Retrieved issues=0, prs=0, candidates=0." in line for line in printed_lines))
         self.assertTrue(any("[Poll] No candidate items matched workflow labels this cycle." in line for line in printed_lines))
-        self.assertTrue(any("[Handler] No eligible workflow step found. Exiting." in line for line in printed_lines))
+        self.assertTrue(any("[Handler] No eligible workflow step found. Sleeping 60 seconds before re-polling." in line for line in printed_lines))
+        mock_sleep.assert_called_once_with(60)
+
+    def test_poll_exits_when_startup_repository_access_check_fails(self):
+        with patch.object(handler, "REPO", "owner/repo"):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(
+                    handler,
+                    "validate_required_executables",
+                    return_value={"gh": "gh", "git": "git", "junie": "junie", "codex": "codex"},
+                ):
+                    with patch.object(handler, "validate_target_repo_workspace", return_value=True):
+                        with patch.object(handler, "verify_github_repo_access", return_value=False):
+                            with patch.object(handler, "get_labeled_items") as mock_get_labeled_items:
+                                with patch.object(handler.time, "sleep") as mock_sleep:
+                                    with patch("builtins.print") as mock_print:
+                                        handler.poll()
+
+        mock_get_labeled_items.assert_not_called()
+        mock_sleep.assert_not_called()
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("[Handler] Startup check failed. Exiting." in line for line in printed_lines))
 
     def test_get_max_steps_per_run_defaults_to_one_when_env_missing(self):
         with patch.dict(os.environ, {}, clear=True):
@@ -341,20 +364,19 @@ class HandlerObservabilityTests(unittest.TestCase):
                                     side_effect=[
                                         ([], [], [{"number": 1}], True),
                                         ([], [], [{"number": 1}], True),
+                                        ([], [], [], False),
                                     ],
                                 ) as mock_get_labeled_items:
                                     with patch.object(handler, "process_one_item", side_effect=["success", "success"]) as mock_process:
                                         with patch("builtins.print") as mock_print:
                                             handler.poll()
 
-        self.assertEqual(mock_get_labeled_items.call_count, 2)
+        self.assertEqual(mock_get_labeled_items.call_count, 3)
         self.assertEqual(mock_process.call_count, 2)
 
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
-        self.assertTrue(any("[Handler] Completed workflow step 1 of 2." in line for line in printed_lines))
         self.assertTrue(any("[Handler] Re-polling for next eligible workflow step." in line for line in printed_lines))
-        self.assertTrue(any("[Handler] Completed workflow step 2 of 2." in line for line in printed_lines))
-        self.assertTrue(any("[Handler] Max workflow steps reached. Exiting." in line for line in printed_lines))
+        self.assertTrue(any("[GitHub] Failed to retrieve issues/PRs this cycle; stopping current run." in line for line in printed_lines))
 
     def test_poll_stops_when_reviewer_completes_without_result_artifact(self):
         with patch.object(handler, "REPO", "owner/repo"):
@@ -384,6 +406,110 @@ class HandlerObservabilityTests(unittest.TestCase):
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("[Handler] Stopping run: reviewer completed without review-result artifact." in line for line in printed_lines))
         self.assertFalse(any("[Handler] Re-polling for next eligible workflow step." in line for line in printed_lines))
+
+    def test_process_one_item_skips_issue_when_per_run_max_is_reached(self):
+        capped_item = {
+            "type": "issue",
+            "number": 5,
+            "title": "Capped issue",
+            "labels": [{"name": "state:ready-for-dev"}],
+        }
+        dispatch_item = {
+            "type": "issue",
+            "number": 6,
+            "title": "Dispatchable issue",
+            "labels": [{"name": "state:ready-for-dev"}],
+        }
+        issue_steps_this_run = {"issue-5": 2}
+        capped_issue_keys = set()
+
+        dispatch_resolution = (
+            "state:ready-for-dev",
+            {"agent": "junie", "mode": "developer", "model": "gpt-5.3-codex", "effort": "Medium"},
+        )
+
+        with patch.object(handler, "resolve_dispatch_config", return_value=dispatch_resolution):
+            with patch.object(handler, "lock_item", return_value=True) as mock_lock:
+                with patch.object(handler, "prepare_developer_branch", return_value={"ok": True, "branch": "circus/issue-6-branch"}):
+                    with patch.object(handler, "resolve_role_prompt_path", return_value="TheFarm/roles/developer.md"):
+                        with patch.object(handler, "write_launch_brief", return_value="Watchtower/runs/issue-6/run-001-developer/launch-brief.md"):
+                            with patch.object(handler, "launch_agent", return_value=True):
+                                with patch("builtins.print") as mock_print:
+                                    on_dispatch_success = Mock()
+                                    result = handler.process_one_item(
+                                        [capped_item, dispatch_item],
+                                        issue_steps_this_run=issue_steps_this_run,
+                                        max_steps_per_run=2,
+                                        capped_issue_keys=capped_issue_keys,
+                                        on_dispatch_success=on_dispatch_success,
+                                    )
+
+        self.assertEqual(result, "success")
+        self.assertIn("issue-5", capped_issue_keys)
+        self.assertEqual(mock_lock.call_count, 1)
+        self.assertEqual(mock_lock.call_args_list[0].args[0], dispatch_item)
+        on_dispatch_success.assert_called_once_with(dispatch_item, "state:ready-for-dev")
+
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("issue #5 reached max workflow steps for this Handler run (2/2)." in line for line in printed_lines))
+        self.assertTrue(any("Current state label for issue #5: state:ready-for-dev." in line for line in printed_lines))
+        self.assertTrue(any("Human decision required: restart Handler to allow more steps" in line for line in printed_lines))
+
+    def test_process_one_item_does_not_change_labels_when_skipping_capped_issue(self):
+        capped_item = {
+            "type": "issue",
+            "number": 5,
+            "title": "Capped issue",
+            "labels": [{"name": "state:ready-for-dev"}],
+        }
+        issue_steps_this_run = {"issue-5": 2}
+        capped_issue_keys = set()
+
+        dispatch_resolution = (
+            "state:ready-for-dev",
+            {"agent": "junie", "mode": "developer", "model": "gpt-5.3-codex", "effort": "Medium"},
+        )
+
+        with patch.object(handler, "resolve_dispatch_config", return_value=dispatch_resolution):
+            with patch.object(handler, "add_label") as mock_add_label:
+                with patch.object(handler, "remove_label") as mock_remove_label:
+                    result = handler.process_one_item(
+                        [capped_item],
+                        issue_steps_this_run=issue_steps_this_run,
+                        max_steps_per_run=2,
+                        capped_issue_keys=capped_issue_keys,
+                    )
+
+        self.assertEqual(result, "no-dispatch")
+        mock_add_label.assert_not_called()
+        mock_remove_label.assert_not_called()
+
+    def test_poll_per_issue_step_count_resets_between_handler_invocations(self):
+        captured_issue_steps = []
+
+        def fake_process_one_item(items, **kwargs):
+            captured_issue_steps.append(kwargs["issue_steps_this_run"])
+            return "lock-failed"
+
+        with patch.object(handler, "REPO", "owner/repo"):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(
+                    handler,
+                    "validate_required_executables",
+                    return_value={"gh": "gh", "git": "git", "junie": "junie", "codex": "codex"},
+                ):
+                    with patch.object(handler, "validate_target_repo_workspace", return_value=True):
+                        with patch.object(handler, "verify_github_repo_access", return_value=True):
+                            with patch.object(handler, "get_max_steps_per_run", return_value=2):
+                                with patch.object(handler, "get_labeled_items", return_value=([], [], [{"number": 1}], True)):
+                                    with patch.object(handler, "process_one_item", side_effect=fake_process_one_item):
+                                        handler.poll()
+                                        handler.poll()
+
+        self.assertEqual(len(captured_issue_steps), 2)
+        self.assertEqual(captured_issue_steps[0], {})
+        self.assertEqual(captured_issue_steps[1], {})
+        self.assertIsNot(captured_issue_steps[0], captured_issue_steps[1])
 
     def test_get_candidates_fetches_without_label_filter(self):
         with patch.object(handler, "REPO", "owner/repo"):
