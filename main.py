@@ -4,6 +4,75 @@ import os
 from dotenv import load_dotenv
 
 
+INIT_SCAFFOLD_FILES = [
+    (
+        "AGENTS.md",
+        "# Agent Instructions\n\n"
+        "Add repository-specific agent instructions here.\n",
+    ),
+    (
+        os.path.join(".circus", "instructions.md"),
+        "# Instructions\n\n"
+        "Document task-specific operating instructions for agents.\n",
+    ),
+    (
+        os.path.join(".circus", "conventions.md"),
+        "# Conventions\n\n"
+        "Capture coding and review conventions for this repository.\n",
+    ),
+    (
+        os.path.join(".circus", "architecture.md"),
+        "# Architecture\n\n"
+        "Describe architecture context and constraints relevant to agent work.\n",
+    ),
+    (
+        os.path.join(".circus", "testing.md"),
+        "# Testing\n\n"
+        "Describe required test commands and quality gates.\n",
+    ),
+    (
+        os.path.join(".circus", "roles", "architect.md"),
+        "# Architect Role\n\n"
+        "Define architect responsibilities and boundaries for this repository.\n",
+    ),
+    (
+        os.path.join(".circus", "roles", "developer.md"),
+        "# Developer Role\n\n"
+        "Define developer responsibilities and implementation standards.\n",
+    ),
+    (
+        os.path.join(".circus", "roles", "reviewer.md"),
+        "# Reviewer Role\n\n"
+        "Define reviewer responsibilities and acceptance criteria.\n",
+    ),
+    (
+        os.path.join(".circus", "roles", "architect-review.md"),
+        "# Architect Review Role\n\n"
+        "Define architecture-focused review expectations.\n",
+    ),
+    (
+        os.path.join(".circus", "workflows", "architect.md"),
+        "# Architect Workflow\n\n"
+        "Document step-by-step architect workflow for this repository.\n",
+    ),
+    (
+        os.path.join(".circus", "workflows", "developer.md"),
+        "# Developer Workflow\n\n"
+        "Document step-by-step developer workflow for this repository.\n",
+    ),
+    (
+        os.path.join(".circus", "workflows", "reviewer.md"),
+        "# Reviewer Workflow\n\n"
+        "Document step-by-step reviewer workflow for this repository.\n",
+    ),
+    (
+        os.path.join(".circus", "workflows", "architect-review.md"),
+        "# Architect Review Workflow\n\n"
+        "Document architecture review workflow and approval checkpoints.\n",
+    ),
+]
+
+
 def print_startup_banner(repo, target_repo_path):
     print("=" * 36)
     print("        The Circus Orchestrator")
@@ -65,12 +134,71 @@ def run_label_sync(repo):
     return label_sync.sync_required_labels(repo)
 
 
+def validate_init_target_path():
+    target_repo_path = os.getenv("CIRCUS_TARGET_REPO_PATH")
+    if not target_repo_path:
+        print("[Init] Error: CIRCUS_TARGET_REPO_PATH is required.")
+        print("[Init] Initialization aborted: set CIRCUS_TARGET_REPO_PATH to a target repository working copy.")
+        return None
+
+    if not os.path.exists(target_repo_path):
+        print(f"[Init] Error: CIRCUS_TARGET_REPO_PATH does not exist: {target_repo_path}")
+        print("[Init] Initialization aborted: configure a valid existing target repository path.")
+        return None
+
+    if not os.path.isdir(target_repo_path):
+        print(f"[Init] Error: CIRCUS_TARGET_REPO_PATH is not a directory: {target_repo_path}")
+        print("[Init] Initialization aborted: configure CIRCUS_TARGET_REPO_PATH to a repository directory.")
+        return None
+
+    return target_repo_path
+
+
+def initialize_target_repository(target_repo_path):
+    created_count = 0
+    skipped_count = 0
+    normalized_target_repo_path = os.path.normpath(target_repo_path)
+
+    for relative_path, template_content in INIT_SCAFFOLD_FILES:
+        absolute_path = os.path.normpath(os.path.join(normalized_target_repo_path, relative_path))
+        if os.path.isfile(absolute_path):
+            print(f"[Init] skipped: {relative_path}")
+            skipped_count += 1
+            continue
+
+        if os.path.exists(absolute_path):
+            raise OSError(f"cannot create file because path exists and is not a file: {absolute_path}")
+
+        os.makedirs(os.path.dirname(absolute_path), exist_ok=True)
+        with open(absolute_path, "x", encoding="utf-8") as file_handle:
+            file_handle.write(template_content)
+        print(f"[Init] created: {relative_path}")
+        created_count += 1
+
+    print(f"[Init] Summary: created {created_count}, skipped {skipped_count}.")
+
+
+def run_target_repo_init(target_repo_path):
+    print(f"[Init] Initializing target repository instructions at: {target_repo_path}")
+    try:
+        initialize_target_repository(target_repo_path)
+    except OSError as error:
+        print(f"[Init] Error: failed while writing scaffold files: {error}")
+        return False
+    return True
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="The Circus orchestrator launcher")
     parser.add_argument(
         "--sync-labels",
         action="store_true",
         help="Synchronize required workflow labels to CIRCUS_REPO and exit.",
+    )
+    parser.add_argument(
+        "--init",
+        action="store_true",
+        help="Initialize target repository instruction scaffolding under CIRCUS_TARGET_REPO_PATH and exit.",
     )
     args = parser.parse_args(argv)
 
@@ -81,6 +209,13 @@ def main(argv=None):
         if not repo:
             return
         run_label_sync(repo)
+        return
+
+    if args.init:
+        target_repo_path = validate_init_target_path()
+        if not target_repo_path:
+            return
+        run_target_repo_init(target_repo_path)
         return
 
     startup_config = validate_startup_config()
