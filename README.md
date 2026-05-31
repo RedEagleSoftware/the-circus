@@ -54,6 +54,7 @@ The Circus intentionally avoids treating runtime session memory as authoritative
 Instead, persistent project state should live in:
 
 - GitHub issues
+- `CHANGELOG.md` (issue-aligned notable completed work)
 - Repository documentation
 - Structured markdown files
 - Configuration files
@@ -172,6 +173,8 @@ Areas of interest include:
 - Prompt engineering
 - Operational governance
 - AI safety and oversight
+
+When implementing a GitHub issue, include a matching `CHANGELOG.md` update in the same PR using the repository's issue-aligned changelog format.
 
 ---
 
