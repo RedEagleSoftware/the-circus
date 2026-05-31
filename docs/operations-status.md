@@ -65,13 +65,13 @@
 - Add per-run result/status artifacts to Watchtower runs.
 - Refactor Handler into focused modules.
 - Add target-repo instruction discovery and context-loading conventions.
+- Add durable per-issue workflow step tracking for long-running polling.
  
 ## Current Task
 
 
 ## Next Likely Tasks
 
-- Add durable per-issue workflow step tracking for long-running polling.
 - Add target repo initialization command (`python main.py --init`).
 - Add configurable agent provider routing.
 - Explore converting role doctrine/reusable workflows into skills.
