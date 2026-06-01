@@ -87,6 +87,13 @@ Reviewers should:
 - distinguish critical issues from suggestions
 - preserve implementation momentum
 
+When reviewing documentation, changelog, and project-history updates:
+
+- Verify issue numbers and issue titles match the source issue.
+- Verify changelog entries accurately describe the implemented work.
+- Verify the current issue is represented when the repository's conventions require it.
+- Verify repository conventions introduced by the change are applied consistently within the same change set.
+
 ---
 
 # Review Scope Expectations
