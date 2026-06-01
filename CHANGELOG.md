@@ -13,7 +13,7 @@ This changelog tracks notable completed work by GitHub issue.
 - [concise user-visible or workflow-significant change]
 - [optional second concise change]
 
-### Issue #1 - Bootstrap initial The Circus repository
+### Issue #1 - Add target repository initialization command (python main.py --init)
 
 - Added the initial orchestrator implementation and foundational role/doctrine structure.
 - Introduced core project documentation, including README and license scaffolding.
