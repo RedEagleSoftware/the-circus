@@ -17,3 +17,8 @@ This changelog tracks notable completed work by GitHub issue.
 
 - Added the initial orchestrator implementation and foundational role/doctrine structure.
 - Introduced core project documentation, including README and license scaffolding.
+
+### Issue #7 - Add Systems Architect workflow routing
+
+- Added support documentation for `state:ready-for-system-architecture` to describe strategic Systems Architect routing behavior.
+- Documented that successful Systems Architect runs transition directly to `state:ready-for-human-review` without auto-routing to development or auto-finalizing PR workflows.
