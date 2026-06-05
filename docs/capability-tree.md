@@ -1,5 +1,7 @@
 # Capability Tree
 
+Systems Architect stewardship: capability-tree planning and sequencing are owned as a strategic function by the Systems Architect role.
+
 ## Current Frontier
 
 ```mermaid
