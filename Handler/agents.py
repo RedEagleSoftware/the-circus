@@ -35,6 +35,14 @@ def build_codex_architect_task_text(absolute_launch_brief_path):
     )
 
 
+def build_codex_systems_architect_task_text(absolute_launch_brief_path):
+    return (
+        f"Read the launch brief at {absolute_launch_brief_path} and execute the systems architect workflow. "
+        "Produce a durable systems strategy recommendation artifact referenced by the launch brief. "
+        "Then leave a GitHub comment summarizing strategy decisions or blockers."
+    )
+
+
 def build_codex_reviewer_task_text(absolute_launch_brief_path, review_pr_url, review_result_path):
     return (
         f"Read the launch brief at {absolute_launch_brief_path} and execute the reviewer workflow. "
