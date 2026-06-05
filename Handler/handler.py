@@ -233,6 +233,16 @@ def advance_architect_workflow_on_success(item):
     )
 
 
+def advance_systems_architect_workflow_on_success(item):
+    return workflow.advance_systems_architect_workflow_on_success(
+        item,
+        remove_label_fn=remove_label,
+        add_label_fn=add_label,
+        update_run_status_fn=update_run_status,
+        log=print,
+    )
+
+
 def advance_developer_workflow_on_success(item, from_state_label="state:ready-for-dev"):
     return workflow.advance_developer_workflow_on_success(
         item,
@@ -410,6 +420,10 @@ def build_junie_task_text(absolute_launch_brief_path):
 
 def build_codex_architect_task_text(absolute_launch_brief_path):
     return agents.build_codex_architect_task_text(absolute_launch_brief_path)
+
+
+def build_codex_systems_architect_task_text(absolute_launch_brief_path):
+    return agents.build_codex_systems_architect_task_text(absolute_launch_brief_path)
 
 
 def build_codex_reviewer_task_text(absolute_launch_brief_path, review_pr_url, review_result_path):
@@ -1216,7 +1230,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 log=print,
             )
 
-        if mode != "architect":
+        if mode not in {"architect", "systems-architect"}:
             print("[Dispatch] TODO: Codex execution flow currently enabled only for architect/reviewer modes.")
             update_run_status(
                 item,
@@ -1230,7 +1244,10 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             return True
 
         absolute_launch_brief_path = os.path.abspath(launch_brief_path)
-        codex_task_text = build_codex_architect_task_text(absolute_launch_brief_path)
+        if mode == "systems-architect" and state_label == "state:ready-for-system-architecture":
+            codex_task_text = build_codex_systems_architect_task_text(absolute_launch_brief_path)
+        else:
+            codex_task_text = build_codex_architect_task_text(absolute_launch_brief_path)
         cmd = build_codex_command_with_optional_sandbox_bypass(
             model,
             TARGET_REPO_PATH or "",
@@ -1297,6 +1314,18 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     exit_code=0,
                     success=advanced,
                     outcome="architect handoff generated",
+                    stop_reason=None if advanced else "label transition failed",
+                )
+                write_run_result(item)
+                return advanced
+            elif mode == "systems-architect" and state_label == "state:ready-for-system-architecture":
+                advanced = advance_systems_architect_workflow_on_success(item)
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=0,
+                    success=advanced,
+                    outcome="systems architecture recommendation generated",
                     stop_reason=None if advanced else "label transition failed",
                 )
                 write_run_result(item)
