@@ -18,7 +18,7 @@ This changelog tracks notable completed work by GitHub issue.
 - Added the initial orchestrator implementation and foundational role/doctrine structure.
 - Introduced core project documentation, including README and license scaffolding.
 
-### Issue #5 - Improve role discoverability for Systems Architect doctrine
+### Issue #5 - Add Systems Architect role support
 
 - Added TheFarm role index and a contributor-facing role selection guide to clarify when to use Systems Architect, Feature Architect, Reviewer, and Architect Review.
 - Linked role guidance from repository entry points and roadmap docs, including explicit capability-tree stewardship and v1 workflow scope notes for Systems Architect.
