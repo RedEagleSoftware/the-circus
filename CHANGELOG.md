@@ -22,3 +22,7 @@ This changelog tracks notable completed work by GitHub issue.
 
 - Added support documentation for `state:ready-for-system-architecture` to describe strategic Systems Architect routing behavior.
 - Documented that successful Systems Architect runs transition directly to `state:ready-for-human-review` without auto-routing to development or auto-finalizing PR workflows.
+### Issue #5 - Add Systems Architect role support
+
+- Added TheFarm role index and a contributor-facing role selection guide to clarify when to use Systems Architect, Feature Architect, Reviewer, and Architect Review.
+- Linked role guidance from repository entry points and roadmap docs, including explicit capability-tree stewardship and v1 workflow scope notes for Systems Architect.

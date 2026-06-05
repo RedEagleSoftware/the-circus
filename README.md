@@ -45,6 +45,8 @@ Examples include:
 
 Each agent operates from defined doctrine and project context.
 
+See [docs/roles.md](docs/roles.md) for role selection guidance, including when to use Systems Architect versus Feature Architect, Reviewer, and Architect Review.
+
 ---
 
 ## Source of Truth Philosophy
