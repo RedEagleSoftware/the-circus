@@ -1,44 +1,50 @@
 import os
 
+from Handler.workflow_states import (
+    ARCHITECT_REVIEW_LABEL,
+    ARCHITECTURE_LABEL,
+    BLOCKED_LABEL,
+    CHANGES_REQUESTED_LABEL,
+    DEVELOPER_LABEL,
+    HUMAN_REVIEW_LABEL,
+    LOCK_LABEL,
+    REVIEW_LABEL,
+    SYSTEMS_ARCHITECTURE_LABEL,
+)
+
 
 LABEL_MAP = {
-    "state:ready-for-systems-architecture": {
+    SYSTEMS_ARCHITECTURE_LABEL: {
         "agent": "codex",
         "mode": "systems-architect",
         "model": "gpt-5.5",
         "effort": "High",
     },
-    "state:ready-for-architecture": {
+    ARCHITECTURE_LABEL: {
         "agent": "codex",
         "mode": "architect",
         "model": "gpt-5.5",
         "effort": "High",
     },
-    "state:ready-for-system-architecture": {
-        "agent": "codex",
-        "mode": "systems-architect",
-        "model": "gpt-5.3-codex",
-        "effort": "Medium",
-    },
-    "state:ready-for-dev": {
+    DEVELOPER_LABEL: {
         "agent": "junie",
         "mode": "developer",
         "model": "gpt-5.3-codex",
         "effort": "Medium",
     },
-    "state:changes-requested": {
+    CHANGES_REQUESTED_LABEL: {
         "agent": "junie",
         "mode": "developer",
         "model": "gpt-5.3-codex",
         "effort": "Medium",
     },
-    "state:ready-for-review": {
+    REVIEW_LABEL: {
         "agent": "codex",
         "mode": "reviewer",
         "model": "gpt-5.5",
         "effort": "High",
     },
-    "state:ready-for-architect-review": {
+    ARCHITECT_REVIEW_LABEL: {
         "agent": "codex",
         "mode": "architect-review",
         "model": "gpt-5.5",
@@ -46,7 +52,6 @@ LABEL_MAP = {
     },
 }
 
-LOCK_LABEL = "state:agent-in-progress"
 SUPPORTED_WORKFLOW_LABELS = tuple(LABEL_MAP.keys())
 REVIEW_OUTCOMES = {"APPROVED", "CHANGES_REQUESTED", "BLOCKED"}
 REVIEW_OUTCOME_MARKERS = {
@@ -54,8 +59,8 @@ REVIEW_OUTCOME_MARKERS = {
     "Outcome: CHANGES_REQUESTED": "CHANGES_REQUESTED",
     "Outcome: BLOCKED": "BLOCKED",
 }
-TERMINAL_WORKFLOW_STATES = {"state:blocked", "state:ready-for-human-review"}
-HUMAN_OWNED_WORKFLOW_STATES = {"state:blocked", "state:ready-for-human-review"}
+TERMINAL_WORKFLOW_STATES = {BLOCKED_LABEL, HUMAN_REVIEW_LABEL}
+HUMAN_OWNED_WORKFLOW_STATES = {BLOCKED_LABEL, HUMAN_REVIEW_LABEL}
 
 
 def get_primary_state_labels(labels):
@@ -175,8 +180,8 @@ def execute_label_transition(
 def advance_architect_workflow_on_success(item, remove_label_fn, add_label_fn, update_run_status_fn, log=print):
     transition_steps = [
         ("remove", LOCK_LABEL),
-        ("remove", "state:ready-for-architecture"),
-        ("add", "state:ready-for-dev"),
+        ("remove", ARCHITECTURE_LABEL),
+        ("add", DEVELOPER_LABEL),
     ]
 
     return execute_label_transition(
@@ -198,8 +203,8 @@ def advance_architect_workflow_on_success(item, remove_label_fn, add_label_fn, u
 def advance_systems_architect_workflow_on_success(item, remove_label_fn, add_label_fn, update_run_status_fn, log=print):
     transition_steps = [
         ("remove", LOCK_LABEL),
-        ("remove", "state:ready-for-system-architecture"),
-        ("add", "state:ready-for-human-review"),
+        ("remove", SYSTEMS_ARCHITECTURE_LABEL),
+        ("add", HUMAN_REVIEW_LABEL),
     ]
 
     return execute_label_transition(
@@ -224,12 +229,12 @@ def advance_developer_workflow_on_success(
     add_label_fn,
     update_run_status_fn,
     log=print,
-    from_state_label="state:ready-for-dev",
+    from_state_label=DEVELOPER_LABEL,
 ):
     transition_steps = [
         ("remove", LOCK_LABEL),
         ("remove", from_state_label),
-        ("add", "state:ready-for-review"),
+        ("add", REVIEW_LABEL),
     ]
 
     return execute_label_transition(
@@ -251,8 +256,8 @@ def advance_developer_workflow_on_success(
 def advance_reviewer_workflow_on_approved(item, remove_label_fn, add_label_fn, update_run_status_fn, log=print):
     transition_steps = [
         ("remove", LOCK_LABEL),
-        ("remove", "state:ready-for-review"),
-        ("add", "state:ready-for-architect-review"),
+        ("remove", REVIEW_LABEL),
+        ("add", ARCHITECT_REVIEW_LABEL),
     ]
 
     return execute_label_transition(
@@ -282,8 +287,8 @@ def advance_reviewer_workflow_on_changes_requested(
 ):
     transition_steps = [
         ("remove", LOCK_LABEL),
-        ("remove", "state:ready-for-review"),
-        ("add", "state:changes-requested"),
+        ("remove", REVIEW_LABEL),
+        ("add", CHANGES_REQUESTED_LABEL),
     ]
 
     return execute_label_transition(
@@ -311,8 +316,8 @@ def advance_architect_review_workflow_on_approved(
 ):
     transition_steps = [
         ("remove", LOCK_LABEL),
-        ("remove", "state:ready-for-architect-review"),
-        ("add", "state:ready-for-human-review"),
+        ("remove", ARCHITECT_REVIEW_LABEL),
+        ("add", HUMAN_REVIEW_LABEL),
     ]
 
     return execute_label_transition(
@@ -340,8 +345,8 @@ def advance_architect_review_workflow_on_changes_requested(
 ):
     transition_steps = [
         ("remove", LOCK_LABEL),
-        ("remove", "state:ready-for-architect-review"),
-        ("add", "state:changes-requested"),
+        ("remove", ARCHITECT_REVIEW_LABEL),
+        ("add", CHANGES_REQUESTED_LABEL),
     ]
 
     return execute_label_transition(

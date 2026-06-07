@@ -77,7 +77,7 @@ This allows:
 The Circus uses GitHub `state:*` labels as a workflow state machine.
 
 - `state:ready-for-architecture` routes to Codex Architect for implementation-focused architecture handoff work.
-- `state:ready-for-system-architecture` routes to Codex Systems Architect for strategic system-level recommendations.
+- `state:ready-for-systems-architecture` routes to Codex Systems Architect for strategic system-level recommendations.
 
 Systems Architect routing is intentionally terminal for agent automation:
 

@@ -1,37 +1,50 @@
+from Handler.workflow_states import (
+    ARCHITECT_REVIEW_LABEL,
+    ARCHITECTURE_LABEL,
+    BLOCKED_LABEL,
+    CHANGES_REQUESTED_LABEL,
+    DEVELOPER_LABEL,
+    HUMAN_REVIEW_LABEL,
+    LOCK_LABEL,
+    REVIEW_LABEL,
+    SYSTEMS_ARCHITECTURE_LABEL,
+)
+
+
 REQUIRED_WORKFLOW_LABELS = {
-    "state:ready-for-architecture": {
+    ARCHITECTURE_LABEL: {
         "description": "Ready for architecture/specification by architect agent.",
         "color": "1D76DB",
     },
-    "state:ready-for-systems-architecture": {
+    SYSTEMS_ARCHITECTURE_LABEL: {
         "description": "Ready for strategic systems architecture by systems architect agent.",
         "color": "1D76DB",
     },
-    "state:ready-for-dev": {
+    DEVELOPER_LABEL: {
         "description": "Ready for implementation by developer agent.",
         "color": "1D76DB",
     },
-    "state:ready-for-review": {
+    REVIEW_LABEL: {
         "description": "Ready for review by reviewer agent.",
         "color": "1D76DB",
     },
-    "state:ready-for-architect-review": {
+    ARCHITECT_REVIEW_LABEL: {
         "description": "Ready for architect approval after review.",
         "color": "1D76DB",
     },
-    "state:ready-for-human-review": {
+    HUMAN_REVIEW_LABEL: {
         "description": "Ready for final human review.",
         "color": "FBCA04",
     },
-    "state:changes-requested": {
+    CHANGES_REQUESTED_LABEL: {
         "description": "Changes requested; route back to development.",
         "color": "FBCA04",
     },
-    "state:blocked": {
+    BLOCKED_LABEL: {
         "description": "Blocked pending human intervention.",
         "color": "D73A4A",
     },
-    "state:agent-in-progress": {
+    LOCK_LABEL: {
         "description": "Lock label indicating an agent currently owns this item.",
         "color": "8250DF",
     },
