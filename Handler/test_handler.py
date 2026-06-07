@@ -6,6 +6,7 @@ import re
 from unittest.mock import Mock, patch
 
 import Handler.handler as handler
+import Handler.github_client as github_client
 import Handler.target_instructions as target_instructions
 import Handler.workflow_labels as workflow_labels
 
@@ -520,6 +521,31 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(items, [])
         self.assertTrue(ok)
         mock_run.assert_called_once_with("gh issue list --repo owner/repo --json number,labels,title,url")
+
+    def test_github_client_get_item_fetches_issue_view_and_attaches_type(self):
+        payload = json.dumps(
+            {
+                "number": 11,
+                "title": "Prevent stale launch",
+                "url": "https://github.com/owner/repo/issues/11",
+                "labels": [{"name": "state:ready-for-review"}],
+            }
+        )
+
+        mock_run = Mock(return_value=payload)
+
+        item, ok = github_client.get_item("issue", 11, "owner/repo", mock_run)
+
+        self.assertTrue(ok)
+        self.assertEqual(item["type"], "issue")
+        self.assertEqual(item["number"], 11)
+        mock_run.assert_called_once_with("gh issue view 11 --repo owner/repo --json number,labels,title,url")
+
+    def test_github_client_get_item_reports_failure_when_command_returns_none(self):
+        item, ok = github_client.get_item("pr", 23, "owner/repo", Mock(return_value=None))
+
+        self.assertIsNone(item)
+        self.assertFalse(ok)
 
     def test_build_thin_prompt_includes_target_repo_and_launch_brief_path(self):
         item = {"type": "issue", "number": 3, "title": "Implement launch brief", "url": "https://github.com/owner/repo/issues/3"}
@@ -2713,6 +2739,106 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_launch_agent.assert_not_called()
         self.assertIn("no linked open PR was discovered", item["comment"])
         self.assertIn("labels were left unchanged", item["comment"])
+
+    def test_process_one_item_stale_reviewer_candidate_releases_lock_and_skips_launch(self):
+        item = {
+            "type": "issue",
+            "number": 44,
+            "title": "Reviewer candidate became stale",
+            "labels": [{"name": "state:ready-for-review"}],
+        }
+        current_item = {
+            "type": "issue",
+            "number": 44,
+            "title": "Reviewer candidate became stale",
+            "url": "https://github.com/owner/repo/issues/44",
+            "labels": [
+                {"name": "state:changes-requested"},
+                {"name": handler.LOCK_LABEL},
+            ],
+        }
+
+        with patch.object(handler, "lock_item", return_value=True):
+            with patch.object(handler, "get_current_item", return_value=(current_item, True)):
+                with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                    with patch.object(handler, "find_open_review_pr_for_issue") as mock_find_review_pr:
+                        with patch.object(handler, "write_launch_brief") as mock_write_launch_brief:
+                            with patch.object(handler, "launch_agent") as mock_launch_agent:
+                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                    dispatched = handler.process_one_item([item])
+
+        self.assertEqual(dispatched, "stale-candidate")
+        mock_unlock.assert_called_once_with(item)
+        mock_find_review_pr.assert_not_called()
+        mock_write_launch_brief.assert_not_called()
+        mock_launch_agent.assert_not_called()
+        mock_add_comment.assert_not_called()
+
+    def test_process_one_item_revalidation_matching_state_continues_reviewer_dispatch(self):
+        item = {
+            "type": "issue",
+            "number": 45,
+            "title": "Reviewer candidate still current",
+            "labels": [{"name": "state:ready-for-review"}],
+        }
+        current_item = {
+            "type": "issue",
+            "number": 45,
+            "title": "Reviewer candidate still current (fresh)",
+            "url": "https://github.com/owner/repo/issues/45",
+            "labels": [
+                {"name": "state:ready-for-review"},
+                {"name": handler.LOCK_LABEL},
+            ],
+        }
+        review_pr = {"number": 90, "url": "https://github.com/owner/repo/pull/90"}
+
+        with patch.object(handler, "lock_item", return_value=True):
+            with patch.object(handler, "get_current_item", return_value=(current_item, True)):
+                with patch.object(
+                    handler,
+                    "find_open_review_pr_for_issue",
+                    return_value={"ok": True, "pr": review_pr, "match_reason": "preferred-closes"},
+                ) as mock_find_review_pr:
+                    with patch.object(
+                        handler,
+                        "write_launch_brief",
+                        return_value="Watchtower/runs/issue-45/run-001-reviewer/launch-brief.md",
+                    ) as mock_write_launch_brief:
+                        with patch.object(handler, "launch_agent", return_value=True) as mock_launch_agent:
+                            with patch.object(handler, "unlock_item") as mock_unlock:
+                                dispatched = handler.process_one_item([item])
+
+        self.assertEqual(dispatched, "success")
+        mock_find_review_pr.assert_called_once_with(45)
+        mock_write_launch_brief.assert_called_once()
+        mock_launch_agent.assert_called_once()
+        mock_unlock.assert_not_called()
+        self.assertEqual(item["title"], "Reviewer candidate still current (fresh)")
+
+    def test_process_one_item_revalidation_fetch_failure_releases_lock_comments_and_fails_prelaunch(self):
+        item = {
+            "type": "issue",
+            "number": 46,
+            "title": "Revalidation fetch failed",
+            "labels": [{"name": "state:ready-for-dev"}],
+        }
+
+        with patch.object(handler, "lock_item", return_value=True):
+            with patch.object(handler, "get_current_item", return_value=(None, False)):
+                with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                    with patch.object(handler, "add_comment") as mock_add_comment:
+                        with patch.object(handler, "write_launch_brief") as mock_write_launch_brief:
+                            with patch.object(handler, "launch_agent") as mock_launch_agent:
+                                dispatched = handler.process_one_item([item])
+
+        self.assertEqual(dispatched, "prelaunch-failed")
+        mock_unlock.assert_called_once_with(item)
+        mock_add_comment.assert_called_once_with(item)
+        mock_write_launch_brief.assert_not_called()
+        mock_launch_agent.assert_not_called()
+        self.assertIn("could not re-fetch issue #46", item["comment"])
+        self.assertIn("The lock label `state:agent-in-progress` was released", item["comment"])
 
     def test_process_one_item_dirty_working_tree_blocks_architect_launch_and_releases_lock(self):
         item = {
