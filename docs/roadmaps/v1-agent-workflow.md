@@ -107,6 +107,8 @@ over hidden inference and automation.
 - `state:blocked`
 - `state:agent-in-progress`
 
+Systems Architect is a manual strategic planning role outside the normal v1 issue state flow.
+
 ---
 
 ## Intended Workflow Flow

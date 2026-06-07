@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 
 import Handler.handler as handler
 import Handler.target_instructions as target_instructions
+import Handler.workflow_labels as workflow_labels
 
 
 class HandlerObservabilityTests(unittest.TestCase):
@@ -1090,6 +1091,20 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("Produce or update the architecture handoff artifact", task_text)
         self.assertIn("leave a GitHub comment summarizing the handoff or blocker", task_text)
 
+    def test_build_codex_systems_architect_task_text_mentions_strategy_and_github_comment(self):
+        task_text = handler.build_codex_systems_architect_task_text(
+            "C:/abs/Watchtower/runs/issue-70/run-001-systems-architect/launch-brief.md"
+        )
+
+        self.assertIn(
+            "Read the launch brief at C:/abs/Watchtower/runs/issue-70/run-001-systems-architect/launch-brief.md",
+            task_text,
+        )
+        self.assertIn("execute the systems architect workflow", task_text)
+        self.assertIn("Produce a durable systems strategy recommendation artifact", task_text)
+        self.assertIn("leave a GitHub comment summarizing strategy decisions or blockers", task_text)
+        self.assertNotIn("architecture handoff", task_text)
+
     def test_is_codex_sandbox_bypass_enabled_defaults_to_false_when_missing(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertFalse(handler.is_codex_sandbox_bypass_enabled())
@@ -1139,6 +1154,21 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         self.assertEqual(config["agent"], "codex")
         self.assertEqual(config["mode"], "architect-review")
+
+    def test_required_workflow_labels_include_ready_for_system_architecture(self):
+        self.assertIn("state:ready-for-system-architecture", workflow_labels.REQUIRED_WORKFLOW_LABELS)
+
+    def test_resolve_dispatch_config_routes_ready_for_system_architecture_to_codex_systems_architect(self):
+        item = {"type": "issue", "number": 71, "labels": []}
+
+        state_label, dispatch_config = handler.resolve_dispatch_config(
+            item,
+            ["state:ready-for-system-architecture"],
+        )
+
+        self.assertEqual(state_label, "state:ready-for-system-architecture")
+        self.assertEqual(dispatch_config["agent"], "codex")
+        self.assertEqual(dispatch_config["mode"], "systems-architect")
 
     def test_build_codex_reviewer_task_text_contains_required_contract_and_safety_instructions(self):
         task_text = handler.build_codex_reviewer_task_text(
@@ -1330,6 +1360,57 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(len(executing_lines), 1)
         self.assertIn("--dangerously-bypass-approvals-and-sandbox", executing_lines[0])
 
+    def test_launch_agent_codex_systems_architect_runs_with_exec_cd_and_strategy_task_handoff(self):
+        item = {
+            "type": "issue",
+            "number": 73,
+            "title": "Run systems architect workflow",
+            "url": "https://github.com/owner/repo/issues/73",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "systems-architect",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-73/run-001-systems-architect/launch-brief.md"
+        absolute_launch_brief_path = "C:/abs/Watchtower/runs/issue-73/run-001-systems-architect/launch-brief.md"
+
+        with patch.dict(os.environ, {}, clear=True):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
+                    with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
+                        with patch.object(
+                            handler,
+                            "advance_systems_architect_workflow_on_success",
+                            return_value=True,
+                        ) as mock_advance_transition:
+                            with patch.object(handler, "finalize_developer_success_with_pull_request") as mock_finalize:
+                                launched = handler.launch_agent(
+                                    item,
+                                    "state:ready-for-system-architecture",
+                                    config,
+                                    os.path.normpath(os.path.join("TheFarm", "roles", "systems-architect.md")),
+                                    launch_brief_path,
+                                )
+
+        self.assertTrue(launched)
+        mock_subprocess_run.assert_called_once()
+        command = mock_subprocess_run.call_args.args[0]
+        self.assertEqual(command[0], "codex")
+        self.assertEqual(command[1], "exec")
+        self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
+        self.assertEqual(command[4:6], ["--cd", "C:/target/repo"])
+        self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", command[6])
+        self.assertIn("execute the systems architect workflow", command[6])
+        self.assertIn("Produce a durable systems strategy recommendation artifact", command[6])
+        self.assertNotIn("architecture handoff", command[6])
+
+        self.assertEqual(mock_subprocess_run.call_args.kwargs["cwd"], "C:/target/repo")
+        self.assertTrue(mock_subprocess_run.call_args.kwargs["text"])
+        mock_advance_transition.assert_called_once_with(item)
+        mock_finalize.assert_not_called()
+
     def test_launch_agent_codex_architect_non_zero_exit_does_not_advance_workflow_labels(self):
         item = {
             "type": "issue",
@@ -1401,6 +1482,40 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertTrue(any("Removing label: state:ready-for-architecture" in line for line in printed_lines))
         self.assertTrue(any("Adding label: state:ready-for-dev" in line for line in printed_lines))
         self.assertTrue(any("Workflow advanced to developer stage for issue #2." in line for line in printed_lines))
+
+    def test_advance_systems_architect_workflow_on_success_transitions_to_human_review(self):
+        item = {
+            "type": "issue",
+            "number": 74,
+            "title": "Systems architecture complete",
+        }
+
+        with patch.object(handler, "REPO", "owner/repo"):
+            with patch.object(handler, "run_command", return_value="") as mock_run_command:
+                with patch("builtins.print") as mock_print:
+                    transitioned = handler.advance_systems_architect_workflow_on_success(item)
+
+        self.assertTrue(transitioned)
+        self.assertEqual(
+            mock_run_command.call_args_list,
+            [
+                unittest.mock.call(
+                    'gh issue edit 74 --repo owner/repo --remove-label "state:agent-in-progress"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 74 --repo owner/repo --remove-label "state:ready-for-system-architecture"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 74 --repo owner/repo --add-label "state:ready-for-human-review"'
+                ),
+            ],
+        )
+
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("Systems Architect workflow completed successfully for issue #74." in line for line in printed_lines))
+        self.assertTrue(any("Removing label: state:agent-in-progress" in line for line in printed_lines))
+        self.assertTrue(any("Removing label: state:ready-for-system-architecture" in line for line in printed_lines))
+        self.assertTrue(any("Adding label: state:ready-for-human-review" in line for line in printed_lines))
 
     def test_advance_developer_workflow_on_success_transitions_labels(self):
         item = {

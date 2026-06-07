@@ -45,6 +45,8 @@ Examples include:
 
 Each agent operates from defined doctrine and project context.
 
+See [docs/roles.md](docs/roles.md) for role selection guidance, including when to use Systems Architect versus Feature Architect, Reviewer, and Architect Review.
+
 ---
 
 ## Source of Truth Philosophy
@@ -67,6 +69,21 @@ This allows:
 - Better auditability
 - Shared visibility between agents
 - Reduced dependency on transient LLM context
+
+---
+
+## Workflow Routing States
+
+The Circus uses GitHub `state:*` labels as a workflow state machine.
+
+- `state:ready-for-architecture` routes to Codex Architect for implementation-focused architecture handoff work.
+- `state:ready-for-system-architecture` routes to Codex Systems Architect for strategic system-level recommendations.
+
+Systems Architect routing is intentionally terminal for agent automation:
+
+- On success, it transitions directly to `state:ready-for-human-review`.
+- It does **not** auto-route to implementation states such as `state:ready-for-dev`.
+- It does **not** auto-create or finalize a developer pull request.
 
 ---
 

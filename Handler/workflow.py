@@ -14,6 +14,12 @@ LABEL_MAP = {
         "model": "gpt-5.5",
         "effort": "High",
     },
+    "state:ready-for-system-architecture": {
+        "agent": "codex",
+        "mode": "systems-architect",
+        "model": "gpt-5.3-codex",
+        "effort": "Medium",
+    },
     "state:ready-for-dev": {
         "agent": "junie",
         "mode": "developer",
@@ -180,6 +186,29 @@ def advance_architect_workflow_on_success(item, remove_label_fn, add_label_fn, u
         success_message="[Dispatch] Workflow advanced to developer stage for issue #{number}.",
         failure_message=(
             "[Dispatch] Architect workflow transition encountered label update failures for issue #{number}; "
+            "manual inspection is required."
+        ),
+        remove_label_fn=remove_label_fn,
+        add_label_fn=add_label_fn,
+        update_run_status_fn=update_run_status_fn,
+        log=log,
+    )
+
+
+def advance_systems_architect_workflow_on_success(item, remove_label_fn, add_label_fn, update_run_status_fn, log=print):
+    transition_steps = [
+        ("remove", LOCK_LABEL),
+        ("remove", "state:ready-for-system-architecture"),
+        ("add", "state:ready-for-human-review"),
+    ]
+
+    return execute_label_transition(
+        item,
+        workflow_name="Systems Architect",
+        transition_steps=transition_steps,
+        success_message="[Dispatch] Workflow advanced to human review stage for issue #{number}.",
+        failure_message=(
+            "[Dispatch] Systems Architect workflow transition encountered label update failures for issue #{number}; "
             "manual inspection is required."
         ),
         remove_label_fn=remove_label_fn,
