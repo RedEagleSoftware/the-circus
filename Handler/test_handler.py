@@ -1182,17 +1182,17 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(config["mode"], "architect-review")
 
     def test_required_workflow_labels_include_ready_for_system_architecture(self):
-        self.assertIn("state:ready-for-system-architecture", workflow_labels.REQUIRED_WORKFLOW_LABELS)
+        self.assertIn("state:ready-for-systems-architecture", workflow_labels.REQUIRED_WORKFLOW_LABELS)
 
     def test_resolve_dispatch_config_routes_ready_for_system_architecture_to_codex_systems_architect(self):
         item = {"type": "issue", "number": 71, "labels": []}
 
         state_label, dispatch_config = handler.resolve_dispatch_config(
             item,
-            ["state:ready-for-system-architecture"],
+            ["state:ready-for-systems-architecture"],
         )
 
-        self.assertEqual(state_label, "state:ready-for-system-architecture")
+        self.assertEqual(state_label, "state:ready-for-systems-architecture")
         self.assertEqual(dispatch_config["agent"], "codex")
         self.assertEqual(dispatch_config["mode"], "systems-architect")
 
@@ -1414,7 +1414,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                             with patch.object(handler, "finalize_developer_success_with_pull_request") as mock_finalize:
                                 launched = handler.launch_agent(
                                     item,
-                                    "state:ready-for-system-architecture",
+                                    "state:ready-for-systems-architecture",
                                     config,
                                     os.path.normpath(os.path.join("TheFarm", "roles", "systems-architect.md")),
                                     launch_brief_path,
@@ -1529,7 +1529,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                     'gh issue edit 74 --repo owner/repo --remove-label "state:agent-in-progress"'
                 ),
                 unittest.mock.call(
-                    'gh issue edit 74 --repo owner/repo --remove-label "state:ready-for-system-architecture"'
+                    'gh issue edit 74 --repo owner/repo --remove-label "state:ready-for-systems-architecture"'
                 ),
                 unittest.mock.call(
                     'gh issue edit 74 --repo owner/repo --add-label "state:ready-for-human-review"'
@@ -1540,7 +1540,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("Systems Architect workflow completed successfully for issue #74." in line for line in printed_lines))
         self.assertTrue(any("Removing label: state:agent-in-progress" in line for line in printed_lines))
-        self.assertTrue(any("Removing label: state:ready-for-system-architecture" in line for line in printed_lines))
+        self.assertTrue(any("Removing label: state:ready-for-systems-architecture" in line for line in printed_lines))
         self.assertTrue(any("Adding label: state:ready-for-human-review" in line for line in printed_lines))
 
     def test_advance_developer_workflow_on_success_transitions_labels(self):

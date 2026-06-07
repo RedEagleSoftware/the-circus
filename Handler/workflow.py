@@ -14,12 +14,6 @@ LABEL_MAP = {
         "model": "gpt-5.5",
         "effort": "High",
     },
-    "state:ready-for-system-architecture": {
-        "agent": "codex",
-        "mode": "systems-architect",
-        "model": "gpt-5.3-codex",
-        "effort": "Medium",
-    },
     "state:ready-for-dev": {
         "agent": "junie",
         "mode": "developer",
@@ -198,7 +192,7 @@ def advance_architect_workflow_on_success(item, remove_label_fn, add_label_fn, u
 def advance_systems_architect_workflow_on_success(item, remove_label_fn, add_label_fn, update_run_status_fn, log=print):
     transition_steps = [
         ("remove", LOCK_LABEL),
-        ("remove", "state:ready-for-system-architecture"),
+        ("remove", "state:ready-for-systems-architecture"),
         ("add", "state:ready-for-human-review"),
     ]
 

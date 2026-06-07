@@ -1302,7 +1302,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             return True
 
         absolute_launch_brief_path = os.path.abspath(launch_brief_path)
-        if mode == "systems-architect" and state_label == "state:ready-for-system-architecture":
+        if mode == "systems-architect" and state_label == "state:ready-for-systems-architecture":
             codex_task_text = build_codex_systems_architect_task_text(absolute_launch_brief_path)
         else:
             codex_task_text = build_codex_architect_task_text(absolute_launch_brief_path)
@@ -1376,7 +1376,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 )
                 write_run_result(item)
                 return advanced
-            elif mode == "systems-architect" and state_label == "state:ready-for-system-architecture":
+            elif mode == "systems-architect" and state_label == "state:ready-for-systems-architecture":
                 advanced = advance_systems_architect_workflow_on_success(item)
                 update_run_status(
                     item,
