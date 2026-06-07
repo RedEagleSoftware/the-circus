@@ -825,6 +825,7 @@ def get_item_run_root(item):
     return watchtower.get_item_run_root(
         item,
         launch_artifact_dir=LAUNCH_ARTIFACT_DIR,
+        repo=REPO,
         sanitize_filename_part_fn=sanitize_filename_part,
         resolve_circus_runtime_path_fn=resolve_circus_runtime_path,
     )
