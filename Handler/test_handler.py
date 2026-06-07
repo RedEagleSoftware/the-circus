@@ -1489,6 +1489,91 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_advance_transition.assert_called_once_with(item)
         mock_finalize.assert_not_called()
 
+    def test_launch_agent_codex_systems_architect_changes_requested_uses_strategy_task_handoff(self):
+        item = {
+            "type": "issue",
+            "number": 173,
+            "title": "Revise systems architecture recommendation",
+            "url": "https://github.com/owner/repo/issues/173",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "systems-architect",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-173/run-002-systems-architect/launch-brief.md"
+        absolute_launch_brief_path = "C:/abs/Watchtower/runs/issue-173/run-002-systems-architect/launch-brief.md"
+
+        with patch.dict(os.environ, {}, clear=True):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
+                    with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
+                        with patch.object(
+                            handler,
+                            "advance_systems_architect_workflow_on_success",
+                            return_value=True,
+                        ) as mock_advance_transition:
+                            launched = handler.launch_agent(
+                                item,
+                                "state:systems-architecture-changes-requested",
+                                config,
+                                os.path.normpath(os.path.join("TheFarm", "roles", "systems-architect.md")),
+                                launch_brief_path,
+                            )
+
+        self.assertTrue(launched)
+        mock_subprocess_run.assert_called_once()
+        command = mock_subprocess_run.call_args.args[0]
+        self.assertEqual(command[0], "codex")
+        self.assertEqual(command[1], "exec")
+        self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
+        self.assertEqual(command[4:6], ["--cd", "C:/target/repo"])
+        self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", command[6])
+        self.assertIn("execute the systems architect workflow", command[6])
+        self.assertIn("structured GitHub issue comment as the primary human review artifact", command[6])
+        self.assertNotIn("architecture handoff", command[6])
+
+        self.assertEqual(mock_subprocess_run.call_args.kwargs["cwd"], "C:/target/repo")
+        self.assertTrue(mock_subprocess_run.call_args.kwargs["text"])
+        mock_advance_transition.assert_called_once_with(item)
+
+    def test_launch_agent_codex_systems_architect_changes_requested_advances_to_human_review(self):
+        item = {
+            "type": "issue",
+            "number": 174,
+            "title": "Revise systems architecture recommendation",
+            "url": "https://github.com/owner/repo/issues/174",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "systems-architect",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-174/run-002-systems-architect/launch-brief.md"
+        absolute_launch_brief_path = "C:/abs/Watchtower/runs/issue-174/run-002-systems-architect/launch-brief.md"
+
+        with patch.dict(os.environ, {}, clear=True):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
+                    with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                        with patch.object(
+                            handler,
+                            "advance_systems_architect_workflow_on_success",
+                            return_value=True,
+                        ) as mock_advance_transition:
+                            launched = handler.launch_agent(
+                                item,
+                                "state:systems-architecture-changes-requested",
+                                config,
+                                os.path.normpath(os.path.join("TheFarm", "roles", "systems-architect.md")),
+                                launch_brief_path,
+                            )
+
+        self.assertTrue(launched)
+        mock_advance_transition.assert_called_once_with(item)
+
     def test_launch_agent_codex_architect_non_zero_exit_does_not_advance_workflow_labels(self):
         item = {
             "type": "issue",
