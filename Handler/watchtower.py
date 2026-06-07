@@ -323,10 +323,11 @@ def get_next_run_number(item_run_root):
     return next_run_number
 
 
-def get_item_run_root(item, *, launch_artifact_dir, sanitize_filename_part_fn, resolve_circus_runtime_path_fn):
+def get_item_run_root(item, *, launch_artifact_dir, repo, sanitize_filename_part_fn, resolve_circus_runtime_path_fn):
+    repo_dir = sanitize_filename_part_fn(repo)
     item_dir = f"{sanitize_filename_part_fn(item['type'])}-{item['number']}"
     launch_artifact_root = resolve_circus_runtime_path_fn(launch_artifact_dir)
-    return os.path.normpath(os.path.join(launch_artifact_root, item_dir))
+    return os.path.normpath(os.path.join(launch_artifact_root, repo_dir, item_dir))
 
 
 def build_shared_context_paths(item_run_root, *, normalize_path_for_display_fn):

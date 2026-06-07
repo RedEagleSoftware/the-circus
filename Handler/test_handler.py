@@ -323,8 +323,14 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertTrue(any("[Poll] Starting cycle #1..." in line for line in printed_lines))
         self.assertTrue(any("[Poll] Retrieved issues=0, prs=0, candidates=0." in line for line in printed_lines))
         self.assertTrue(any("[Poll] No candidate items matched workflow labels this cycle." in line for line in printed_lines))
-        self.assertTrue(any("[Handler] No eligible workflow step found. Sleeping 60 seconds before re-polling." in line for line in printed_lines))
-        mock_sleep.assert_called_once_with(60)
+        self.assertTrue(
+            any(
+                f"[Handler] No eligible workflow step found. Sleeping {handler.POLL_INTERVAL} seconds before re-polling."
+                in line
+                for line in printed_lines
+            )
+        )
+        mock_sleep.assert_called_once_with(handler.POLL_INTERVAL)
 
     def test_poll_exits_when_startup_repository_access_check_fails(self):
         with patch.object(handler, "REPO", "owner/repo"):
@@ -2305,23 +2311,39 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(handler, "LAUNCH_ARTIFACT_DIR", temp_dir):
-                path = handler.build_launch_brief_path(item, "developer")
+                with patch.object(handler, "REPO", "owner/repo"):
+                    path = handler.build_launch_brief_path(item, "developer")
 
-        self.assertEqual(path, f"{temp_dir.replace('\\', '/')}/issue-3/run-001-developer/launch-brief.md")
+        self.assertEqual(path, f"{temp_dir.replace('\\', '/')}/owner-repo/issue-3/run-001-developer/launch-brief.md")
         self.assertNotIn("\\", path)
 
     def test_build_launch_brief_path_increments_run_number_for_existing_item(self):
         item = {"type": "issue", "number": 3}
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            item_root = os.path.join(temp_dir, "issue-3")
+            item_root = os.path.join(temp_dir, "owner-repo", "issue-3")
             os.makedirs(os.path.join(item_root, "run-001-developer"), exist_ok=True)
             os.makedirs(os.path.join(item_root, "run-002-reviewer"), exist_ok=True)
 
             with patch.object(handler, "LAUNCH_ARTIFACT_DIR", temp_dir):
-                path = handler.build_launch_brief_path(item, "developer")
+                with patch.object(handler, "REPO", "owner/repo"):
+                    path = handler.build_launch_brief_path(item, "developer")
 
-        self.assertEqual(path, f"{temp_dir.replace('\\', '/')}/issue-3/run-003-developer/launch-brief.md")
+        self.assertEqual(path, f"{temp_dir.replace('\\', '/')}/owner-repo/issue-3/run-003-developer/launch-brief.md")
+        self.assertNotIn("\\", path)
+
+    def test_build_launch_brief_path_isolated_by_repository_namespace(self):
+        item = {"type": "issue", "number": 3}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            owner_repo_item_root = os.path.join(temp_dir, "owner-repo", "issue-3")
+            os.makedirs(os.path.join(owner_repo_item_root, "run-001-developer"), exist_ok=True)
+
+            with patch.object(handler, "LAUNCH_ARTIFACT_DIR", temp_dir):
+                with patch.object(handler, "REPO", "other/repo"):
+                    path = handler.build_launch_brief_path(item, "developer")
+
+        self.assertEqual(path, f"{temp_dir.replace('\\', '/')}/other-repo/issue-3/run-001-developer/launch-brief.md")
         self.assertNotIn("\\", path)
 
     def test_build_launch_brief_markdown_includes_required_sections_and_dynamic_references(self):
@@ -2338,9 +2360,9 @@ class HandlerObservabilityTests(unittest.TestCase):
         }
 
         normalized_circus_root = handler.normalize_path_for_display(handler.get_circus_runtime_root())
-        architecture_handoff_path = f"{normalized_circus_root}/Watchtower/runs/issue-3/shared/architecture-handoff.md"
-        running_notes_path = f"{normalized_circus_root}/Watchtower/runs/issue-3/shared/running-notes.md"
-        decision_log_path = f"{normalized_circus_root}/Watchtower/runs/issue-3/shared/decision-log.md"
+        architecture_handoff_path = f"{normalized_circus_root}/Watchtower/runs/owner-repo/issue-3/shared/architecture-handoff.md"
+        running_notes_path = f"{normalized_circus_root}/Watchtower/runs/owner-repo/issue-3/shared/running-notes.md"
+        decision_log_path = f"{normalized_circus_root}/Watchtower/runs/owner-repo/issue-3/shared/decision-log.md"
 
         with patch.object(handler, "REPO", "owner/repo"):
             markdown = handler.build_launch_brief_markdown(
@@ -2992,7 +3014,7 @@ class HandlerObservabilityTests(unittest.TestCase):
             with open(brief_path, "r", encoding="utf-8") as generated_file:
                 content = generated_file.read()
 
-            shared_dir = os.path.join(temp_dir, "issue-3", "shared")
+            shared_dir = os.path.join(temp_dir, "owner-repo", "issue-3", "shared")
             self.assertTrue(os.path.isdir(shared_dir))
 
             architecture_handoff_path = os.path.join(shared_dir, "architecture-handoff.md")
@@ -3035,15 +3057,15 @@ class HandlerObservabilityTests(unittest.TestCase):
         )
         self.assertIn("## Shared Context", content)
         self.assertIn(
-            f"- architecture handoff: `{temp_dir.replace('\\', '/')}/issue-3/shared/architecture-handoff.md`",
+            f"- architecture handoff: `{temp_dir.replace('\\', '/')}/owner-repo/issue-3/shared/architecture-handoff.md`",
             content,
         )
         self.assertIn(
-            f"- running notes: `{temp_dir.replace('\\', '/')}/issue-3/shared/running-notes.md`",
+            f"- running notes: `{temp_dir.replace('\\', '/')}/owner-repo/issue-3/shared/running-notes.md`",
             content,
         )
         self.assertIn(
-            f"- decision log: `{temp_dir.replace('\\', '/')}/issue-3/shared/decision-log.md`",
+            f"- decision log: `{temp_dir.replace('\\', '/')}/owner-repo/issue-3/shared/decision-log.md`",
             content,
         )
         self.assertIn("- generated-by: `Handler`", content)
