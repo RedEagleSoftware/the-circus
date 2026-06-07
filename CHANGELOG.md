@@ -20,8 +20,14 @@ This changelog tracks notable completed work by GitHub issue.
 
 ### Issue #7 - Add Systems Architect workflow routing
 
-- Added support documentation for `state:ready-for-system-architecture` to describe strategic Systems Architect routing behavior.
+- Added support documentation for `state:ready-for-systems-architecture` to describe strategic Systems Architect routing behavior.
 - Documented that successful Systems Architect runs transition directly to `state:ready-for-human-review` without auto-routing to development or auto-finalizing PR workflows.
+
+### Issue #9 - Create canonical workflow state definitions
+
+- Added a shared workflow state constants module and aligned Handler workflow/dispatch logic to consume canonical state definitions.
+- Standardized Systems Architect state routing to `state:ready-for-systems-architecture` and removed remaining singular label usage from active code/tests/docs.
+
 ### Issue #5 - Add Systems Architect role support
 
 - Added TheFarm role index and a contributor-facing role selection guide to clarify when to use Systems Architect, Feature Architect, Reviewer, and Architect Review.
