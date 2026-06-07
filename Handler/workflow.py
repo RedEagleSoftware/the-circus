@@ -2,11 +2,17 @@ import os
 
 
 LABEL_MAP = {
+    "state:ready-for-systems-architecture": {
+        "agent": "codex",
+        "mode": "systems-architect",
+        "model": "gpt-5.5",
+        "effort": "High",
+    },
     "state:ready-for-architecture": {
         "agent": "codex",
         "mode": "architect",
-        "model": "gpt-5.3-codex",
-        "effort": "Medium",
+        "model": "gpt-5.5",
+        "effort": "High",
     },
     "state:ready-for-dev": {
         "agent": "junie",
@@ -23,14 +29,14 @@ LABEL_MAP = {
     "state:ready-for-review": {
         "agent": "codex",
         "mode": "reviewer",
-        "model": "gpt-5.3-codex",
-        "effort": "Medium",
+        "model": "gpt-5.5",
+        "effort": "High",
     },
     "state:ready-for-architect-review": {
         "agent": "codex",
         "mode": "architect-review",
-        "model": "gpt-5.3-codex",
-        "effort": "Medium",
+        "model": "gpt-5.5",
+        "effort": "High",
     },
 }
 
