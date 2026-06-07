@@ -9,6 +9,7 @@ import Handler.handler as handler
 import Handler.github_client as github_client
 import Handler.target_instructions as target_instructions
 import Handler.workflow_labels as workflow_labels
+import Handler.workflow_states as workflow_states
 
 
 class HandlerObservabilityTests(unittest.TestCase):
@@ -1188,6 +1189,26 @@ class HandlerObservabilityTests(unittest.TestCase):
 
     def test_required_workflow_labels_include_ready_for_system_architecture(self):
         self.assertIn("state:ready-for-systems-architecture", workflow_labels.REQUIRED_WORKFLOW_LABELS)
+
+    def test_label_map_is_derived_from_workflow_state_dispatch_definitions(self):
+        expected = {
+            label: state["dispatch"]
+            for label, state in workflow_states.WORKFLOW_STATES.items()
+            if state.get("dispatch")
+        }
+
+        self.assertEqual(handler.LABEL_MAP, expected)
+
+    def test_required_workflow_labels_are_derived_from_workflow_states(self):
+        expected = {
+            label: {
+                "description": state["description"],
+                "color": state["color"],
+            }
+            for label, state in workflow_states.WORKFLOW_STATES.items()
+        }
+
+        self.assertEqual(workflow_labels.REQUIRED_WORKFLOW_LABELS, expected)
 
     def test_resolve_dispatch_config_routes_ready_for_system_architecture_to_codex_systems_architect(self):
         item = {"type": "issue", "number": 71, "labels": []}
