@@ -1486,7 +1486,10 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         self.assertEqual(mock_subprocess_run.call_args.kwargs["cwd"], "C:/target/repo")
         self.assertTrue(mock_subprocess_run.call_args.kwargs["text"])
-        mock_advance_transition.assert_called_once_with(item)
+        mock_advance_transition.assert_called_once_with(
+            item,
+            from_state_label="state:ready-for-systems-architecture",
+        )
         mock_finalize.assert_not_called()
 
     def test_launch_agent_codex_systems_architect_changes_requested_uses_strategy_task_handoff(self):
@@ -1536,7 +1539,10 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         self.assertEqual(mock_subprocess_run.call_args.kwargs["cwd"], "C:/target/repo")
         self.assertTrue(mock_subprocess_run.call_args.kwargs["text"])
-        mock_advance_transition.assert_called_once_with(item)
+        mock_advance_transition.assert_called_once_with(
+            item,
+            from_state_label="state:systems-architecture-changes-requested",
+        )
 
     def test_launch_agent_codex_systems_architect_changes_requested_advances_to_human_review(self):
         item = {
@@ -1572,7 +1578,10 @@ class HandlerObservabilityTests(unittest.TestCase):
                             )
 
         self.assertTrue(launched)
-        mock_advance_transition.assert_called_once_with(item)
+        mock_advance_transition.assert_called_once_with(
+            item,
+            from_state_label="state:systems-architecture-changes-requested",
+        )
 
     def test_launch_agent_codex_architect_non_zero_exit_does_not_advance_workflow_labels(self):
         item = {
@@ -1678,6 +1687,48 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertTrue(any("Systems Architect workflow completed successfully for issue #74." in line for line in printed_lines))
         self.assertTrue(any("Removing label: state:agent-in-progress" in line for line in printed_lines))
         self.assertTrue(any("Removing label: state:ready-for-systems-architecture" in line for line in printed_lines))
+        self.assertTrue(any("Adding label: state:ready-for-human-review" in line for line in printed_lines))
+
+    def test_advance_systems_architect_workflow_on_success_removes_changes_requested_state_label(self):
+        item = {
+            "type": "issue",
+            "number": 75,
+            "title": "Systems architecture revisions complete",
+        }
+
+        with patch.object(handler, "REPO", "owner/repo"):
+            with patch.object(handler, "run_command", return_value="") as mock_run_command:
+                with patch("builtins.print") as mock_print:
+                    transitioned = handler.advance_systems_architect_workflow_on_success(
+                        item,
+                        from_state_label="state:systems-architecture-changes-requested",
+                    )
+
+        self.assertTrue(transitioned)
+        self.assertEqual(
+            mock_run_command.call_args_list,
+            [
+                unittest.mock.call(
+                    'gh issue edit 75 --repo owner/repo --remove-label "state:agent-in-progress"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 75 --repo owner/repo --remove-label "state:systems-architecture-changes-requested"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 75 --repo owner/repo --add-label "state:ready-for-human-review"'
+                ),
+            ],
+        )
+
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("Systems Architect workflow completed successfully for issue #75." in line for line in printed_lines))
+        self.assertTrue(any("Removing label: state:agent-in-progress" in line for line in printed_lines))
+        self.assertTrue(
+            any(
+                "Removing label: state:systems-architecture-changes-requested" in line
+                for line in printed_lines
+            )
+        )
         self.assertTrue(any("Adding label: state:ready-for-human-review" in line for line in printed_lines))
 
     def test_advance_developer_workflow_on_success_transitions_labels(self):

@@ -241,13 +241,14 @@ def advance_architect_workflow_on_success(item):
     )
 
 
-def advance_systems_architect_workflow_on_success(item):
+def advance_systems_architect_workflow_on_success(item, from_state_label=SYSTEMS_ARCHITECTURE_LABEL):
     return workflow.advance_systems_architect_workflow_on_success(
         item,
         remove_label_fn=remove_label,
         add_label_fn=add_label,
         update_run_status_fn=update_run_status,
         log=print,
+        from_state_label=from_state_label,
     )
 
 
@@ -1387,7 +1388,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 write_run_result(item)
                 return advanced
             elif mode == "systems-architect" and state_label in systems_architect_state_labels:
-                advanced = advance_systems_architect_workflow_on_success(item)
+                advanced = advance_systems_architect_workflow_on_success(item, from_state_label=state_label)
                 update_run_status(
                     item,
                     completed_at=utc_timestamp_now(),
