@@ -10,46 +10,14 @@ from Handler.workflow_states import (
     LOCK_LABEL,
     REVIEW_LABEL,
     SYSTEMS_ARCHITECTURE_LABEL,
+    WORKFLOW_STATES,
 )
 
 
 LABEL_MAP = {
-    SYSTEMS_ARCHITECTURE_LABEL: {
-        "agent": "codex",
-        "mode": "systems-architect",
-        "model": "gpt-5.5",
-        "effort": "High",
-    },
-    ARCHITECTURE_LABEL: {
-        "agent": "codex",
-        "mode": "architect",
-        "model": "gpt-5.5",
-        "effort": "High",
-    },
-    DEVELOPER_LABEL: {
-        "agent": "junie",
-        "mode": "developer",
-        "model": "gpt-5.3-codex",
-        "effort": "Medium",
-    },
-    CHANGES_REQUESTED_LABEL: {
-        "agent": "junie",
-        "mode": "developer",
-        "model": "gpt-5.3-codex",
-        "effort": "Medium",
-    },
-    REVIEW_LABEL: {
-        "agent": "codex",
-        "mode": "reviewer",
-        "model": "gpt-5.5",
-        "effort": "High",
-    },
-    ARCHITECT_REVIEW_LABEL: {
-        "agent": "codex",
-        "mode": "architect-review",
-        "model": "gpt-5.5",
-        "effort": "High",
-    },
+    label: state["dispatch"]
+    for label, state in WORKFLOW_STATES.items()
+    if state.get("dispatch")
 }
 
 SUPPORTED_WORKFLOW_LABELS = tuple(LABEL_MAP.keys())
@@ -59,8 +27,8 @@ REVIEW_OUTCOME_MARKERS = {
     "Outcome: CHANGES_REQUESTED": "CHANGES_REQUESTED",
     "Outcome: BLOCKED": "BLOCKED",
 }
-TERMINAL_WORKFLOW_STATES = {BLOCKED_LABEL, HUMAN_REVIEW_LABEL}
-HUMAN_OWNED_WORKFLOW_STATES = {BLOCKED_LABEL, HUMAN_REVIEW_LABEL}
+TERMINAL_WORKFLOW_STATES = {label for label, state in WORKFLOW_STATES.items() if state.get("terminal")}
+HUMAN_OWNED_WORKFLOW_STATES = {label for label, state in WORKFLOW_STATES.items() if state.get("human_owned")}
 
 
 def get_primary_state_labels(labels):

@@ -20,7 +20,7 @@ This changelog tracks notable completed work by GitHub issue.
 
 ### Issue #7 - Add Systems Architect workflow routing
 
-- Added support documentation for `state:ready-for-system-architecture` to describe strategic Systems Architect routing behavior.
+- Added support documentation for `state:ready-for-systems-architecture` to describe strategic Systems Architect routing behavior.
 - Documented that successful Systems Architect runs transition directly to `state:ready-for-human-review` without auto-routing to development or auto-finalizing PR workflows.
 
 ### Issue #9 - Create canonical workflow state definitions
