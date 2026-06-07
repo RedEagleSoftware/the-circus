@@ -191,17 +191,18 @@ class HandlerObservabilityTests(unittest.TestCase):
         }
 
         with patch.object(handler, "lock_item", return_value=True):
-            with patch.object(
-                handler,
-                "prepare_developer_branch",
-                return_value={"ok": True, "branch": "circus/issue-22-fail-during-setup"},
-            ):
-                with patch.object(handler, "write_launch_brief", side_effect=OSError("disk full")):
-                    with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
-                        with patch.object(handler, "add_comment") as mock_add_comment:
-                            with patch.object(handler, "launch_agent") as mock_launch_agent:
-                                with patch("builtins.print") as mock_print:
-                                    dispatched = handler.process_one_item([item])
+            with patch.object(handler, "get_current_item", return_value=(item, True)):
+                with patch.object(
+                    handler,
+                    "prepare_developer_branch",
+                    return_value={"ok": True, "branch": "circus/issue-22-fail-during-setup"},
+                ):
+                    with patch.object(handler, "write_launch_brief", side_effect=OSError("disk full")):
+                        with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                            with patch.object(handler, "add_comment") as mock_add_comment:
+                                with patch.object(handler, "launch_agent") as mock_launch_agent:
+                                    with patch("builtins.print") as mock_print:
+                                        dispatched = handler.process_one_item([item])
 
         self.assertEqual(dispatched, "prelaunch-failed")
         mock_unlock.assert_called_once_with(item)
@@ -224,16 +225,17 @@ class HandlerObservabilityTests(unittest.TestCase):
         }
 
         with patch.object(handler, "lock_item", return_value=True):
-            with patch.object(
-                handler,
-                "prepare_developer_branch",
-                return_value={"ok": True, "branch": "circus/issue-23-successful-dispatch"},
-            ):
-                with patch.object(handler, "write_launch_brief", return_value="Watchtower/runs/issue-23/run-001-developer/launch-brief.md"):
-                    with patch.object(handler, "launch_agent", return_value=True):
-                        with patch.object(handler, "unlock_item") as mock_unlock:
-                            with patch.object(handler, "add_comment") as mock_add_comment:
-                                dispatched = handler.process_one_item([item])
+            with patch.object(handler, "get_current_item", return_value=(item, True)):
+                with patch.object(
+                    handler,
+                    "prepare_developer_branch",
+                    return_value={"ok": True, "branch": "circus/issue-23-successful-dispatch"},
+                ):
+                    with patch.object(handler, "write_launch_brief", return_value="Watchtower/runs/issue-23/run-001-developer/launch-brief.md"):
+                        with patch.object(handler, "launch_agent", return_value=True):
+                            with patch.object(handler, "unlock_item") as mock_unlock:
+                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                    dispatched = handler.process_one_item([item])
 
         self.assertEqual(dispatched, "success")
         mock_unlock.assert_not_called()
@@ -250,17 +252,18 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
             with patch.object(handler, "lock_item", return_value=True):
-                with patch.object(
-                    handler,
-                    "prepare_developer_branch",
-                    return_value={"ok": True, "branch": "circus/issue-31-junie-command-unavailable"},
-                ):
-                    with patch.object(handler, "write_launch_brief", return_value=launch_brief_path):
-                        with patch.object(handler.subprocess, "run", side_effect=FileNotFoundError("junie not found")):
-                            with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
-                                with patch.object(handler, "add_comment") as mock_add_comment:
-                                    with patch("builtins.print") as mock_print:
-                                        dispatched = handler.process_one_item([item])
+                with patch.object(handler, "get_current_item", return_value=(item, True)):
+                    with patch.object(
+                        handler,
+                        "prepare_developer_branch",
+                        return_value={"ok": True, "branch": "circus/issue-31-junie-command-unavailable"},
+                    ):
+                        with patch.object(handler, "write_launch_brief", return_value=launch_brief_path):
+                            with patch.object(handler.subprocess, "run", side_effect=FileNotFoundError("junie not found")):
+                                with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                                    with patch.object(handler, "add_comment") as mock_add_comment:
+                                        with patch("builtins.print") as mock_print:
+                                            dispatched = handler.process_one_item([item])
 
         self.assertEqual(dispatched, "prelaunch-failed")
         mock_unlock.assert_called_once_with(item)
@@ -281,14 +284,15 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
             with patch.object(handler, "lock_item", return_value=True):
-                with patch.object(handler, "prepare_architect_execution_branch", return_value={"ok": True, "branch": "main"}):
-                    with patch.object(handler, "write_launch_brief", return_value=launch_brief_path):
-                        with patch.object(handler.subprocess, "run", side_effect=FileNotFoundError("codex not found")):
-                            with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
-                                with patch.object(handler, "add_comment") as mock_add_comment:
-                                    with patch.object(handler, "advance_architect_workflow_on_success") as mock_advance_transition:
-                                        with patch("builtins.print") as mock_print:
-                                            dispatched = handler.process_one_item([item])
+                with patch.object(handler, "get_current_item", return_value=(item, True)):
+                    with patch.object(handler, "prepare_architect_execution_branch", return_value={"ok": True, "branch": "main"}):
+                        with patch.object(handler, "write_launch_brief", return_value=launch_brief_path):
+                            with patch.object(handler.subprocess, "run", side_effect=FileNotFoundError("codex not found")):
+                                with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                                    with patch.object(handler, "add_comment") as mock_add_comment:
+                                        with patch.object(handler, "advance_architect_workflow_on_success") as mock_advance_transition:
+                                            with patch("builtins.print") as mock_print:
+                                                dispatched = handler.process_one_item([item])
 
         self.assertEqual(dispatched, "prelaunch-failed")
         mock_unlock.assert_called_once_with(item)
@@ -432,19 +436,20 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         with patch.object(handler, "resolve_dispatch_config", return_value=dispatch_resolution):
             with patch.object(handler, "lock_item", return_value=True) as mock_lock:
-                with patch.object(handler, "prepare_developer_branch", return_value={"ok": True, "branch": "circus/issue-6-branch"}):
-                    with patch.object(handler, "resolve_role_prompt_path", return_value="TheFarm/roles/developer.md"):
-                        with patch.object(handler, "write_launch_brief", return_value="Watchtower/runs/issue-6/run-001-developer/launch-brief.md"):
-                            with patch.object(handler, "launch_agent", return_value=True):
-                                with patch("builtins.print") as mock_print:
-                                    on_dispatch_success = Mock()
-                                    result = handler.process_one_item(
-                                        [capped_item, dispatch_item],
-                                        issue_steps_this_run=issue_steps_this_run,
-                                        max_steps_per_run=2,
-                                        capped_issue_keys=capped_issue_keys,
-                                        on_dispatch_success=on_dispatch_success,
-                                    )
+                with patch.object(handler, "get_current_item", return_value=(dispatch_item, True)):
+                    with patch.object(handler, "prepare_developer_branch", return_value={"ok": True, "branch": "circus/issue-6-branch"}):
+                        with patch.object(handler, "resolve_role_prompt_path", return_value="TheFarm/roles/developer.md"):
+                            with patch.object(handler, "write_launch_brief", return_value="Watchtower/runs/issue-6/run-001-developer/launch-brief.md"):
+                                with patch.object(handler, "launch_agent", return_value=True):
+                                    with patch("builtins.print") as mock_print:
+                                        on_dispatch_success = Mock()
+                                        result = handler.process_one_item(
+                                            [capped_item, dispatch_item],
+                                            issue_steps_this_run=issue_steps_this_run,
+                                            max_steps_per_run=2,
+                                            capped_issue_keys=capped_issue_keys,
+                                            on_dispatch_success=on_dispatch_success,
+                                        )
 
         self.assertEqual(result, "success")
         self.assertIn("issue-5", capped_issue_keys)
@@ -2674,20 +2679,21 @@ class HandlerObservabilityTests(unittest.TestCase):
         }
 
         with patch.object(handler, "lock_item", return_value=True):
-            with patch.object(
-                handler,
-                "prepare_developer_branch",
-                return_value={
-                    "ok": False,
-                    "reason": "dirty-working-tree",
-                    "branch": "circus/issue-41-developer-branch-blocked-by-dirty-tree",
-                    "current_branch": "main",
-                },
-            ):
-                with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
-                    with patch.object(handler, "add_comment") as mock_add_comment:
-                        with patch.object(handler, "write_launch_brief") as mock_write_launch_brief:
-                            dispatched = handler.process_one_item([item])
+            with patch.object(handler, "get_current_item", return_value=(item, True)):
+                with patch.object(
+                    handler,
+                    "prepare_developer_branch",
+                    return_value={
+                        "ok": False,
+                        "reason": "dirty-working-tree",
+                        "branch": "circus/issue-41-developer-branch-blocked-by-dirty-tree",
+                        "current_branch": "main",
+                    },
+                ):
+                    with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                        with patch.object(handler, "add_comment") as mock_add_comment:
+                            with patch.object(handler, "write_launch_brief") as mock_write_launch_brief:
+                                dispatched = handler.process_one_item([item])
 
         self.assertEqual(dispatched, "prelaunch-failed")
         mock_unlock.assert_called_once_with(item)
@@ -2705,11 +2711,12 @@ class HandlerObservabilityTests(unittest.TestCase):
         }
 
         with patch.object(handler, "lock_item", return_value=True):
-            with patch.object(handler, "prepare_developer_branch") as mock_prepare_branch:
-                with patch.object(handler, "prepare_architect_execution_branch", return_value={"ok": True, "branch": "main"}) as mock_prepare_architect:
-                    with patch.object(handler, "write_launch_brief", return_value="Watchtower/runs/issue-42/run-001-architect/launch-brief.md"):
-                        with patch.object(handler, "launch_agent", return_value=True):
-                            dispatched = handler.process_one_item([item])
+            with patch.object(handler, "get_current_item", return_value=(item, True)):
+                with patch.object(handler, "prepare_developer_branch") as mock_prepare_branch:
+                    with patch.object(handler, "prepare_architect_execution_branch", return_value={"ok": True, "branch": "main"}) as mock_prepare_architect:
+                        with patch.object(handler, "write_launch_brief", return_value="Watchtower/runs/issue-42/run-001-architect/launch-brief.md"):
+                            with patch.object(handler, "launch_agent", return_value=True):
+                                dispatched = handler.process_one_item([item])
 
         self.assertEqual(dispatched, "success")
         mock_prepare_branch.assert_not_called()
@@ -2725,12 +2732,13 @@ class HandlerObservabilityTests(unittest.TestCase):
         }
 
         with patch.object(handler, "lock_item", return_value=True):
-            with patch.object(handler, "find_open_review_pr_for_issue", return_value={"ok": True, "pr": None}):
-                with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
-                    with patch.object(handler, "add_comment") as mock_add_comment:
-                        with patch.object(handler, "write_launch_brief") as mock_write_launch_brief:
-                            with patch.object(handler, "launch_agent") as mock_launch_agent:
-                                dispatched = handler.process_one_item([item])
+            with patch.object(handler, "get_current_item", return_value=(item, True)):
+                with patch.object(handler, "find_open_review_pr_for_issue", return_value={"ok": True, "pr": None}):
+                    with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                        with patch.object(handler, "add_comment") as mock_add_comment:
+                            with patch.object(handler, "write_launch_brief") as mock_write_launch_brief:
+                                with patch.object(handler, "launch_agent") as mock_launch_agent:
+                                    dispatched = handler.process_one_item([item])
 
         self.assertEqual(dispatched, "prelaunch-failed")
         mock_unlock.assert_called_once_with(item)
@@ -2774,6 +2782,38 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_write_launch_brief.assert_not_called()
         mock_launch_agent.assert_not_called()
         mock_add_comment.assert_not_called()
+
+    def test_process_one_item_candidate_without_url_still_revalidates_after_lock(self):
+        item = {
+            "type": "issue",
+            "number": 144,
+            "title": "Candidate without URL became stale",
+            "labels": [{"name": "state:ready-for-review"}],
+        }
+        current_item = {
+            "type": "issue",
+            "number": 144,
+            "title": "Candidate without URL became stale",
+            "labels": [
+                {"name": "state:changes-requested"},
+                {"name": handler.LOCK_LABEL},
+            ],
+        }
+
+        with patch.object(handler, "lock_item", return_value=True):
+            with patch.object(handler, "get_current_item", return_value=(current_item, True)) as mock_get_current_item:
+                with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                    with patch.object(handler, "find_open_review_pr_for_issue") as mock_find_review_pr:
+                        with patch.object(handler, "write_launch_brief") as mock_write_launch_brief:
+                            with patch.object(handler, "launch_agent") as mock_launch_agent:
+                                dispatched = handler.process_one_item([item])
+
+        self.assertEqual(dispatched, "stale-candidate")
+        mock_get_current_item.assert_called_once_with(item)
+        mock_unlock.assert_called_once_with(item)
+        mock_find_review_pr.assert_not_called()
+        mock_write_launch_brief.assert_not_called()
+        mock_launch_agent.assert_not_called()
 
     def test_process_one_item_revalidation_matching_state_continues_reviewer_dispatch(self):
         item = {
@@ -2852,19 +2892,20 @@ class HandlerObservabilityTests(unittest.TestCase):
         }
 
         with patch.object(handler, "lock_item", return_value=True):
-            with patch.object(
-                handler,
-                "prepare_architect_execution_branch",
-                return_value={
-                    "ok": False,
-                    "reason": "dirty-working-tree",
-                    "current_branch": "circus/issue-43-dirty",
-                },
-            ):
-                with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
-                    with patch.object(handler, "add_comment") as mock_add_comment:
-                        with patch.object(handler, "write_launch_brief") as mock_write_launch_brief:
-                            dispatched = handler.process_one_item([item])
+            with patch.object(handler, "get_current_item", return_value=(item, True)):
+                with patch.object(
+                    handler,
+                    "prepare_architect_execution_branch",
+                    return_value={
+                        "ok": False,
+                        "reason": "dirty-working-tree",
+                        "current_branch": "circus/issue-43-dirty",
+                    },
+                ):
+                    with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                        with patch.object(handler, "add_comment") as mock_add_comment:
+                            with patch.object(handler, "write_launch_brief") as mock_write_launch_brief:
+                                dispatched = handler.process_one_item([item])
 
         self.assertEqual(dispatched, "prelaunch-failed")
         mock_unlock.assert_called_once_with(item)
