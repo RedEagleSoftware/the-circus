@@ -156,6 +156,10 @@ def get_candidates(item_type, list_cmd):
     return github_client.get_candidates(item_type, list_cmd, repo=REPO, run_command_fn=run_command)
 
 
+def get_current_item(item):
+    return github_client.get_item(item["type"], item["number"], repo=REPO, run_command_fn=run_command)
+
+
 def get_labeled_items():
     issues, issues_ok = get_candidates("issue", "issue list")
     prs, prs_ok = get_candidates("pr", "pr list")
@@ -399,6 +403,60 @@ def add_prelaunch_setup_failure_comment(item, error, lock_released):
         "Handler failed before launch brief generation completed "
         f"({error}). The lock label `{LOCK_LABEL}` was {lock_result}."
     )
+
+
+def revalidate_candidate_after_lock(item, expected_state_label):
+    current_item, current_item_ok = get_current_item(item)
+    if not current_item_ok or not current_item:
+        print(
+            f"[Dispatch] Failed to re-fetch {item['type']} #{item['number']} after lock acquisition; "
+            "stopping pre-launch dispatch."
+        )
+        print(f"[Dispatch] Releasing lock for {item['type']} #{item['number']} after revalidation fetch failure...")
+        lock_released = unlock_item(item)
+        if lock_released:
+            print(f"[Dispatch] Lock cleanup succeeded for {item['type']} #{item['number']}.")
+        else:
+            print(f"[Dispatch] Lock cleanup failed for {item['type']} #{item['number']}; manual cleanup may be required.")
+
+        lock_result = "released" if lock_released else "could not be released"
+        item["comment"] = (
+            f"Handler could not re-fetch {item['type']} #{item['number']} after acquiring `{LOCK_LABEL}`. "
+            f"The lock label `{LOCK_LABEL}` was {lock_result}. Dispatch was stopped before launch."
+        )
+        add_comment(item)
+        return None, "prelaunch-failed"
+
+    current_labels = [label["name"] for label in current_item.get("labels", [])]
+    current_primary_states = get_primary_state_labels(current_labels)
+    still_matches = len(current_primary_states) == 1 and current_primary_states[0] == expected_state_label
+    if still_matches:
+        item.update(current_item)
+        return item, None
+
+    print(
+        f"[Dispatch] Candidate {item['type']} #{item['number']} changed state after lock acquisition; "
+        f"expected `{expected_state_label}`, now {repr(current_primary_states)}."
+    )
+    print(f"[Dispatch] Releasing lock for stale candidate {item['type']} #{item['number']}...")
+    lock_released = unlock_item(item)
+    if lock_released:
+        print(f"[Dispatch] Lock cleanup succeeded for stale candidate {item['type']} #{item['number']}.")
+    else:
+        print(
+            f"[Dispatch] Lock cleanup failed for stale candidate {item['type']} #{item['number']}; "
+            "manual cleanup may be required."
+        )
+
+    if lock_released:
+        return None, "stale-candidate"
+
+    item["comment"] = (
+        f"Handler detected stale dispatch state for {item['type']} #{item['number']}, but lock cleanup failed for "
+        f"`{LOCK_LABEL}`. Please remove the lock label manually before re-dispatching."
+    )
+    add_comment(item)
+    return None, "prelaunch-failed"
 
 
 def resolve_dispatch_config(item, labels):
@@ -1432,6 +1490,11 @@ def process_one_item(
 
         print(f"[Dispatch] Lock acquired for {item['type']} #{item['number']}.")
 
+        current_item, revalidation_result = revalidate_candidate_after_lock(item, state_label)
+        if revalidation_result:
+            return revalidation_result
+        item = current_item
+
         item.pop("working_branch", None)
         item.pop("execution_branch", None)
         item.pop("review_pr", None)
@@ -1808,6 +1871,9 @@ def poll():
         )
         if dispatch_result == "success":
             print("[Handler] Re-polling for next eligible workflow step.")
+            continue
+        if dispatch_result == "stale-candidate":
+            print("[Handler] Re-polling: candidate changed workflow state after lock acquisition.")
             continue
 
         if dispatch_result == "lock-failed":
