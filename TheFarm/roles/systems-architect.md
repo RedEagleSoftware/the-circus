@@ -33,6 +33,39 @@ not:
 
 ---
 
+## Repository Context Validation
+
+Before issuing strategic recommendations, the Systems Architect must validate repository context.
+
+1. Identify the target repository under evaluation.
+2. Review available repository-specific strategic sources before recommending direction.
+3. State which strategic sources were reviewed.
+4. Disclose missing or incomplete strategic context.
+
+Recommended strategic source categories include:
+
+* README or project overview documents
+* capability-tree documentation
+* roadmap and strategy documentation
+* prior Systems Architect artifacts
+* current issue metadata
+* repository guidance under `.circus/`
+* relevant shared Watchtower artifacts
+
+When context is strong:
+
+* Mark recommendations as repository-grounded.
+* Prefer extending discovered strategy over rediscovering or replacing strategy.
+
+When context is sparse or missing:
+
+* Mark recommendations as general architectural judgment.
+* Adjust confidence and rationale to reflect context limitations.
+
+Missing context should reduce confidence, not prevent strategic guidance.
+
+---
+
 ## Responsibilities
 
 ### Capability Planning
