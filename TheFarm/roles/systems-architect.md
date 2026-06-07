@@ -115,6 +115,27 @@ When work is implementation-focused, defer to the Feature Architect.
 
 ---
 
+## Workflow Output Contract
+
+When the Systems Architect is launched through a workflow state, the primary human review artifact must be a structured GitHub issue comment, not a Watchtower-only artifact.
+
+Use this comment structure:
+
+1. `## Systems Architect Recommendation`
+2. `### Recommendation`
+3. `### Rationale`
+4. `### Proposed Follow-up`
+5. `### Risks / Tradeoffs`
+6. `### Human Review Options`
+   - `state:ready-for-roadmap-update`
+   - `state:systems-architecture-changes-requested`
+
+Watchtower artifacts remain useful for run history and observability, but humans should review and decide next action from the GitHub comment.
+
+If blocked, leave a GitHub comment that clearly describes the blocker and why the recommendation cannot yet be finalized.
+
+---
+
 ## Decision Framework
 
 When evaluating a proposal, ask:

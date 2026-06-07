@@ -103,11 +103,14 @@ over hidden inference and automation.
 - `state:ready-for-dev`
 - `state:review-requested`
 - `state:ready-for-architect-review`
+- `state:ready-for-systems-architecture`
+- `state:systems-architecture-changes-requested`
+- `state:ready-for-roadmap-update`
 - `state:ready-for-human-review`
 - `state:blocked`
 - `state:agent-in-progress`
 
-Systems Architect is a manual strategic planning role outside the normal v1 issue state flow.
+Systems Architect remains a strategic planning role, but now uses explicit GitHub workflow states and human-selected follow-up labels.
 
 ---
 

@@ -16,7 +16,10 @@ from Handler import review_flow
 from Handler import target_instructions
 from Handler import watchtower
 from Handler import workflow
-from Handler.workflow_states import SYSTEMS_ARCHITECTURE_LABEL
+from Handler.workflow_states import (
+    SYSTEMS_ARCHITECTURE_CHANGES_REQUESTED_LABEL,
+    SYSTEMS_ARCHITECTURE_LABEL,
+)
 
 load_dotenv()
 
@@ -238,13 +241,14 @@ def advance_architect_workflow_on_success(item):
     )
 
 
-def advance_systems_architect_workflow_on_success(item):
+def advance_systems_architect_workflow_on_success(item, from_state_label=SYSTEMS_ARCHITECTURE_LABEL):
     return workflow.advance_systems_architect_workflow_on_success(
         item,
         remove_label_fn=remove_label,
         add_label_fn=add_label,
         update_run_status_fn=update_run_status,
         log=print,
+        from_state_label=from_state_label,
     )
 
 
@@ -947,6 +951,11 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         launch_brief_path=normalize_path_for_display(launch_brief_path),
     )
 
+    systems_architect_state_labels = {
+        SYSTEMS_ARCHITECTURE_LABEL,
+        SYSTEMS_ARCHITECTURE_CHANGES_REQUESTED_LABEL,
+    }
+
     if agent == "junie":
         absolute_launch_brief_path = os.path.abspath(launch_brief_path)
         junie_task_text = build_junie_task_text(absolute_launch_brief_path)
@@ -1304,7 +1313,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             return True
 
         absolute_launch_brief_path = os.path.abspath(launch_brief_path)
-        if mode == "systems-architect" and state_label == SYSTEMS_ARCHITECTURE_LABEL:
+        if mode == "systems-architect" and state_label in systems_architect_state_labels:
             codex_task_text = build_codex_systems_architect_task_text(absolute_launch_brief_path)
         else:
             codex_task_text = build_codex_architect_task_text(absolute_launch_brief_path)
@@ -1378,8 +1387,8 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 )
                 write_run_result(item)
                 return advanced
-            elif mode == "systems-architect" and state_label == SYSTEMS_ARCHITECTURE_LABEL:
-                advanced = advance_systems_architect_workflow_on_success(item)
+            elif mode == "systems-architect" and state_label in systems_architect_state_labels:
+                advanced = advance_systems_architect_workflow_on_success(item, from_state_label=state_label)
                 update_run_status(
                     item,
                     completed_at=utc_timestamp_now(),
