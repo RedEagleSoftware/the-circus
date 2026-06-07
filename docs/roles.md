@@ -11,6 +11,10 @@ Use the [Systems Architect](../TheFarm/roles/systems-architect.md) for:
 - cross-issue sequencing and dependency planning
 - identifying cross-cutting concerns across workflows and repositories
 
+Systems Architect strategic recommendations should identify the repository under review and cite or name discovered strategic context where available (for example roadmap, capability-tree, strategy, or prior Systems Architect artifacts).
+
+When repository strategy context is incomplete, recommendations should explicitly note the gap and distinguish repository-grounded direction from general architectural judgment.
+
 The Systems Architect focuses on what the system should become over time.
 
 When dispatched via workflow labels, Systems Architect recommendations should be published as a structured GitHub issue comment and handed to humans for decision on follow-up state.

@@ -13,6 +13,11 @@ This changelog tracks notable completed work by GitHub issue.
 - [concise user-visible or workflow-significant change]
 - [optional second concise change]
 
+### Issue #17 - Require repository-context validation for Systems Architect recommendations
+
+- Added Systems Architect repository-context validation guidance so strategic recommendations identify reviewed repository strategy and disclose missing context.
+- Updated role documentation to distinguish repository-grounded strategic recommendations from general architectural judgment.
+
 ### Issue #1 - Add target repository initialization command (python main.py --init)
 
 - Added the initial orchestrator implementation and foundational role/doctrine structure.
