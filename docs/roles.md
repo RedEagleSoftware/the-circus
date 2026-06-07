@@ -13,6 +13,8 @@ Use the [Systems Architect](../TheFarm/roles/systems-architect.md) for:
 
 The Systems Architect focuses on what the system should become over time.
 
+When dispatched via workflow labels, Systems Architect recommendations should be published as a structured GitHub issue comment and handed to humans for decision on follow-up state.
+
 ## Feature Architect
 
 Use the [Architect Agent](../TheFarm/roles/architect.md) as the Feature Architect for:

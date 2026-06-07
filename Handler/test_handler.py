@@ -1129,7 +1129,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("Produce or update the architecture handoff artifact", task_text)
         self.assertIn("leave a GitHub comment summarizing the handoff or blocker", task_text)
 
-    def test_build_codex_systems_architect_task_text_mentions_strategy_and_github_comment(self):
+    def test_build_codex_systems_architect_task_text_mentions_structured_recommendation_contract(self):
         task_text = handler.build_codex_systems_architect_task_text(
             "C:/abs/Watchtower/runs/issue-70/run-001-systems-architect/launch-brief.md"
         )
@@ -1139,8 +1139,16 @@ class HandlerObservabilityTests(unittest.TestCase):
             task_text,
         )
         self.assertIn("execute the systems architect workflow", task_text)
-        self.assertIn("Produce a durable systems strategy recommendation artifact", task_text)
-        self.assertIn("leave a GitHub comment summarizing strategy decisions or blockers", task_text)
+        self.assertIn("structured GitHub issue comment as the primary human review artifact", task_text)
+        self.assertIn("## Systems Architect Recommendation", task_text)
+        self.assertIn("### Recommendation", task_text)
+        self.assertIn("### Rationale", task_text)
+        self.assertIn("### Proposed Follow-up", task_text)
+        self.assertIn("### Risks / Tradeoffs", task_text)
+        self.assertIn("state:ready-for-roadmap-update", task_text)
+        self.assertIn("state:systems-architecture-changes-requested", task_text)
+        self.assertIn("Watchtower artifacts for run history and observability", task_text)
+        self.assertIn("If blocked, leave a GitHub comment", task_text)
         self.assertNotIn("architecture handoff", task_text)
 
     def test_is_codex_sandbox_bypass_enabled_defaults_to_false_when_missing(self):
@@ -1225,6 +1233,18 @@ class HandlerObservabilityTests(unittest.TestCase):
         )
 
         self.assertEqual(state_label, "state:ready-for-systems-architecture")
+        self.assertEqual(dispatch_config["agent"], "codex")
+        self.assertEqual(dispatch_config["mode"], "systems-architect")
+
+    def test_resolve_dispatch_config_routes_systems_architecture_changes_requested_to_codex_systems_architect(self):
+        item = {"type": "issue", "number": 72, "labels": []}
+
+        state_label, dispatch_config = handler.resolve_dispatch_config(
+            item,
+            ["state:systems-architecture-changes-requested"],
+        )
+
+        self.assertEqual(state_label, "state:systems-architecture-changes-requested")
         self.assertEqual(dispatch_config["agent"], "codex")
         self.assertEqual(dispatch_config["mode"], "systems-architect")
 
@@ -1461,7 +1481,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(command[4:6], ["--cd", "C:/target/repo"])
         self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", command[6])
         self.assertIn("execute the systems architect workflow", command[6])
-        self.assertIn("Produce a durable systems strategy recommendation artifact", command[6])
+        self.assertIn("structured GitHub issue comment as the primary human review artifact", command[6])
         self.assertNotIn("architecture handoff", command[6])
 
         self.assertEqual(mock_subprocess_run.call_args.kwargs["cwd"], "C:/target/repo")

@@ -1,4 +1,6 @@
 SYSTEMS_ARCHITECTURE_LABEL = "state:ready-for-systems-architecture"
+SYSTEMS_ARCHITECTURE_CHANGES_REQUESTED_LABEL = "state:systems-architecture-changes-requested"
+ROADMAP_UPDATE_LABEL = "state:ready-for-roadmap-update"
 ARCHITECTURE_LABEL = "state:ready-for-architecture"
 DEVELOPER_LABEL = "state:ready-for-dev"
 CHANGES_REQUESTED_LABEL = "state:changes-requested"
@@ -18,6 +20,22 @@ WORKFLOW_STATES = {
             "model": "gpt-5.5",
             "effort": "High",
         },
+    },
+    SYSTEMS_ARCHITECTURE_CHANGES_REQUESTED_LABEL: {
+        "description": "Systems architecture changes requested; route back to systems architect.",
+        "color": "FBCA04",
+        "dispatch": {
+            "agent": "codex",
+            "mode": "systems-architect",
+            "model": "gpt-5.5",
+            "effort": "High",
+        },
+    },
+    ROADMAP_UPDATE_LABEL: {
+        "description": "Ready for human roadmap/capability-tree update.",
+        "color": "FBCA04",
+        "human_owned": True,
+        "terminal": True,
     },
     ARCHITECTURE_LABEL: {
         "description": "Ready for architecture/specification by architect agent.",
