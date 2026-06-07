@@ -63,6 +63,24 @@ def get_candidates(item_type, list_cmd, repo, run_command_fn):
     return items, True
 
 
+def get_item(item_type, number, repo, run_command_fn):
+    cmd = f"gh {item_type} view {number} --repo {repo} --json number,labels,title,url"
+    payload = run_command_fn(cmd)
+    if payload is None:
+        return None, False
+
+    if not payload:
+        return None, False
+
+    try:
+        item = json.loads(payload)
+    except json.JSONDecodeError:
+        return None, False
+
+    item["type"] = item_type
+    return item, True
+
+
 def lock_item(item, repo, lock_label, run_command_fn):
     cmd = f"gh {item['type']} edit {item['number']} --repo {repo} --add-label \"{lock_label}\""
     return run_command_fn(cmd) is not None

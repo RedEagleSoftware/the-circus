@@ -7,6 +7,10 @@ REQUIRED_WORKFLOW_LABELS = {
         "description": "Ready for strategic systems architecture by systems architect agent.",
         "color": "1D76DB",
     },
+    "state:ready-for-system-architecture": {
+        "description": "Ready for strategic systems architecture by systems architect agent.",
+        "color": "1D76DB",
+    },
     "state:ready-for-dev": {
         "description": "Ready for implementation by developer agent.",
         "color": "1D76DB",

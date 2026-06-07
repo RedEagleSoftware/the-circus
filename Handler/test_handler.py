@@ -2745,6 +2745,7 @@ class HandlerObservabilityTests(unittest.TestCase):
             "type": "issue",
             "number": 44,
             "title": "Reviewer candidate became stale",
+            "url": "https://github.com/owner/repo/issues/44",
             "labels": [{"name": "state:ready-for-review"}],
         }
         current_item = {
@@ -2779,6 +2780,7 @@ class HandlerObservabilityTests(unittest.TestCase):
             "type": "issue",
             "number": 45,
             "title": "Reviewer candidate still current",
+            "url": "https://github.com/owner/repo/issues/45",
             "labels": [{"name": "state:ready-for-review"}],
         }
         current_item = {
@@ -2821,6 +2823,7 @@ class HandlerObservabilityTests(unittest.TestCase):
             "type": "issue",
             "number": 46,
             "title": "Revalidation fetch failed",
+            "url": "https://github.com/owner/repo/issues/46",
             "labels": [{"name": "state:ready-for-dev"}],
         }
 
