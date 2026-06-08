@@ -16,7 +16,7 @@ from Handler import review_flow
 from Handler import target_instructions
 from Handler import watchtower
 from Handler import workflow
-from Handler.workflow_states import SYSTEMS_ARCHITECTURE_LABEL
+from Handler.workflow_states import NEEDS_AGENT_RETRY_LABEL, SYSTEMS_ARCHITECTURE_LABEL
 
 load_dotenv()
 
@@ -299,6 +299,17 @@ def advance_architect_review_workflow_on_changes_requested(item):
     )
 
 
+def move_workflow_to_retry(item, from_state_label):
+    return workflow.move_workflow_to_retry(
+        item,
+        from_state_label,
+        remove_label_fn=remove_label,
+        add_label_fn=add_label,
+        update_run_status_fn=update_run_status,
+        log=print,
+    )
+
+
 def append_reviewer_feedback_note(item_run_root, review_result_path, review_pr_url=None):
     return watchtower.append_reviewer_feedback_note(
         item_run_root,
@@ -318,6 +329,24 @@ def append_architect_review_feedback_note(item_run_root, architect_review_result
         build_shared_context_paths_fn=build_shared_context_paths,
         normalize_path_for_display_fn=normalize_path_for_display,
         timestamp_now_fn=lambda: datetime.now().isoformat(timespec="seconds"),
+    )
+
+
+def append_retry_shared_note(item_run_root, retry_context):
+    return watchtower.append_retry_shared_note(
+        item_run_root,
+        retry_context,
+        build_shared_context_paths_fn=build_shared_context_paths,
+        normalize_path_for_display_fn=normalize_path_for_display,
+        timestamp_now_fn=lambda: datetime.now().isoformat(timespec="seconds"),
+    )
+
+
+def find_latest_retry_context(item):
+    return watchtower.find_latest_retry_context(
+        item,
+        get_item_run_root_fn=get_item_run_root,
+        normalize_path_for_display_fn=normalize_path_for_display,
     )
 
 
@@ -460,7 +489,36 @@ def revalidate_candidate_after_lock(item, expected_state_label):
 
 
 def resolve_dispatch_config(item, labels):
-    return workflow.resolve_dispatch_config(item, labels)
+    dispatch_resolution = workflow.resolve_dispatch_config(item, labels)
+    if not dispatch_resolution:
+        return None
+
+    state_label, config = dispatch_resolution
+    if state_label != NEEDS_AGENT_RETRY_LABEL:
+        item.pop("retry_context", None)
+        return dispatch_resolution
+
+    retry_context = find_latest_retry_context(item)
+    if not retry_context:
+        item["comment"] = (
+            f"Handler found `{NEEDS_AGENT_RETRY_LABEL}` on {item['type']} #{item['number']}, but no retry context "
+            "was found in prior run status artifacts. Workflow dispatch is blocked pending manual triage."
+        )
+        item["skip_reason"] = "missing retry context"
+        return None
+
+    source_state_label = retry_context.get("source_state_label")
+    source_dispatch = LABEL_MAP.get(source_state_label)
+    if not source_dispatch:
+        item["comment"] = (
+            f"Handler found retry context for {item['type']} #{item['number']}, but source state "
+            f"`{source_state_label}` is not dispatchable. Workflow dispatch is blocked pending manual triage."
+        )
+        item["skip_reason"] = f"invalid retry context source state: {source_state_label}"
+        return None
+
+    item["retry_context"] = retry_context
+    return state_label, source_dispatch
 
 
 def build_junie_command(model, effort, project_path, task_text):

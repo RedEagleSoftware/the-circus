@@ -2,6 +2,7 @@ SYSTEMS_ARCHITECTURE_LABEL = "state:ready-for-systems-architecture"
 ARCHITECTURE_LABEL = "state:ready-for-architecture"
 DEVELOPER_LABEL = "state:ready-for-dev"
 CHANGES_REQUESTED_LABEL = "state:changes-requested"
+NEEDS_AGENT_RETRY_LABEL = "state:needs-agent-retry"
 REVIEW_LABEL = "state:ready-for-review"
 ARCHITECT_REVIEW_LABEL = "state:ready-for-architect-review"
 HUMAN_REVIEW_LABEL = "state:ready-for-human-review"
@@ -48,6 +49,10 @@ WORKFLOW_STATES = {
             "model": "gpt-5.3-codex",
             "effort": "Medium",
         },
+    },
+    NEEDS_AGENT_RETRY_LABEL: {
+        "description": "Retry required due to missing or invalid agent output artifacts.",
+        "color": "FBCA04",
     },
     REVIEW_LABEL: {
         "description": "Ready for review by reviewer agent.",

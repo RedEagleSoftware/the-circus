@@ -8,6 +8,7 @@ from Handler.workflow_states import (
     DEVELOPER_LABEL,
     HUMAN_REVIEW_LABEL,
     LOCK_LABEL,
+    NEEDS_AGENT_RETRY_LABEL,
     REVIEW_LABEL,
     SYSTEMS_ARCHITECTURE_LABEL,
     WORKFLOW_STATES,
@@ -19,6 +20,8 @@ LABEL_MAP = {
     for label, state in WORKFLOW_STATES.items()
     if state.get("dispatch")
 }
+
+RETRYABLE_WORKFLOW_LABELS = {NEEDS_AGENT_RETRY_LABEL}
 
 SUPPORTED_WORKFLOW_LABELS = tuple(LABEL_MAP.keys())
 REVIEW_OUTCOMES = {"APPROVED", "CHANGES_REQUESTED", "BLOCKED"}
@@ -32,7 +35,7 @@ HUMAN_OWNED_WORKFLOW_STATES = {label for label, state in WORKFLOW_STATES.items()
 
 
 def get_primary_state_labels(labels):
-    return [label for label in labels if label in LABEL_MAP]
+    return [label for label in labels if label in LABEL_MAP or label in RETRYABLE_WORKFLOW_LABELS]
 
 
 def get_state_labels(labels):
@@ -212,6 +215,36 @@ def advance_developer_workflow_on_success(
         success_message="[Dispatch] Workflow advanced to review stage for issue #{number}.",
         failure_message=(
             "[Dispatch] Developer workflow transition encountered label update failures for issue #{number}; "
+            "manual inspection is required."
+        ),
+        remove_label_fn=remove_label_fn,
+        add_label_fn=add_label_fn,
+        update_run_status_fn=update_run_status_fn,
+        log=log,
+    )
+
+
+def move_workflow_to_retry(
+    item,
+    from_state_label,
+    remove_label_fn,
+    add_label_fn,
+    update_run_status_fn,
+    log=print,
+):
+    transition_steps = [
+        ("remove", LOCK_LABEL),
+        ("remove", from_state_label),
+        ("add", NEEDS_AGENT_RETRY_LABEL),
+    ]
+
+    return execute_label_transition(
+        item,
+        workflow_name="Retry",
+        transition_steps=transition_steps,
+        success_message="[Dispatch] Workflow moved to retry state for issue #{number}.",
+        failure_message=(
+            "[Dispatch] Retry workflow transition encountered label update failures for issue #{number}; "
             "manual inspection is required."
         ),
         remove_label_fn=remove_label_fn,

@@ -39,6 +39,7 @@ RUN_STATUS_FIELDS = [
     "linked_pr",
     "working_branch",
     "label_transition",
+    "retry_context",
     "artifacts",
 ]
 
@@ -98,6 +99,42 @@ def append_architect_review_feedback_note(
     note_lines.append(
         "- status: architect review requested architectural corrections; use this artifact during follow-up development."
     )
+
+    with open(running_notes_path, "a", encoding="utf-8") as running_notes_file:
+        running_notes_file.write("\n".join(note_lines) + "\n")
+
+    return running_notes_path
+
+
+def append_retry_shared_note(
+    item_run_root,
+    retry_context,
+    *,
+    build_shared_context_paths_fn,
+    normalize_path_for_display_fn,
+    timestamp_now_fn=None,
+):
+    shared_context_paths = build_shared_context_paths_fn(item_run_root)
+    running_notes_path = shared_context_paths["running_notes"]
+    timestamp_now = timestamp_now_fn or (lambda: datetime.now().isoformat(timespec="seconds"))
+    timestamp = timestamp_now()
+    note_lines = [
+        "",
+        f"## Agent Retry Context ({timestamp})",
+        f"- source state: `{retry_context.get('source_state_label') or '<unknown>'}`",
+        f"- source mode: `{retry_context.get('source_mode') or '<unknown>'}`",
+        f"- source run dir: `{retry_context.get('source_run_dir') or '<unknown>'}`",
+        f"- source launch brief: `{retry_context.get('source_launch_brief_path') or '<unknown>'}`",
+        f"- retry reason: {retry_context.get('reason') or '<not provided>'}",
+    ]
+
+    source_branch = retry_context.get("source_working_branch")
+    if source_branch:
+        note_lines.append(f"- source working branch: `{source_branch}`")
+
+    artifact_path = retry_context.get("source_result_artifact")
+    if artifact_path:
+        note_lines.append(f"- source result artifact: `{normalize_path_for_display_fn(artifact_path)}`")
 
     with open(running_notes_path, "a", encoding="utf-8") as running_notes_file:
         running_notes_file.write("\n".join(note_lines) + "\n")
@@ -168,6 +205,7 @@ def initialize_run_status(
         "linked_pr": item.get("review_pr", {}).get("url"),
         "working_branch": item.get("working_branch"),
         "label_transition": None,
+        "retry_context": None,
         "artifacts": {
             "launch_brief": normalized_brief_path,
             "status": normalized_status_path,
@@ -219,6 +257,61 @@ def write_run_status(run_state, status_payload):
     with open(run_state["status_path"], "w", encoding="utf-8") as status_file:
         json.dump(status_payload, status_file, indent=2)
         status_file.write("\n")
+
+
+def find_latest_retry_context(
+    item,
+    *,
+    get_item_run_root_fn,
+    normalize_path_for_display_fn,
+    run_status_filename=RUN_STATUS_FILENAME,
+):
+    item_run_root = get_item_run_root_fn(item)
+    if not item_run_root or not os.path.isdir(item_run_root):
+        return None
+
+    run_dirs = []
+    for entry in os.listdir(item_run_root):
+        entry_path = os.path.join(item_run_root, entry)
+        if not os.path.isdir(entry_path):
+            continue
+        match = re.match(r"^run-(\d+)-", entry)
+        if not match:
+            continue
+        run_dirs.append((int(match.group(1)), entry_path))
+
+    for _, run_dir in sorted(run_dirs, key=lambda item_pair: item_pair[0], reverse=True):
+        status_path = os.path.join(run_dir, run_status_filename)
+        if not os.path.exists(status_path):
+            continue
+        try:
+            with open(status_path, "r", encoding="utf-8") as status_file:
+                status_payload = json.load(status_file)
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        retry_context = status_payload.get("retry_context")
+        if not isinstance(retry_context, dict):
+            continue
+
+        source_state_label = retry_context.get("source_state_label")
+        source_mode = retry_context.get("source_mode")
+        source_run_dir = retry_context.get("source_run_dir")
+        if not source_state_label or not source_mode or not source_run_dir:
+            continue
+
+        return {
+            "source_state_label": source_state_label,
+            "source_mode": source_mode,
+            "source_run_dir": source_run_dir,
+            "source_launch_brief_path": retry_context.get("source_launch_brief_path"),
+            "source_working_branch": retry_context.get("source_working_branch"),
+            "source_result_artifact": retry_context.get("source_result_artifact"),
+            "reason": retry_context.get("reason"),
+            "source_run_status_path": normalize_path_for_display_fn(status_path),
+        }
+
+    return None
 
 
 def update_run_status(item, *, get_run_state_fn, read_run_status_fn, write_run_status_fn, updates):
@@ -389,6 +482,7 @@ def build_launch_brief_markdown(
     get_circus_runtime_root_fn,
     shared_context_paths=None,
     review_result_path=None,
+    retry_context=None,
 ):
     profile_source = resolve_profile_source_fn(role_prompt_path)
     normalized_target_repo_path = normalize_path_for_display_fn(target_repo_path)
@@ -457,6 +551,30 @@ def build_launch_brief_markdown(
             ]
         )
 
+    if retry_context:
+        lines.extend(
+            [
+                "",
+                "## Previous Attempt",
+                f"- source state: `{retry_context.get('source_state_label') or '<unknown>'}`",
+                f"- source mode: `{retry_context.get('source_mode') or '<unknown>'}`",
+                f"- source run dir: `{retry_context.get('source_run_dir') or '<unknown>'}`",
+                f"- source launch brief: `{retry_context.get('source_launch_brief_path') or '<unknown>'}`",
+                f"- source working branch: `{retry_context.get('source_working_branch') or '<unknown>'}`",
+                f"- source result artifact: `{retry_context.get('source_result_artifact') or '<unknown>'}`",
+                f"- source run status: `{retry_context.get('source_run_status_path') or '<unknown>'}`",
+                "",
+                "## Retry Instructions",
+                "- Resume from the previous attempt context above instead of starting from scratch.",
+                "- Preserve the original intent and branch context unless the source artifact proves it is invalid.",
+                "- If required source artifacts are missing or contradictory, stop and report the exact blocker.",
+            ]
+        )
+
+        reason = retry_context.get("reason")
+        if reason:
+            lines.append(f"- retry reason: {reason}")
+
     if discovered_target_instruction_paths:
         lines.extend(
             [
@@ -522,6 +640,7 @@ def write_launch_brief(
     timestamp = timestamp_now()
     item_run_root = get_item_run_root_fn(item)
     shared_context_paths = ensure_shared_artifacts_fn(item_run_root)
+    retry_context = item.get("retry_context") if state_label == "state:needs-agent-retry" else None
     brief_path = build_launch_brief_path_fn(item, config["mode"])
     review_result_path = None
     if config.get("mode") == "reviewer":
@@ -538,6 +657,7 @@ def write_launch_brief(
         target_repo_path or "<not configured>",
         shared_context_paths,
         review_result_path,
+        retry_context,
     )
     os.makedirs(os.path.dirname(brief_path), exist_ok=True)
 
