@@ -116,6 +116,9 @@ def append_retry_shared_note(
 ):
     shared_context_paths = build_shared_context_paths_fn(item_run_root)
     running_notes_path = shared_context_paths["running_notes"]
+    running_notes_dir = os.path.dirname(running_notes_path)
+    if running_notes_dir:
+        os.makedirs(running_notes_dir, exist_ok=True)
     timestamp_now = timestamp_now_fn or (lambda: datetime.now().isoformat(timespec="seconds"))
     timestamp = timestamp_now()
     note_lines = [

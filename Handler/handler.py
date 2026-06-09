@@ -17,7 +17,7 @@ from Handler import target_instructions
 from Handler import watchtower
 from Handler import workflow
 from Handler.workflow_states import (
-    NEEDS_AGENT_RETRY_LABEL
+    NEEDS_AGENT_RETRY_LABEL,
     SYSTEMS_ARCHITECTURE_CHANGES_REQUESTED_LABEL,
     SYSTEMS_ARCHITECTURE_LABEL,
 )
@@ -1054,46 +1054,20 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         print(f"[Dispatch] Junie exit code: {result.returncode}")
 
         if result.returncode != 0:
-            retry_context = {
-                "source_state_label": state_label,
-                "source_run_status_path": item.get("run_status_path"),
-                "source_working_branch": item.get("working_branch"),
-                "source_result_artifact": item.get("result_artifact"),
-                "source_agent": agent,
-                "source_mode": mode,
-                "source_exit_code": result.returncode,
-                "reason": f"{agent} {mode} execution exited with code {result.returncode}",
-            }
-            append_retry_shared_note(get_item_run_root(item), retry_context)
-            advanced = move_workflow_to_retry(item, state_label)
-            if not advanced:
-                item["comment"] = (
-                    f"Junie launched for {item['type']} #{number} and exited with non-zero status "
-                    f"({result.returncode}), but retry transition failed. The lock label `{LOCK_LABEL}` may remain "
-                    "in place for human inspection."
-                )
-                add_comment(item)
-                print(
-                    f"[Dispatch] Junie exited non-zero for {item['type']} #{number}; "
-                    "retry transition failed and manual inspection is required."
-                )
-            else:
-                print(
-                    f"[Dispatch] Junie exited non-zero for {item['type']} #{number}; "
-                    "workflow moved to retry state."
-                )
+            item["comment"] = (
+                f"Junie launched for {item['type']} #{number} and exited with non-zero status "
+                f"({result.returncode}). The lock label `{LOCK_LABEL}` remains in place for human inspection."
+            )
+            add_comment(item)
+            print(f"[Dispatch] Junie exited non-zero for {item['type']} #{number}; lock remains for human inspection.")
             item["agent_exit_non_zero"] = True
             update_run_status(
                 item,
                 completed_at=utc_timestamp_now(),
                 exit_code=result.returncode,
-                success=advanced,
+                success=False,
                 outcome="failed agent execution",
-                stop_reason=(
-                    f"agent exited with code {result.returncode}"
-                    if advanced
-                    else f"agent exited with code {result.returncode}; retry transition failed"
-                ),
+                stop_reason=f"agent exited with code {result.returncode}",
             )
             write_run_result(item)
             return False

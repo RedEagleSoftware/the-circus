@@ -81,7 +81,21 @@ def resolve_dispatch_config(item, labels):
         item["skip_reason"] = f"ambiguous workflow state labels: {', '.join(primary_states)}"
         return None
 
-    return primary_states[0], LABEL_MAP[primary_states[0]]
+    state_label = primary_states[0]
+    dispatch_config = LABEL_MAP.get(state_label)
+
+    if dispatch_config is None and state_label in RETRYABLE_WORKFLOW_LABELS:
+        dispatch_config = WORKFLOW_STATES.get(state_label, {}).get("dispatch")
+
+    if dispatch_config is None:
+        item["comment"] = (
+            "Handler skipped this item: workflow state label "
+            f"`{state_label}` has no dispatch configuration. Please update workflow doctrine."
+        )
+        item["skip_reason"] = f"missing dispatch config for workflow state: {state_label}"
+        return None
+
+    return state_label, dispatch_config
 
 
 def parse_review_result_outcome(review_result_path):
