@@ -73,6 +73,8 @@ def finalize_developer_success_with_pull_request(
     find_existing_open_pr_for_branch_fn,
     create_pull_request_with_body_file_fn,
     advance_developer_workflow_on_success_fn,
+    append_retry_shared_note_fn,
+    move_workflow_to_retry_fn,
     add_comment_fn,
     normalize_path_for_display_fn,
     build_shared_context_paths_fn,
@@ -122,14 +124,32 @@ def finalize_developer_success_with_pull_request(
         print("[Dispatch] <clean>")
 
     if not git_status:
-        item["comment"] = (
-            f"Handler detected no changes after successful developer execution for {item['type']} "
-            f"#{item['number']} on branch `{developer_branch}`. No pull request was created. "
-            f"The lock label `{lock_label}` remains for human inspection."
+        retry_context = {
+            "source_state_label": from_state_label,
+            "source_run_status_path": item.get("run_status_path"),
+            "source_working_branch": developer_branch,
+            "source_result_artifact": item.get("result_artifact"),
+            "source_agent": "junie",
+            "source_mode": "developer",
+            "source_exit_code": 0,
+            "reason": "developer run produced no repository changes",
+        }
+        item_run_root = get_item_run_root_fn(item)
+        append_retry_shared_note_fn(item_run_root, retry_context)
+        advanced = move_workflow_to_retry_fn(item, from_state_label)
+        if not advanced:
+            item["comment"] = (
+                f"Handler detected no changes after successful developer execution for {item['type']} "
+                f"#{item['number']} on branch `{developer_branch}`. Retry transition failed and "
+                f"the lock label `{lock_label}` may remain for human inspection."
+            )
+            add_comment_fn(item)
+        print(
+            "[Dispatch] No local changes detected after developer success; workflow moved to retry state."
+            if advanced
+            else "[Dispatch] No local changes detected after developer success; retry transition failed."
         )
-        add_comment_fn(item)
-        print("[Dispatch] No local changes detected after developer success; PR creation skipped.")
-        return False
+        return advanced
 
     stage_result = run_git_command_in_repo_fn(repo_path, ["add", "-A"])
     if stage_result is None or stage_result.returncode != 0:

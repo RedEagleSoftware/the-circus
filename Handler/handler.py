@@ -415,6 +415,8 @@ def finalize_developer_success_with_pull_request(item, launch_brief_path, from_s
         find_existing_open_pr_for_branch_fn=find_existing_open_pr_for_branch,
         create_pull_request_with_body_file_fn=create_pull_request_with_body_file,
         advance_developer_workflow_on_success_fn=advance_developer_workflow_on_success,
+        append_retry_shared_note_fn=append_retry_shared_note,
+        move_workflow_to_retry_fn=move_workflow_to_retry,
         add_comment_fn=add_comment,
         normalize_path_for_display_fn=normalize_path_for_display,
         build_shared_context_paths_fn=build_shared_context_paths,
@@ -1191,43 +1193,18 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
 
             print(f"[Dispatch] Codex reviewer exit code: {result.returncode}")
             if result.returncode != 0:
-                retry_context = {
-                    "source_state_label": state_label,
-                    "source_run_status_path": item.get("run_status_path"),
-                    "source_working_branch": item.get("working_branch"),
-                    "source_result_artifact": item.get("result_artifact"),
-                    "source_agent": agent,
-                    "source_mode": mode,
-                    "source_exit_code": result.returncode,
-                    "reason": f"{agent} {mode} execution exited with code {result.returncode}",
-                }
-                append_retry_shared_note(item_run_root, retry_context)
-                advanced = move_workflow_to_retry(item, state_label)
-                if not advanced:
-                    item["comment"] = (
-                        f"Codex reviewer launched for {item['type']} #{number} and exited with non-zero status "
-                        f"({result.returncode}), but retry transition failed. The lock label `{LOCK_LABEL}` may remain "
-                        "in place for human inspection."
-                    )
-                    add_comment(item)
                 item["agent_exit_non_zero"] = True
                 print(
                     f"[Dispatch] Codex reviewer exited non-zero for {item['type']} #{number}; "
-                    "workflow moved to retry state."
-                    if advanced
-                    else "retry transition failed and manual inspection is required."
+                    "workflow progression stopped and lock remains for human inspection."
                 )
                 update_run_status(
                     item,
                     completed_at=utc_timestamp_now(),
                     exit_code=result.returncode,
-                    success=advanced,
+                    success=False,
                     outcome="failed agent execution",
-                    stop_reason=(
-                        f"agent exited with code {result.returncode}"
-                        if advanced
-                        else f"agent exited with code {result.returncode}; retry transition failed"
-                    ),
+                    stop_reason=f"agent exited with code {result.returncode}",
                 )
                 write_run_result(item)
                 return False
@@ -1338,43 +1315,18 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
 
             print(f"[Dispatch] Codex architect review exit code: {result.returncode}")
             if result.returncode != 0:
-                retry_context = {
-                    "source_state_label": state_label,
-                    "source_run_status_path": item.get("run_status_path"),
-                    "source_working_branch": item.get("working_branch"),
-                    "source_result_artifact": item.get("result_artifact"),
-                    "source_agent": agent,
-                    "source_mode": mode,
-                    "source_exit_code": result.returncode,
-                    "reason": f"{agent} {mode} execution exited with code {result.returncode}",
-                }
-                append_retry_shared_note(item_run_root, retry_context)
-                advanced = move_workflow_to_retry(item, state_label)
-                if not advanced:
-                    item["comment"] = (
-                        f"Codex architect review launched for {item['type']} #{number} and exited with non-zero status "
-                        f"({result.returncode}), but retry transition failed. The lock label `{LOCK_LABEL}` may remain "
-                        "in place for human inspection."
-                    )
-                    add_comment(item)
                 item["agent_exit_non_zero"] = True
                 print(
                     f"[Dispatch] Codex architect review exited non-zero for {item['type']} #{number}; "
-                    "workflow moved to retry state."
-                    if advanced
-                    else "retry transition failed and manual inspection is required."
+                    "workflow progression stopped and lock remains for human inspection."
                 )
                 update_run_status(
                     item,
                     completed_at=utc_timestamp_now(),
                     exit_code=result.returncode,
-                    success=advanced,
+                    success=False,
                     outcome="failed agent execution",
-                    stop_reason=(
-                        f"agent exited with code {result.returncode}"
-                        if advanced
-                        else f"agent exited with code {result.returncode}; retry transition failed"
-                    ),
+                    stop_reason=f"agent exited with code {result.returncode}",
                 )
                 write_run_result(item)
                 return False

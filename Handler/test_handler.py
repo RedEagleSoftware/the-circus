@@ -1088,7 +1088,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("failed to prepare a pull request", item["comment"])
         self.assertIn("unable to create pull request", item["comment"])
 
-    def test_finalize_developer_success_without_changes_adds_no_change_comment(self):
+    def test_finalize_developer_success_without_changes_moves_to_retry_state(self):
         item = {
             "type": "issue",
             "number": 35,
@@ -1106,17 +1106,19 @@ class HandlerObservabilityTests(unittest.TestCase):
                 with patch.object(handler, "run_command") as mock_run_command:
                     with patch.object(handler, "advance_developer_workflow_on_success") as mock_advance:
                         with patch.object(handler, "add_comment") as mock_add_comment:
-                            transitioned = handler.finalize_developer_success_with_pull_request(
-                                item,
-                                "Watchtower/runs/issue-35/run-001-developer/launch-brief.md",
-                            )
+                            with patch.object(handler, "append_retry_shared_note") as mock_append_retry:
+                                with patch.object(handler, "move_workflow_to_retry", return_value=True) as mock_move_retry:
+                                    transitioned = handler.finalize_developer_success_with_pull_request(
+                                        item,
+                                        "Watchtower/runs/issue-35/run-001-developer/launch-brief.md",
+                                    )
 
-        self.assertFalse(transitioned)
+        self.assertTrue(transitioned)
         mock_run_command.assert_not_called()
         mock_advance.assert_not_called()
-        mock_add_comment.assert_called_once_with(item)
-        self.assertIn("detected no changes", item["comment"])
-        self.assertIn("No pull request was created", item["comment"])
+        mock_add_comment.assert_not_called()
+        mock_append_retry.assert_called_once()
+        mock_move_retry.assert_called_once_with(item, "state:ready-for-dev")
 
     def test_build_codex_architect_task_text_includes_handoff_and_comment_requirements(self):
         task_text = handler.build_codex_architect_task_text("C:/abs/Watchtower/runs/issue-9/run-001-architect/launch-brief.md")
@@ -1617,6 +1619,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_subprocess_run.assert_called_once()
         mock_add_comment.assert_called_once_with(item)
         mock_advance_transition.assert_not_called()
+        self.assertTrue(item.get("agent_exit_non_zero"))
         self.assertIn("exited with non-zero status (7)", item["comment"])
         self.assertIn("lock label `state:agent-in-progress` remains in place", item["comment"])
 
