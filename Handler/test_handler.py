@@ -1713,6 +1713,9 @@ class HandlerObservabilityTests(unittest.TestCase):
                     'gh issue edit 2 --repo owner/repo --remove-label "state:agent-in-progress"'
                 ),
                 unittest.mock.call(
+                    'gh issue edit 2 --repo owner/repo --remove-label "state:needs-agent-retry"'
+                ),
+                unittest.mock.call(
                     'gh issue edit 2 --repo owner/repo --remove-label "state:ready-for-architecture"'
                 ),
                 unittest.mock.call(
@@ -1746,6 +1749,9 @@ class HandlerObservabilityTests(unittest.TestCase):
             [
                 unittest.mock.call(
                     'gh issue edit 74 --repo owner/repo --remove-label "state:agent-in-progress"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 74 --repo owner/repo --remove-label "state:needs-agent-retry"'
                 ),
                 unittest.mock.call(
                     'gh issue edit 74 --repo owner/repo --remove-label "state:ready-for-systems-architecture"'
@@ -1783,6 +1789,9 @@ class HandlerObservabilityTests(unittest.TestCase):
             [
                 unittest.mock.call(
                     'gh issue edit 75 --repo owner/repo --remove-label "state:agent-in-progress"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 75 --repo owner/repo --remove-label "state:needs-agent-retry"'
                 ),
                 unittest.mock.call(
                     'gh issue edit 75 --repo owner/repo --remove-label "state:systems-architecture-changes-requested"'
@@ -1824,6 +1833,9 @@ class HandlerObservabilityTests(unittest.TestCase):
                     'gh issue edit 4 --repo owner/repo --remove-label "state:agent-in-progress"'
                 ),
                 unittest.mock.call(
+                    'gh issue edit 4 --repo owner/repo --remove-label "state:needs-agent-retry"'
+                ),
+                unittest.mock.call(
                     'gh issue edit 4 --repo owner/repo --remove-label "state:ready-for-dev"'
                 ),
                 unittest.mock.call(
@@ -1861,6 +1873,9 @@ class HandlerObservabilityTests(unittest.TestCase):
                     'gh issue edit 40 --repo owner/repo --remove-label "state:agent-in-progress"'
                 ),
                 unittest.mock.call(
+                    'gh issue edit 40 --repo owner/repo --remove-label "state:needs-agent-retry"'
+                ),
+                unittest.mock.call(
                     'gh issue edit 40 --repo owner/repo --remove-label "state:changes-requested"'
                 ),
                 unittest.mock.call(
@@ -1887,6 +1902,9 @@ class HandlerObservabilityTests(unittest.TestCase):
             [
                 unittest.mock.call(
                     'gh issue edit 11 --repo owner/repo --remove-label "state:agent-in-progress"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 11 --repo owner/repo --remove-label "state:needs-agent-retry"'
                 ),
                 unittest.mock.call(
                     'gh issue edit 11 --repo owner/repo --remove-label "state:ready-for-review"'
@@ -1918,6 +1936,9 @@ class HandlerObservabilityTests(unittest.TestCase):
             [
                 unittest.mock.call('gh issue edit 18 --repo owner/repo --remove-label "state:agent-in-progress"'),
                 unittest.mock.call(
+                    'gh issue edit 18 --repo owner/repo --remove-label "state:needs-agent-retry"'
+                ),
+                unittest.mock.call(
                     'gh issue edit 18 --repo owner/repo --remove-label "state:ready-for-architect-review"'
                 ),
                 unittest.mock.call('gh issue edit 18 --repo owner/repo --add-label "state:ready-for-human-review"'),
@@ -1940,6 +1961,9 @@ class HandlerObservabilityTests(unittest.TestCase):
             mock_run_command.call_args_list,
             [
                 unittest.mock.call('gh issue edit 18 --repo owner/repo --remove-label "state:agent-in-progress"'),
+                unittest.mock.call(
+                    'gh issue edit 18 --repo owner/repo --remove-label "state:needs-agent-retry"'
+                ),
                 unittest.mock.call(
                     'gh issue edit 18 --repo owner/repo --remove-label "state:ready-for-architect-review"'
                 ),

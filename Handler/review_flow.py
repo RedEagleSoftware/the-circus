@@ -290,6 +290,7 @@ def handle_architect_review_result(
             exit_code=result_returncode,
             success=advanced,
             outcome="missing result artifact",
+            retry_context=retry_context,
             stop_reason=(
                 "missing architect review result artifact at "
                 f"{normalize_path_for_display_fn(architect_review_result_path)}"
@@ -404,6 +405,7 @@ def handle_architect_review_result(
         exit_code=result_returncode,
         success=advanced,
         outcome="reviewer outcome ambiguous",
+        retry_context=retry_context,
         stop_reason=(
             "no unambiguous architect review outcome marker found"
             if advanced
