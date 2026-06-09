@@ -64,8 +64,11 @@ def handle_reviewer_result(
     parse_review_result_outcome_fn,
     normalize_path_for_display_fn,
     append_reviewer_feedback_note_fn,
+    append_retry_shared_note_fn,
     advance_reviewer_workflow_on_approved_fn,
     advance_reviewer_workflow_on_changes_requested_fn,
+    move_workflow_to_retry_fn,
+    source_state_label,
     utc_timestamp_now_fn,
     path_exists_fn=os.path.exists,
     log=print,
@@ -76,25 +79,47 @@ def handle_reviewer_result(
             f"expected path={review_result_path}; exists=False; "
             "workflow progression stopped with no label transition and lock remains in place."
         )
-        item["comment"] = (
-            f"Codex reviewer completed for issue #{issue_number}, but expected review result artifact "
-            f"`{review_result_path}` was not created. Workflow labels were not transitioned automatically, "
-            f"and lock label `{lock_label}` remains in place for human inspection. "
-            "Handler stopped workflow progression for this run."
-        )
-        add_comment_fn(item)
+        retry_context = {
+            "source_state_label": source_state_label,
+            "source_run_status_path": item.get("run_status_path"),
+            "source_working_branch": item.get("working_branch"),
+            "source_result_artifact": item.get("result_artifact"),
+            "source_agent": "codex",
+            "source_mode": "reviewer",
+            "source_exit_code": result_returncode,
+            "reason": "missing reviewer result artifact",
+        }
+        running_notes_path = append_retry_shared_note_fn(item_run_root, retry_context)
+        advanced = move_workflow_to_retry_fn(item, source_state_label)
+        if not advanced:
+            item["comment"] = (
+                f"Codex reviewer completed for issue #{issue_number}, but expected review result artifact "
+                f"`{review_result_path}` was not created. Retry transition failed, and lock label `{lock_label}` "
+                "may remain in place for human inspection."
+            )
+            add_comment_fn(item)
         item["missing_review_result_artifact"] = True
         update_run_status_fn(
             item,
             completed_at=utc_timestamp_now_fn(),
             exit_code=result_returncode,
-            success=False,
+            success=advanced,
             outcome="missing result artifact",
-            stop_reason=f"missing reviewer result artifact at {normalize_path_for_display_fn(review_result_path)}",
-            artifacts={"review_result": normalize_path_for_display_fn(review_result_path)},
+            stop_reason=(
+                f"missing reviewer result artifact at {normalize_path_for_display_fn(review_result_path)}"
+                if advanced
+                else (
+                    f"missing reviewer result artifact at {normalize_path_for_display_fn(review_result_path)}; "
+                    "retry transition failed"
+                )
+            ),
+            artifacts={
+                "review_result": normalize_path_for_display_fn(review_result_path),
+                "running_notes": normalize_path_for_display_fn(running_notes_path),
+            },
         )
         write_run_result_fn(item)
-        return False
+        return advanced
 
     review_outcome = parse_review_result_outcome_fn(review_result_path)
     update_run_status_fn(item, artifacts={"review_result": normalize_path_for_display_fn(review_result_path)})
@@ -155,22 +180,40 @@ def handle_reviewer_result(
         "[Dispatch] Review result handling: no unambiguous review outcome marker found; "
         "labels were not transitioned automatically."
     )
-    item["comment"] = (
-        f"Codex reviewer completed for issue #{issue_number}, but no unambiguous review outcome marker "
-        f"(`APPROVED`, `CHANGES_REQUESTED`, or `BLOCKED`) was found in `{review_result_path}`. "
-        "Workflow labels were not transitioned automatically; human review of reviewer output is required."
-    )
-    add_comment_fn(item)
+    retry_context = {
+        "source_state_label": source_state_label,
+        "source_run_status_path": item.get("run_status_path"),
+        "source_working_branch": item.get("working_branch"),
+        "source_result_artifact": item.get("result_artifact"),
+        "source_agent": "codex",
+        "source_mode": "reviewer",
+        "source_exit_code": result_returncode,
+        "reason": "reviewer outcome ambiguous",
+    }
+    running_notes_path = append_retry_shared_note_fn(item_run_root, retry_context)
+    advanced = move_workflow_to_retry_fn(item, source_state_label)
+    if not advanced:
+        item["comment"] = (
+            f"Codex reviewer completed for issue #{issue_number}, but no unambiguous review outcome marker "
+            f"(`APPROVED`, `CHANGES_REQUESTED`, or `BLOCKED`) was found in `{review_result_path}`. "
+            "Retry transition failed and human review of reviewer output is required."
+        )
+        add_comment_fn(item)
     update_run_status_fn(
         item,
         completed_at=utc_timestamp_now_fn(),
         exit_code=result_returncode,
-        success=True,
+        success=advanced,
         outcome="reviewer outcome ambiguous",
-        stop_reason="no unambiguous review outcome marker found",
+        stop_reason=(
+            "no unambiguous review outcome marker found"
+            if advanced
+            else "no unambiguous review outcome marker found; retry transition failed"
+        ),
+        artifacts={"running_notes": normalize_path_for_display_fn(running_notes_path)},
     )
     write_run_result_fn(item)
-    return True
+    return advanced
 
 
 def handle_architect_review_result(
@@ -188,8 +231,11 @@ def handle_architect_review_result(
     parse_architect_review_result_outcome_fn,
     normalize_path_for_display_fn,
     append_architect_review_feedback_note_fn,
+    append_retry_shared_note_fn,
     advance_architect_review_workflow_on_approved_fn,
     advance_architect_review_workflow_on_changes_requested_fn,
+    move_workflow_to_retry_fn,
+    source_state_label,
     utc_timestamp_now_fn,
     path_exists_fn=os.path.exists,
     log=print,
@@ -200,28 +246,48 @@ def handle_architect_review_result(
             f"expected path={architect_review_result_path}; exists=False; "
             "workflow progression stopped with no label transition and lock remains in place."
         )
-        item["comment"] = (
-            f"Codex architect review completed for issue #{issue_number}, but expected architect review result artifact "
-            f"`{architect_review_result_path}` was not created. Workflow labels were not transitioned automatically, "
-            f"and lock label `{lock_label}` remains in place for human inspection. "
-            "Handler stopped workflow progression for this run."
-        )
-        add_comment_fn(item)
+        retry_context = {
+            "source_state_label": source_state_label,
+            "source_run_status_path": item.get("run_status_path"),
+            "source_working_branch": item.get("working_branch"),
+            "source_result_artifact": item.get("result_artifact"),
+            "source_agent": "codex",
+            "source_mode": "architect-review",
+            "source_exit_code": result_returncode,
+            "reason": "missing architect review result artifact",
+        }
+        running_notes_path = append_retry_shared_note_fn(item_run_root, retry_context)
+        advanced = move_workflow_to_retry_fn(item, source_state_label)
+        if not advanced:
+            item["comment"] = (
+                f"Codex architect review completed for issue #{issue_number}, but expected architect review result "
+                f"artifact `{architect_review_result_path}` was not created. Retry transition failed, and lock label "
+                f"`{lock_label}` may remain in place for human inspection."
+            )
+            add_comment_fn(item)
         item["missing_review_result_artifact"] = True
         update_run_status_fn(
             item,
             completed_at=utc_timestamp_now_fn(),
             exit_code=result_returncode,
-            success=False,
+            success=advanced,
             outcome="missing result artifact",
             stop_reason=(
                 "missing architect review result artifact at "
                 f"{normalize_path_for_display_fn(architect_review_result_path)}"
+                if advanced
+                else (
+                    "missing architect review result artifact at "
+                    f"{normalize_path_for_display_fn(architect_review_result_path)}; retry transition failed"
+                )
             ),
-            artifacts={"architect_review_result": normalize_path_for_display_fn(architect_review_result_path)},
+            artifacts={
+                "architect_review_result": normalize_path_for_display_fn(architect_review_result_path),
+                "running_notes": normalize_path_for_display_fn(running_notes_path),
+            },
         )
         write_run_result_fn(item)
-        return False
+        return advanced
 
     review_outcome = parse_architect_review_result_outcome_fn(architect_review_result_path)
     update_run_status_fn(
@@ -290,19 +356,37 @@ def handle_architect_review_result(
         "[Dispatch] Architect review result handling: no unambiguous review outcome marker found; "
         "labels were not transitioned automatically."
     )
-    item["comment"] = (
-        f"Codex architect review completed for issue #{issue_number}, but no unambiguous review outcome marker "
-        f"(`APPROVED`, `CHANGES_REQUESTED`, or `BLOCKED`) was found in `{architect_review_result_path}`. "
-        "Workflow labels were not transitioned automatically; human review of architect review output is required."
-    )
-    add_comment_fn(item)
+    retry_context = {
+        "source_state_label": source_state_label,
+        "source_run_status_path": item.get("run_status_path"),
+        "source_working_branch": item.get("working_branch"),
+        "source_result_artifact": item.get("result_artifact"),
+        "source_agent": "codex",
+        "source_mode": "architect-review",
+        "source_exit_code": result_returncode,
+        "reason": "architect review outcome ambiguous",
+    }
+    running_notes_path = append_retry_shared_note_fn(item_run_root, retry_context)
+    advanced = move_workflow_to_retry_fn(item, source_state_label)
+    if not advanced:
+        item["comment"] = (
+            f"Codex architect review completed for issue #{issue_number}, but no unambiguous review outcome marker "
+            f"(`APPROVED`, `CHANGES_REQUESTED`, or `BLOCKED`) was found in `{architect_review_result_path}`. "
+            "Retry transition failed and human review of architect review output is required."
+        )
+        add_comment_fn(item)
     update_run_status_fn(
         item,
         completed_at=utc_timestamp_now_fn(),
         exit_code=result_returncode,
-        success=True,
+        success=advanced,
         outcome="reviewer outcome ambiguous",
-        stop_reason="no unambiguous architect review outcome marker found",
+        stop_reason=(
+            "no unambiguous architect review outcome marker found"
+            if advanced
+            else "no unambiguous architect review outcome marker found; retry transition failed"
+        ),
+        artifacts={"running_notes": normalize_path_for_display_fn(running_notes_path)},
     )
     write_run_result_fn(item)
-    return True
+    return advanced
