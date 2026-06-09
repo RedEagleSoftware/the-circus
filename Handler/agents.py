@@ -38,8 +38,16 @@ def build_codex_architect_task_text(absolute_launch_brief_path):
 def build_codex_systems_architect_task_text(absolute_launch_brief_path):
     return (
         f"Read the launch brief at {absolute_launch_brief_path} and execute the systems architect workflow. "
-        "Produce a durable systems strategy recommendation artifact referenced by the launch brief. "
-        "Then leave a GitHub comment summarizing strategy decisions or blockers."
+        "Publish a structured GitHub issue comment as the primary human review artifact using this contract: "
+        "## Systems Architect Recommendation; "
+        "### Recommendation; "
+        "### Rationale; "
+        "### Proposed Follow-up; "
+        "### Risks / Tradeoffs; "
+        "### Human Review Options with both label choices: "
+        "state:ready-for-roadmap-update and state:systems-architecture-changes-requested. "
+        "Keep Watchtower artifacts for run history and observability, not as the primary review surface. "
+        "If blocked, leave a GitHub comment that clearly describes the blocker."
     )
 
 

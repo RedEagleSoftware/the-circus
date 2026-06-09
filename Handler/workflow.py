@@ -171,10 +171,17 @@ def advance_architect_workflow_on_success(item, remove_label_fn, add_label_fn, u
     )
 
 
-def advance_systems_architect_workflow_on_success(item, remove_label_fn, add_label_fn, update_run_status_fn, log=print):
+def advance_systems_architect_workflow_on_success(
+    item,
+    remove_label_fn,
+    add_label_fn,
+    update_run_status_fn,
+    log=print,
+    from_state_label=SYSTEMS_ARCHITECTURE_LABEL,
+):
     transition_steps = [
         ("remove", LOCK_LABEL),
-        ("remove", SYSTEMS_ARCHITECTURE_LABEL),
+        ("remove", from_state_label),
         ("add", HUMAN_REVIEW_LABEL),
     ]
 
