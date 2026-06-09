@@ -416,6 +416,7 @@ def finalize_developer_success_with_pull_request(item, launch_brief_path, from_s
         create_pull_request_with_body_file_fn=create_pull_request_with_body_file,
         advance_developer_workflow_on_success_fn=advance_developer_workflow_on_success,
         append_retry_shared_note_fn=append_retry_shared_note,
+        update_run_status_fn=update_run_status,
         move_workflow_to_retry_fn=move_workflow_to_retry,
         add_comment_fn=add_comment,
         normalize_path_for_display_fn=normalize_path_for_display,
@@ -1209,6 +1210,11 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 write_run_result(item)
                 return False
 
+            workflow_source_state_label = state_label
+            if state_label == NEEDS_AGENT_RETRY_LABEL:
+                retry_context = item.get("retry_context") or {}
+                workflow_source_state_label = retry_context.get("source_state_label") or state_label
+
             item.pop("agent_exit_non_zero", None)
             return review_flow.handle_reviewer_result(
                 item=item,
@@ -1228,7 +1234,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 advance_reviewer_workflow_on_approved_fn=advance_reviewer_workflow_on_approved,
                 advance_reviewer_workflow_on_changes_requested_fn=advance_reviewer_workflow_on_changes_requested,
                 move_workflow_to_retry_fn=move_workflow_to_retry,
-                source_state_label=state_label,
+                source_state_label=workflow_source_state_label,
                 utc_timestamp_now_fn=utc_timestamp_now,
                 path_exists_fn=os.path.exists,
                 log=print,
@@ -1331,6 +1337,11 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 write_run_result(item)
                 return False
 
+            workflow_source_state_label = state_label
+            if state_label == NEEDS_AGENT_RETRY_LABEL:
+                retry_context = item.get("retry_context") or {}
+                workflow_source_state_label = retry_context.get("source_state_label") or state_label
+
             item.pop("agent_exit_non_zero", None)
             return review_flow.handle_architect_review_result(
                 item=item,
@@ -1350,7 +1361,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 advance_architect_review_workflow_on_approved_fn=advance_architect_review_workflow_on_approved,
                 advance_architect_review_workflow_on_changes_requested_fn=advance_architect_review_workflow_on_changes_requested,
                 move_workflow_to_retry_fn=move_workflow_to_retry,
-                source_state_label=state_label,
+                source_state_label=workflow_source_state_label,
                 utc_timestamp_now_fn=utc_timestamp_now,
                 path_exists_fn=os.path.exists,
                 log=print,

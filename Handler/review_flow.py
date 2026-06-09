@@ -73,6 +73,11 @@ def handle_reviewer_result(
     path_exists_fn=os.path.exists,
     log=print,
 ):
+    source_run_dir = normalize_path_for_display_fn(item_run_root)
+    source_run_status_path = item.get("run_status_path")
+    if source_run_status_path:
+        source_run_dir = normalize_path_for_display_fn(os.path.dirname(source_run_status_path))
+
     if not path_exists_fn(review_result_path):
         log(
             "[Dispatch] Review result handling: expected review-result artifact is missing; "
@@ -82,6 +87,7 @@ def handle_reviewer_result(
         retry_context = {
             "source_state_label": source_state_label,
             "source_run_status_path": item.get("run_status_path"),
+            "source_run_dir": source_run_dir,
             "source_working_branch": item.get("working_branch"),
             "source_result_artifact": item.get("result_artifact"),
             "source_review_result_artifact": review_result_path,
@@ -185,6 +191,7 @@ def handle_reviewer_result(
     retry_context = {
         "source_state_label": source_state_label,
         "source_run_status_path": item.get("run_status_path"),
+        "source_run_dir": source_run_dir,
         "source_working_branch": item.get("working_branch"),
         "source_result_artifact": item.get("result_artifact"),
         "source_review_result_artifact": review_result_path,
@@ -244,6 +251,11 @@ def handle_architect_review_result(
     path_exists_fn=os.path.exists,
     log=print,
 ):
+    source_run_dir = normalize_path_for_display_fn(item_run_root)
+    source_run_status_path = item.get("run_status_path")
+    if source_run_status_path:
+        source_run_dir = normalize_path_for_display_fn(os.path.dirname(source_run_status_path))
+
     if not path_exists_fn(architect_review_result_path):
         log(
             "[Dispatch] Architect review result handling: expected architect-review-result artifact is missing; "
@@ -253,6 +265,7 @@ def handle_architect_review_result(
         retry_context = {
             "source_state_label": source_state_label,
             "source_run_status_path": item.get("run_status_path"),
+            "source_run_dir": source_run_dir,
             "source_working_branch": item.get("working_branch"),
             "source_result_artifact": item.get("result_artifact"),
             "source_architect_review_result_artifact": architect_review_result_path,
@@ -364,6 +377,7 @@ def handle_architect_review_result(
     retry_context = {
         "source_state_label": source_state_label,
         "source_run_status_path": item.get("run_status_path"),
+        "source_run_dir": source_run_dir,
         "source_working_branch": item.get("working_branch"),
         "source_result_artifact": item.get("result_artifact"),
         "source_architect_review_result_artifact": architect_review_result_path,

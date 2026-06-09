@@ -1044,11 +1044,12 @@ class HandlerObservabilityTests(unittest.TestCase):
                     with patch.object(handler, "advance_developer_workflow_on_success") as mock_advance:
                         with patch.object(handler, "add_comment") as mock_add_comment:
                             with patch.object(handler, "append_retry_shared_note") as mock_append_retry:
-                                with patch.object(handler, "move_workflow_to_retry", return_value=True) as mock_move_retry:
-                                    transitioned = handler.finalize_developer_success_with_pull_request(
-                                        item,
-                                        "Watchtower/runs/issue-33/run-001-developer/launch-brief.md",
-                                    )
+                                with patch.object(handler, "update_run_status") as mock_update_status:
+                                    with patch.object(handler, "move_workflow_to_retry", return_value=True) as mock_move_retry:
+                                        transitioned = handler.finalize_developer_success_with_pull_request(
+                                            item,
+                                            "Watchtower/runs/issue-33/run-001-developer/launch-brief.md",
+                                        )
 
         self.assertTrue(transitioned)
         mock_run_command.assert_not_called()
@@ -1060,6 +1061,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(retry_context["source_mode"], "developer")
         self.assertEqual(retry_context["source_run_dir"], "Watchtower/runs/issue-33/run-001-developer")
         self.assertEqual(retry_context["reason"], "unable to push developer branch")
+        mock_update_status.assert_called_once_with(item, retry_context=retry_context)
         mock_move_retry.assert_called_once_with(item, "state:ready-for-dev")
 
     def test_finalize_developer_success_pr_creation_failure_moves_to_retry_state(self):
@@ -1086,11 +1088,12 @@ class HandlerObservabilityTests(unittest.TestCase):
                     with patch.object(handler, "advance_developer_workflow_on_success") as mock_advance:
                         with patch.object(handler, "add_comment") as mock_add_comment:
                             with patch.object(handler, "append_retry_shared_note") as mock_append_retry:
-                                with patch.object(handler, "move_workflow_to_retry", return_value=True) as mock_move_retry:
-                                    transitioned = handler.finalize_developer_success_with_pull_request(
-                                        item,
-                                        "Watchtower/runs/issue-34/run-001-developer/launch-brief.md",
-                                    )
+                                with patch.object(handler, "update_run_status") as mock_update_status:
+                                    with patch.object(handler, "move_workflow_to_retry", return_value=True) as mock_move_retry:
+                                        transitioned = handler.finalize_developer_success_with_pull_request(
+                                            item,
+                                            "Watchtower/runs/issue-34/run-001-developer/launch-brief.md",
+                                        )
 
         self.assertTrue(transitioned)
         self.assertEqual(len(mock_run_command.call_args_list), 2)
@@ -1104,6 +1107,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(retry_context["source_mode"], "developer")
         self.assertEqual(retry_context["source_run_dir"], "Watchtower/runs/issue-34/run-001-developer")
         self.assertEqual(retry_context["reason"], "unable to create pull request")
+        mock_update_status.assert_called_once_with(item, retry_context=retry_context)
         mock_move_retry.assert_called_once_with(item, "state:ready-for-dev")
 
     def test_finalize_developer_success_without_changes_moves_to_retry_state(self):
@@ -1125,11 +1129,12 @@ class HandlerObservabilityTests(unittest.TestCase):
                     with patch.object(handler, "advance_developer_workflow_on_success") as mock_advance:
                         with patch.object(handler, "add_comment") as mock_add_comment:
                             with patch.object(handler, "append_retry_shared_note") as mock_append_retry:
-                                with patch.object(handler, "move_workflow_to_retry", return_value=True) as mock_move_retry:
-                                    transitioned = handler.finalize_developer_success_with_pull_request(
-                                        item,
-                                        "Watchtower/runs/issue-35/run-001-developer/launch-brief.md",
-                                    )
+                                with patch.object(handler, "update_run_status") as mock_update_status:
+                                    with patch.object(handler, "move_workflow_to_retry", return_value=True) as mock_move_retry:
+                                        transitioned = handler.finalize_developer_success_with_pull_request(
+                                            item,
+                                            "Watchtower/runs/issue-35/run-001-developer/launch-brief.md",
+                                        )
 
         self.assertTrue(transitioned)
         mock_run_command.assert_not_called()
@@ -1140,6 +1145,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(retry_context["source_state_label"], "state:ready-for-dev")
         self.assertEqual(retry_context["source_mode"], "developer")
         self.assertEqual(retry_context["source_run_dir"], "Watchtower/runs/issue-35/run-001-developer")
+        mock_update_status.assert_called_once_with(item, retry_context=retry_context)
         mock_move_retry.assert_called_once_with(item, "state:ready-for-dev")
 
     def test_build_codex_architect_task_text_includes_handoff_and_comment_requirements(self):
@@ -2485,6 +2491,9 @@ class HandlerObservabilityTests(unittest.TestCase):
             self.assertIn("review_result", status_payload["artifacts"])
             self.assertTrue(os.path.isfile(result_path))
             self.assertIn("retry_context", status_payload)
+            source_run_dir = status_payload["retry_context"]["source_run_dir"]
+            self.assertTrue(source_run_dir)
+            self.assertTrue(source_run_dir.endswith("/issue-10"))
 
         self.assertTrue(launched)
         mock_parse_outcome.assert_not_called()
@@ -2494,6 +2503,99 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_append_retry.assert_called_once()
         mock_retry.assert_called_once_with(item, "state:ready-for-review")
         self.assertTrue(item.get("missing_review_result_artifact"))
+
+    def test_launch_agent_reviewer_retry_state_uses_retry_context_source_state_label(self):
+        item = {
+            "type": "issue",
+            "number": 17,
+            "title": "Retry reviewer",
+            "url": "https://github.com/owner/repo/issues/17",
+            "review_pr": {
+                "number": 91,
+                "url": "https://github.com/owner/repo/pull/91",
+            },
+            "retry_context": {
+                "source_state_label": "state:ready-for-review",
+            },
+        }
+        config = {
+            "agent": "codex",
+            "mode": "reviewer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with patch.dict(os.environ, {}, clear=True):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(
+                    handler,
+                    "build_reviewer_result_path",
+                    return_value="Watchtower/runs/issue-17/run-002-reviewer/review-result.md",
+                ):
+                    with patch.object(handler.os.path, "exists", return_value=True):
+                        with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                            with patch.object(handler.review_flow, "handle_reviewer_result", return_value=True) as mock_handle:
+                                launched = handler.launch_agent(
+                                    item,
+                                    "state:needs-agent-retry",
+                                    config,
+                                    os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
+                                    "Watchtower/runs/issue-17/run-002-reviewer/launch-brief.md",
+                                )
+
+        self.assertTrue(launched)
+        self.assertEqual(mock_handle.call_args.kwargs["source_state_label"], "state:ready-for-review")
+
+    def test_launch_agent_architect_review_retry_state_uses_retry_context_source_state_label(self):
+        item = {
+            "type": "issue",
+            "number": 18,
+            "title": "Retry architect review",
+            "url": "https://github.com/owner/repo/issues/18",
+            "review_pr": {
+                "number": 92,
+                "url": "https://github.com/owner/repo/pull/92",
+            },
+            "retry_context": {
+                "source_state_label": "state:ready-for-architect-review",
+            },
+        }
+        config = {
+            "agent": "codex",
+            "mode": "architect-review",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with patch.dict(os.environ, {}, clear=True):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(
+                    handler,
+                    "build_reviewer_result_path",
+                    return_value="Watchtower/runs/issue-18/run-001-reviewer/review-result.md",
+                ):
+                    with patch.object(
+                        handler,
+                        "build_architect_review_result_path",
+                        return_value="Watchtower/runs/issue-18/run-002-architect-review/architect-review-result.md",
+                    ):
+                        with patch.object(handler.os.path, "exists", return_value=True):
+                            with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                                with patch.object(
+                                    handler.review_flow,
+                                    "handle_architect_review_result",
+                                    return_value=True,
+                                ) as mock_handle:
+                                    launched = handler.launch_agent(
+                                        item,
+                                        "state:needs-agent-retry",
+                                        config,
+                                        os.path.normpath(os.path.join("TheFarm", "roles", "architect.md")),
+                                        "Watchtower/runs/issue-18/run-002-architect-review/launch-brief.md",
+                                    )
+
+        self.assertTrue(launched)
+        self.assertEqual(mock_handle.call_args.kwargs["source_state_label"], "state:ready-for-architect-review")
 
     def test_junie_command_generation_is_unchanged(self):
         command = handler.build_junie_command(

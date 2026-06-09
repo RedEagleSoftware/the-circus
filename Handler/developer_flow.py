@@ -68,6 +68,7 @@ def move_developer_post_run_failure_to_retry(
     reason,
     source_working_branch,
     append_retry_shared_note_fn,
+    update_run_status_fn,
     move_workflow_to_retry_fn,
     normalize_path_for_display_fn,
     get_item_run_root_fn,
@@ -88,6 +89,7 @@ def move_developer_post_run_failure_to_retry(
     }
     item_run_root = get_item_run_root_fn(item)
     append_retry_shared_note_fn(item_run_root, retry_context)
+    update_run_status_fn(item, retry_context=retry_context)
     advanced = move_workflow_to_retry_fn(item, from_state_label)
     if not advanced:
         item["comment"] = (
@@ -113,6 +115,7 @@ def finalize_developer_success_with_pull_request(
     create_pull_request_with_body_file_fn,
     advance_developer_workflow_on_success_fn,
     append_retry_shared_note_fn,
+    update_run_status_fn,
     move_workflow_to_retry_fn,
     add_comment_fn,
     normalize_path_for_display_fn,
@@ -129,6 +132,7 @@ def finalize_developer_success_with_pull_request(
             reason="target repository path is not configured",
             source_working_branch=item.get("working_branch"),
             append_retry_shared_note_fn=append_retry_shared_note_fn,
+            update_run_status_fn=update_run_status_fn,
             move_workflow_to_retry_fn=move_workflow_to_retry_fn,
             normalize_path_for_display_fn=normalize_path_for_display_fn,
             get_item_run_root_fn=get_item_run_root_fn,
@@ -146,6 +150,7 @@ def finalize_developer_success_with_pull_request(
             reason="unable to determine developer branch",
             source_working_branch=item.get("working_branch"),
             append_retry_shared_note_fn=append_retry_shared_note_fn,
+            update_run_status_fn=update_run_status_fn,
             move_workflow_to_retry_fn=move_workflow_to_retry_fn,
             normalize_path_for_display_fn=normalize_path_for_display_fn,
             get_item_run_root_fn=get_item_run_root_fn,
@@ -166,6 +171,7 @@ def finalize_developer_success_with_pull_request(
             reason="unable to inspect git status",
             source_working_branch=developer_branch,
             append_retry_shared_note_fn=append_retry_shared_note_fn,
+            update_run_status_fn=update_run_status_fn,
             move_workflow_to_retry_fn=move_workflow_to_retry_fn,
             normalize_path_for_display_fn=normalize_path_for_display_fn,
             get_item_run_root_fn=get_item_run_root_fn,
@@ -188,6 +194,7 @@ def finalize_developer_success_with_pull_request(
             reason="developer run produced no repository changes",
             source_working_branch=developer_branch,
             append_retry_shared_note_fn=append_retry_shared_note_fn,
+            update_run_status_fn=update_run_status_fn,
             move_workflow_to_retry_fn=move_workflow_to_retry_fn,
             normalize_path_for_display_fn=normalize_path_for_display_fn,
             get_item_run_root_fn=get_item_run_root_fn,
@@ -212,6 +219,7 @@ def finalize_developer_success_with_pull_request(
             reason="unable to stage developer changes",
             source_working_branch=developer_branch,
             append_retry_shared_note_fn=append_retry_shared_note_fn,
+            update_run_status_fn=update_run_status_fn,
             move_workflow_to_retry_fn=move_workflow_to_retry_fn,
             normalize_path_for_display_fn=normalize_path_for_display_fn,
             get_item_run_root_fn=get_item_run_root_fn,
@@ -232,6 +240,7 @@ def finalize_developer_success_with_pull_request(
             reason="unable to create commit",
             source_working_branch=developer_branch,
             append_retry_shared_note_fn=append_retry_shared_note_fn,
+            update_run_status_fn=update_run_status_fn,
             move_workflow_to_retry_fn=move_workflow_to_retry_fn,
             normalize_path_for_display_fn=normalize_path_for_display_fn,
             get_item_run_root_fn=get_item_run_root_fn,
@@ -252,6 +261,7 @@ def finalize_developer_success_with_pull_request(
             reason="unable to push developer branch",
             source_working_branch=developer_branch,
             append_retry_shared_note_fn=append_retry_shared_note_fn,
+            update_run_status_fn=update_run_status_fn,
             move_workflow_to_retry_fn=move_workflow_to_retry_fn,
             normalize_path_for_display_fn=normalize_path_for_display_fn,
             get_item_run_root_fn=get_item_run_root_fn,
@@ -274,6 +284,7 @@ def finalize_developer_success_with_pull_request(
             reason=existing_pr.get("error", "unable to query pull requests"),
             source_working_branch=developer_branch,
             append_retry_shared_note_fn=append_retry_shared_note_fn,
+            update_run_status_fn=update_run_status_fn,
             move_workflow_to_retry_fn=move_workflow_to_retry_fn,
             normalize_path_for_display_fn=normalize_path_for_display_fn,
             get_item_run_root_fn=get_item_run_root_fn,
@@ -308,6 +319,7 @@ def finalize_developer_success_with_pull_request(
             reason="unable to create pull request",
             source_working_branch=developer_branch,
             append_retry_shared_note_fn=append_retry_shared_note_fn,
+            update_run_status_fn=update_run_status_fn,
             move_workflow_to_retry_fn=move_workflow_to_retry_fn,
             normalize_path_for_display_fn=normalize_path_for_display_fn,
             get_item_run_root_fn=get_item_run_root_fn,
