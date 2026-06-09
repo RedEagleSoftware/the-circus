@@ -264,43 +264,50 @@ def advance_developer_workflow_on_success(item, from_state_label="state:ready-fo
     )
 
 
-def advance_reviewer_workflow_on_approved(item):
+def advance_reviewer_workflow_on_approved(item, from_state_label="state:ready-for-review"):
     return workflow.advance_reviewer_workflow_on_approved(
         item,
         remove_label_fn=remove_label,
         add_label_fn=add_label,
         update_run_status_fn=update_run_status,
         log=print,
+        from_state_label=from_state_label,
     )
 
 
-def advance_reviewer_workflow_on_changes_requested(item):
+def advance_reviewer_workflow_on_changes_requested(item, from_state_label="state:ready-for-review"):
     return workflow.advance_reviewer_workflow_on_changes_requested(
         item,
         remove_label_fn=remove_label,
         add_label_fn=add_label,
         update_run_status_fn=update_run_status,
         log=print,
+        from_state_label=from_state_label,
     )
 
 
-def advance_architect_review_workflow_on_approved(item):
+def advance_architect_review_workflow_on_approved(item, from_state_label="state:ready-for-architect-review"):
     return workflow.advance_architect_review_workflow_on_approved(
         item,
         remove_label_fn=remove_label,
         add_label_fn=add_label,
         update_run_status_fn=update_run_status,
         log=print,
+        from_state_label=from_state_label,
     )
 
 
-def advance_architect_review_workflow_on_changes_requested(item):
+def advance_architect_review_workflow_on_changes_requested(
+    item,
+    from_state_label="state:ready-for-architect-review",
+):
     return workflow.advance_architect_review_workflow_on_changes_requested(
         item,
         remove_label_fn=remove_label,
         add_label_fn=add_label,
         update_run_status_fn=update_run_status,
         log=print,
+        from_state_label=from_state_label,
     )
 
 
@@ -1076,11 +1083,17 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             return False
         else:
             item.pop("agent_exit_non_zero", None)
-            if mode == "developer" and state_label in {"state:ready-for-dev", "state:changes-requested"}:
+            if mode == "developer" and state_label in {
+                "state:ready-for-dev",
+                "state:changes-requested",
+                "state:needs-agent-retry",
+            }:
+                source_state_label = item.get("retry_context", {}).get("source_state_label")
+                developer_from_state_label = source_state_label or state_label
                 launch_ok = finalize_developer_success_with_pull_request(
                     item,
                     launch_brief_path,
-                    from_state_label=state_label,
+                    from_state_label=developer_from_state_label,
                 )
                 outcome_value = "developer PR created" if launch_ok else "no changes detected"
                 update_run_status(

@@ -275,10 +275,17 @@ def move_workflow_to_retry(
     )
 
 
-def advance_reviewer_workflow_on_approved(item, remove_label_fn, add_label_fn, update_run_status_fn, log=print):
+def advance_reviewer_workflow_on_approved(
+    item,
+    remove_label_fn,
+    add_label_fn,
+    update_run_status_fn,
+    log=print,
+    from_state_label=REVIEW_LABEL,
+):
     transition_steps = [
         ("remove", LOCK_LABEL),
-        ("remove", REVIEW_LABEL),
+        ("remove", from_state_label),
         ("add", ARCHITECT_REVIEW_LABEL),
     ]
 
@@ -306,10 +313,11 @@ def advance_reviewer_workflow_on_changes_requested(
     add_label_fn,
     update_run_status_fn,
     log=print,
+    from_state_label=REVIEW_LABEL,
 ):
     transition_steps = [
         ("remove", LOCK_LABEL),
-        ("remove", REVIEW_LABEL),
+        ("remove", from_state_label),
         ("add", CHANGES_REQUESTED_LABEL),
     ]
 
@@ -335,10 +343,11 @@ def advance_architect_review_workflow_on_approved(
     add_label_fn,
     update_run_status_fn,
     log=print,
+    from_state_label=ARCHITECT_REVIEW_LABEL,
 ):
     transition_steps = [
         ("remove", LOCK_LABEL),
-        ("remove", ARCHITECT_REVIEW_LABEL),
+        ("remove", from_state_label),
         ("add", HUMAN_REVIEW_LABEL),
     ]
 
@@ -364,10 +373,11 @@ def advance_architect_review_workflow_on_changes_requested(
     add_label_fn,
     update_run_status_fn,
     log=print,
+    from_state_label=ARCHITECT_REVIEW_LABEL,
 ):
     transition_steps = [
         ("remove", LOCK_LABEL),
-        ("remove", ARCHITECT_REVIEW_LABEL),
+        ("remove", from_state_label),
         ("add", CHANGES_REQUESTED_LABEL),
     ]
 

@@ -133,7 +133,7 @@ def handle_reviewer_result(
     update_run_status_fn(item, artifacts={"review_result": normalize_path_for_display_fn(review_result_path)})
     if review_outcome == "APPROVED":
         log("[Dispatch] Review result handling: APPROVED.")
-        advanced = advance_reviewer_workflow_on_approved_fn(item)
+        advanced = advance_reviewer_workflow_on_approved_fn(item, from_state_label=source_state_label)
         update_run_status_fn(
             item,
             completed_at=utc_timestamp_now_fn(),
@@ -149,7 +149,7 @@ def handle_reviewer_result(
         log("[Dispatch] Review result handling: CHANGES_REQUESTED.")
         running_notes_path = append_reviewer_feedback_note_fn(item_run_root, review_result_path, review_pr_url)
         log(f"[Dispatch] Reviewer feedback context appended to running notes: {running_notes_path}")
-        advanced = advance_reviewer_workflow_on_changes_requested_fn(item)
+        advanced = advance_reviewer_workflow_on_changes_requested_fn(item, from_state_label=source_state_label)
         update_run_status_fn(
             item,
             completed_at=utc_timestamp_now_fn(),
@@ -315,7 +315,7 @@ def handle_architect_review_result(
     log(f"[Dispatch] Architect review outcome: {review_outcome or 'NO_UNAMBIGUOUS_OUTCOME'}.")
     if review_outcome == "APPROVED":
         log("[Dispatch] Architect review passed; implementation is ready for human review.")
-        advanced = advance_architect_review_workflow_on_approved_fn(item)
+        advanced = advance_architect_review_workflow_on_approved_fn(item, from_state_label=source_state_label)
         update_run_status_fn(
             item,
             completed_at=utc_timestamp_now_fn(),
@@ -335,7 +335,10 @@ def handle_architect_review_result(
             review_pr_url,
         )
         log(f"[Dispatch] Architect review feedback context appended to running notes: {running_notes_feedback_path}")
-        advanced = advance_architect_review_workflow_on_changes_requested_fn(item)
+        advanced = advance_architect_review_workflow_on_changes_requested_fn(
+            item,
+            from_state_label=source_state_label,
+        )
         update_run_status_fn(
             item,
             completed_at=utc_timestamp_now_fn(),

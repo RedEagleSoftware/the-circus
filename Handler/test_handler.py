@@ -759,6 +759,48 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", executing_lines[0])
         self.assertFalse(any("--prompt-file" in line for line in executing_lines))
 
+    def test_launch_agent_junie_retry_state_uses_retry_source_for_success_transition(self):
+        item = {
+            "type": "issue",
+            "number": 33,
+            "title": "Retry developer run",
+            "url": "https://github.com/owner/repo/issues/33",
+            "retry_context": {
+                "source_state_label": "state:changes-requested",
+                "requested_at": "2026-06-09T00:00:00Z",
+            },
+        }
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-33/run-003-developer/launch-brief.md"
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler.os.path, "abspath", return_value="C:/abs/Watchtower/runs/issue-33/run-003-developer/launch-brief.md"):
+                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                    with patch.object(
+                        handler,
+                        "finalize_developer_success_with_pull_request",
+                        return_value=True,
+                    ) as mock_finalize:
+                        launched = handler.launch_agent(
+                            item,
+                            "state:needs-agent-retry",
+                            config,
+                            os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                            launch_brief_path,
+                        )
+
+        self.assertTrue(launched)
+        mock_finalize.assert_called_once_with(
+            item,
+            launch_brief_path,
+            from_state_label="state:changes-requested",
+        )
+
     def test_launch_agent_junie_non_zero_exit_comments_for_human_inspection(self):
         item = {
             "type": "issue",
@@ -2096,7 +2138,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_ISSUE_NUMBER"], "9")
         self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_LAUNCH_BRIEF"], absolute_launch_brief_path)
         self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_RESULT_PATH"], review_result_path)
-        mock_transition.assert_called_once_with(item)
+        mock_transition.assert_called_once_with(item, from_state_label="state:ready-for-review")
 
     def test_launch_agent_codex_architect_review_runs_codex_exec_with_pr_url_and_context(self):
         item = {
@@ -2175,7 +2217,7 @@ class HandlerObservabilityTests(unittest.TestCase):
             kwargs["env"]["CIRCUS_ARCHITECT_REVIEW_RESULT_PATH"],
             architect_review_result_path,
         )
-        mock_transition.assert_called_once_with(item)
+        mock_transition.assert_called_once_with(item, from_state_label="state:ready-for-architect-review")
 
     def test_launch_agent_codex_architect_review_changes_requested_routes_to_changes_requested_transition(self):
         item = {
@@ -2231,7 +2273,7 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         self.assertTrue(launched)
         mock_append_feedback.assert_called_once()
-        mock_transition.assert_called_once_with(item)
+        mock_transition.assert_called_once_with(item, from_state_label="state:ready-for-architect-review")
 
     def test_launch_agent_codex_architect_review_missing_result_artifact_moves_to_retry(self):
         item = {
@@ -2425,7 +2467,7 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         self.assertTrue(launched)
         mock_approved.assert_not_called()
-        mock_changes.assert_called_once_with(item)
+        mock_changes.assert_called_once_with(item, from_state_label="state:ready-for-review")
         mock_append_feedback.assert_called_once()
         self.assertEqual(mock_append_feedback.call_args.args[1], review_result_path)
         self.assertEqual(mock_append_feedback.call_args.args[2], "https://github.com/owner/repo/pull/88")
