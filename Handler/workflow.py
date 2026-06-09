@@ -58,12 +58,6 @@ def resolve_dispatch_config(item, labels):
     primary_states = get_primary_state_labels(labels)
     state_labels = get_state_labels(labels)
 
-    if NEEDS_AGENT_RETRY_LABEL in primary_states:
-        retry_context = item.get("retry_context") or {}
-        source_state_label = retry_context.get("source_state_label")
-        if source_state_label in LABEL_MAP:
-            return source_state_label, dict(LABEL_MAP[source_state_label])
-
     if not primary_states:
         if state_labels:
             item["comment"] = (
@@ -91,7 +85,7 @@ def resolve_dispatch_config(item, labels):
     dispatch_config = LABEL_MAP.get(state_label)
 
     if dispatch_config is None and state_label in RETRYABLE_WORKFLOW_LABELS:
-        dispatch_config = WORKFLOW_STATES.get(state_label, {}).get("dispatch")
+        dispatch_config = {}
 
     if dispatch_config is None:
         item["comment"] = (

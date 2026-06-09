@@ -60,6 +60,45 @@ def add_developer_pr_failure_comment(item, details, *, lock_label, add_comment_f
     add_comment_fn(item)
 
 
+def move_developer_post_run_failure_to_retry(
+    item,
+    *,
+    from_state_label,
+    launch_brief_path,
+    reason,
+    source_working_branch,
+    append_retry_shared_note_fn,
+    move_workflow_to_retry_fn,
+    normalize_path_for_display_fn,
+    get_item_run_root_fn,
+    lock_label,
+    add_comment_fn,
+):
+    source_run_dir = normalize_path_for_display_fn(os.path.dirname(launch_brief_path))
+    retry_context = {
+        "source_state_label": from_state_label,
+        "source_run_status_path": item.get("run_status_path"),
+        "source_run_dir": source_run_dir,
+        "source_working_branch": source_working_branch,
+        "source_result_artifact": item.get("result_artifact"),
+        "source_agent": "junie",
+        "source_mode": "developer",
+        "source_exit_code": 0,
+        "reason": reason,
+    }
+    item_run_root = get_item_run_root_fn(item)
+    append_retry_shared_note_fn(item_run_root, retry_context)
+    advanced = move_workflow_to_retry_fn(item, from_state_label)
+    if not advanced:
+        item["comment"] = (
+            f"Handler encountered a retryable developer post-run failure for {item['type']} "
+            f"#{item['number']} ({reason}), but retry transition failed and the lock label "
+            f"`{lock_label}` may remain for human inspection."
+        )
+        add_comment_fn(item)
+    return advanced
+
+
 def finalize_developer_success_with_pull_request(
     item,
     launch_brief_path,
@@ -83,24 +122,36 @@ def finalize_developer_success_with_pull_request(
     repo_path = target_repo_path
     if not repo_path:
         print("[Dispatch] Cannot finalize developer success: CIRCUS_TARGET_REPO_PATH is not configured.")
-        add_developer_pr_failure_comment(
+        return move_developer_post_run_failure_to_retry(
             item,
-            "target repository path is not configured",
+            from_state_label=from_state_label,
+            launch_brief_path=launch_brief_path,
+            reason="target repository path is not configured",
+            source_working_branch=item.get("working_branch"),
+            append_retry_shared_note_fn=append_retry_shared_note_fn,
+            move_workflow_to_retry_fn=move_workflow_to_retry_fn,
+            normalize_path_for_display_fn=normalize_path_for_display_fn,
+            get_item_run_root_fn=get_item_run_root_fn,
             lock_label=lock_label,
             add_comment_fn=add_comment_fn,
         )
-        return False
 
     developer_branch = item.get("working_branch") or get_current_git_branch_fn(repo_path)
     if not developer_branch:
         print("[Dispatch] Cannot determine developer branch after successful run.")
-        add_developer_pr_failure_comment(
+        return move_developer_post_run_failure_to_retry(
             item,
-            "unable to determine developer branch",
+            from_state_label=from_state_label,
+            launch_brief_path=launch_brief_path,
+            reason="unable to determine developer branch",
+            source_working_branch=item.get("working_branch"),
+            append_retry_shared_note_fn=append_retry_shared_note_fn,
+            move_workflow_to_retry_fn=move_workflow_to_retry_fn,
+            normalize_path_for_display_fn=normalize_path_for_display_fn,
+            get_item_run_root_fn=get_item_run_root_fn,
             lock_label=lock_label,
             add_comment_fn=add_comment_fn,
         )
-        return False
 
     print(f"[Dispatch] Developer branch detected for post-run PR flow: {developer_branch}")
 
@@ -108,13 +159,19 @@ def finalize_developer_success_with_pull_request(
     if status_result is None or status_result.returncode != 0:
         stderr = status_result.stderr.strip() if status_result and status_result.stderr else "unknown error"
         print(f"[Dispatch] Unable to collect git status for PR flow: {stderr}")
-        add_developer_pr_failure_comment(
+        return move_developer_post_run_failure_to_retry(
             item,
-            "unable to inspect git status",
+            from_state_label=from_state_label,
+            launch_brief_path=launch_brief_path,
+            reason="unable to inspect git status",
+            source_working_branch=developer_branch,
+            append_retry_shared_note_fn=append_retry_shared_note_fn,
+            move_workflow_to_retry_fn=move_workflow_to_retry_fn,
+            normalize_path_for_display_fn=normalize_path_for_display_fn,
+            get_item_run_root_fn=get_item_run_root_fn,
             lock_label=lock_label,
             add_comment_fn=add_comment_fn,
         )
-        return False
 
     git_status = status_result.stdout.strip()
     print(f"[Dispatch] Git status for developer branch '{developer_branch}':")
@@ -124,26 +181,19 @@ def finalize_developer_success_with_pull_request(
         print("[Dispatch] <clean>")
 
     if not git_status:
-        retry_context = {
-            "source_state_label": from_state_label,
-            "source_run_status_path": item.get("run_status_path"),
-            "source_working_branch": developer_branch,
-            "source_result_artifact": item.get("result_artifact"),
-            "source_agent": "junie",
-            "source_mode": "developer",
-            "source_exit_code": 0,
-            "reason": "developer run produced no repository changes",
-        }
-        item_run_root = get_item_run_root_fn(item)
-        append_retry_shared_note_fn(item_run_root, retry_context)
-        advanced = move_workflow_to_retry_fn(item, from_state_label)
-        if not advanced:
-            item["comment"] = (
-                f"Handler detected no changes after successful developer execution for {item['type']} "
-                f"#{item['number']} on branch `{developer_branch}`. Retry transition failed and "
-                f"the lock label `{lock_label}` may remain for human inspection."
-            )
-            add_comment_fn(item)
+        advanced = move_developer_post_run_failure_to_retry(
+            item,
+            from_state_label=from_state_label,
+            launch_brief_path=launch_brief_path,
+            reason="developer run produced no repository changes",
+            source_working_branch=developer_branch,
+            append_retry_shared_note_fn=append_retry_shared_note_fn,
+            move_workflow_to_retry_fn=move_workflow_to_retry_fn,
+            normalize_path_for_display_fn=normalize_path_for_display_fn,
+            get_item_run_root_fn=get_item_run_root_fn,
+            lock_label=lock_label,
+            add_comment_fn=add_comment_fn,
+        )
         print(
             "[Dispatch] No local changes detected after developer success; workflow moved to retry state."
             if advanced
@@ -155,13 +205,19 @@ def finalize_developer_success_with_pull_request(
     if stage_result is None or stage_result.returncode != 0:
         stderr = stage_result.stderr.strip() if stage_result and stage_result.stderr else "unknown error"
         print(f"[Dispatch] Failed to stage developer changes: {stderr}")
-        add_developer_pr_failure_comment(
+        return move_developer_post_run_failure_to_retry(
             item,
-            "unable to stage developer changes",
+            from_state_label=from_state_label,
+            launch_brief_path=launch_brief_path,
+            reason="unable to stage developer changes",
+            source_working_branch=developer_branch,
+            append_retry_shared_note_fn=append_retry_shared_note_fn,
+            move_workflow_to_retry_fn=move_workflow_to_retry_fn,
+            normalize_path_for_display_fn=normalize_path_for_display_fn,
+            get_item_run_root_fn=get_item_run_root_fn,
             lock_label=lock_label,
             add_comment_fn=add_comment_fn,
         )
-        return False
 
     commit_message = build_developer_commit_message(item)
     print(f"[Dispatch] Developer commit message: {commit_message}")
@@ -169,13 +225,19 @@ def finalize_developer_success_with_pull_request(
     if commit_result is None or commit_result.returncode != 0:
         stderr = commit_result.stderr.strip() if commit_result and commit_result.stderr else "unknown error"
         print(f"[Dispatch] Failed to create developer commit: {stderr}")
-        add_developer_pr_failure_comment(
+        return move_developer_post_run_failure_to_retry(
             item,
-            "unable to create commit",
+            from_state_label=from_state_label,
+            launch_brief_path=launch_brief_path,
+            reason="unable to create commit",
+            source_working_branch=developer_branch,
+            append_retry_shared_note_fn=append_retry_shared_note_fn,
+            move_workflow_to_retry_fn=move_workflow_to_retry_fn,
+            normalize_path_for_display_fn=normalize_path_for_display_fn,
+            get_item_run_root_fn=get_item_run_root_fn,
             lock_label=lock_label,
             add_comment_fn=add_comment_fn,
         )
-        return False
 
     print(f"[Dispatch] Commit created on branch '{developer_branch}'.")
 
@@ -183,13 +245,19 @@ def finalize_developer_success_with_pull_request(
     if push_result is None or push_result.returncode != 0:
         stderr = push_result.stderr.strip() if push_result and push_result.stderr else "unknown error"
         print(f"[Dispatch] Failed to push developer branch '{developer_branch}': {stderr}")
-        add_developer_pr_failure_comment(
+        return move_developer_post_run_failure_to_retry(
             item,
-            "unable to push developer branch",
+            from_state_label=from_state_label,
+            launch_brief_path=launch_brief_path,
+            reason="unable to push developer branch",
+            source_working_branch=developer_branch,
+            append_retry_shared_note_fn=append_retry_shared_note_fn,
+            move_workflow_to_retry_fn=move_workflow_to_retry_fn,
+            normalize_path_for_display_fn=normalize_path_for_display_fn,
+            get_item_run_root_fn=get_item_run_root_fn,
             lock_label=lock_label,
             add_comment_fn=add_comment_fn,
         )
-        return False
 
     print(f"[Dispatch] Push succeeded for branch '{developer_branch}'.")
 
@@ -199,13 +267,19 @@ def finalize_developer_success_with_pull_request(
             f"[Dispatch] Pull request lookup failed for branch '{developer_branch}': "
             f"{existing_pr.get('error', 'unknown error')}"
         )
-        add_developer_pr_failure_comment(
+        return move_developer_post_run_failure_to_retry(
             item,
-            existing_pr.get("error", "unable to query pull requests"),
+            from_state_label=from_state_label,
+            launch_brief_path=launch_brief_path,
+            reason=existing_pr.get("error", "unable to query pull requests"),
+            source_working_branch=developer_branch,
+            append_retry_shared_note_fn=append_retry_shared_note_fn,
+            move_workflow_to_retry_fn=move_workflow_to_retry_fn,
+            normalize_path_for_display_fn=normalize_path_for_display_fn,
+            get_item_run_root_fn=get_item_run_root_fn,
             lock_label=lock_label,
             add_comment_fn=add_comment_fn,
         )
-        return False
 
     existing_pr_url = existing_pr.get("url")
     if existing_pr_url:
@@ -227,13 +301,19 @@ def finalize_developer_success_with_pull_request(
     create_result = create_pull_request_with_body_file_fn(developer_branch, pr_title, pr_body)
     if create_result is None:
         print(f"[Dispatch] Failed to create pull request for branch '{developer_branch}'.")
-        add_developer_pr_failure_comment(
+        return move_developer_post_run_failure_to_retry(
             item,
-            "unable to create pull request",
+            from_state_label=from_state_label,
+            launch_brief_path=launch_brief_path,
+            reason="unable to create pull request",
+            source_working_branch=developer_branch,
+            append_retry_shared_note_fn=append_retry_shared_note_fn,
+            move_workflow_to_retry_fn=move_workflow_to_retry_fn,
+            normalize_path_for_display_fn=normalize_path_for_display_fn,
+            get_item_run_root_fn=get_item_run_root_fn,
             lock_label=lock_label,
             add_comment_fn=add_comment_fn,
         )
-        return False
 
     pr_url_match = re.search(r"https?://\S+", create_result)
     pr_url = pr_url_match.group(0) if pr_url_match else create_result.strip()

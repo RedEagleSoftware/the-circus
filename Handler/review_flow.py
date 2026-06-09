@@ -106,6 +106,7 @@ def handle_reviewer_result(
             exit_code=result_returncode,
             success=advanced,
             outcome="missing result artifact",
+            retry_context=retry_context,
             stop_reason=(
                 f"missing reviewer result artifact at {normalize_path_for_display_fn(review_result_path)}"
                 if advanced
@@ -207,6 +208,7 @@ def handle_reviewer_result(
         exit_code=result_returncode,
         success=advanced,
         outcome="reviewer outcome ambiguous",
+        retry_context=retry_context,
         stop_reason=(
             "no unambiguous review outcome marker found"
             if advanced

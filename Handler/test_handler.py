@@ -792,7 +792,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("lock label `state:agent-in-progress` remains", item["comment"])
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("[Dispatch] Junie exit code: 7" in line for line in printed_lines))
-        self.assertTrue(any("human inspection is required" in line for line in printed_lines))
+        self.assertTrue(any("human inspection" in line for line in printed_lines))
 
     def test_launch_agent_junie_developer_success_runs_post_run_pr_flow(self):
         item = {
@@ -1020,13 +1020,15 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertNotIn("gh pr create", mock_run_command.call_args_list[0].args[0])
         mock_advance.assert_called_once_with(item, from_state_label="state:ready-for-dev")
 
-    def test_finalize_developer_success_push_failure_prevents_transition(self):
+    def test_finalize_developer_success_push_failure_moves_to_retry_state(self):
         item = {
             "type": "issue",
             "number": 33,
             "title": "Push fails",
             "url": "https://github.com/owner/repo/issues/33",
             "working_branch": "circus/issue-33-push-fails",
+            "run_status_path": "Watchtower/runs/issue-33/run-001-developer/status.json",
+            "result_artifact": "Watchtower/runs/issue-33/run-001-developer/run-result.md",
         }
 
         git_results = [
@@ -1041,25 +1043,34 @@ class HandlerObservabilityTests(unittest.TestCase):
                 with patch.object(handler, "run_command") as mock_run_command:
                     with patch.object(handler, "advance_developer_workflow_on_success") as mock_advance:
                         with patch.object(handler, "add_comment") as mock_add_comment:
-                            transitioned = handler.finalize_developer_success_with_pull_request(
-                                item,
-                                "Watchtower/runs/issue-33/run-001-developer/launch-brief.md",
-                            )
+                            with patch.object(handler, "append_retry_shared_note") as mock_append_retry:
+                                with patch.object(handler, "move_workflow_to_retry", return_value=True) as mock_move_retry:
+                                    transitioned = handler.finalize_developer_success_with_pull_request(
+                                        item,
+                                        "Watchtower/runs/issue-33/run-001-developer/launch-brief.md",
+                                    )
 
-        self.assertFalse(transitioned)
+        self.assertTrue(transitioned)
         mock_run_command.assert_not_called()
         mock_advance.assert_not_called()
-        mock_add_comment.assert_called_once_with(item)
-        self.assertIn("failed to prepare a pull request", item["comment"])
-        self.assertIn("unable to push developer branch", item["comment"])
+        mock_add_comment.assert_not_called()
+        mock_append_retry.assert_called_once()
+        retry_context = mock_append_retry.call_args[0][1]
+        self.assertEqual(retry_context["source_state_label"], "state:ready-for-dev")
+        self.assertEqual(retry_context["source_mode"], "developer")
+        self.assertEqual(retry_context["source_run_dir"], "Watchtower/runs/issue-33/run-001-developer")
+        self.assertEqual(retry_context["reason"], "unable to push developer branch")
+        mock_move_retry.assert_called_once_with(item, "state:ready-for-dev")
 
-    def test_finalize_developer_success_pr_creation_failure_prevents_transition(self):
+    def test_finalize_developer_success_pr_creation_failure_moves_to_retry_state(self):
         item = {
             "type": "issue",
             "number": 34,
             "title": "PR create fails",
             "url": "https://github.com/owner/repo/issues/34",
             "working_branch": "circus/issue-34-pr-create-fails",
+            "run_status_path": "Watchtower/runs/issue-34/run-001-developer/status.json",
+            "result_artifact": "Watchtower/runs/issue-34/run-001-developer/run-result.md",
         }
 
         git_results = [
@@ -1074,19 +1085,26 @@ class HandlerObservabilityTests(unittest.TestCase):
                 with patch.object(handler, "run_command", side_effect=["[]", None]) as mock_run_command:
                     with patch.object(handler, "advance_developer_workflow_on_success") as mock_advance:
                         with patch.object(handler, "add_comment") as mock_add_comment:
-                            transitioned = handler.finalize_developer_success_with_pull_request(
-                                item,
-                                "Watchtower/runs/issue-34/run-001-developer/launch-brief.md",
-                            )
+                            with patch.object(handler, "append_retry_shared_note") as mock_append_retry:
+                                with patch.object(handler, "move_workflow_to_retry", return_value=True) as mock_move_retry:
+                                    transitioned = handler.finalize_developer_success_with_pull_request(
+                                        item,
+                                        "Watchtower/runs/issue-34/run-001-developer/launch-brief.md",
+                                    )
 
-        self.assertFalse(transitioned)
+        self.assertTrue(transitioned)
         self.assertEqual(len(mock_run_command.call_args_list), 2)
         self.assertIn("gh pr list", mock_run_command.call_args_list[0].args[0])
         self.assertIn("gh pr create", mock_run_command.call_args_list[1].args[0])
         mock_advance.assert_not_called()
-        mock_add_comment.assert_called_once_with(item)
-        self.assertIn("failed to prepare a pull request", item["comment"])
-        self.assertIn("unable to create pull request", item["comment"])
+        mock_add_comment.assert_not_called()
+        mock_append_retry.assert_called_once()
+        retry_context = mock_append_retry.call_args[0][1]
+        self.assertEqual(retry_context["source_state_label"], "state:ready-for-dev")
+        self.assertEqual(retry_context["source_mode"], "developer")
+        self.assertEqual(retry_context["source_run_dir"], "Watchtower/runs/issue-34/run-001-developer")
+        self.assertEqual(retry_context["reason"], "unable to create pull request")
+        mock_move_retry.assert_called_once_with(item, "state:ready-for-dev")
 
     def test_finalize_developer_success_without_changes_moves_to_retry_state(self):
         item = {
@@ -1118,6 +1136,10 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_advance.assert_not_called()
         mock_add_comment.assert_not_called()
         mock_append_retry.assert_called_once()
+        retry_context = mock_append_retry.call_args[0][1]
+        self.assertEqual(retry_context["source_state_label"], "state:ready-for-dev")
+        self.assertEqual(retry_context["source_mode"], "developer")
+        self.assertEqual(retry_context["source_run_dir"], "Watchtower/runs/issue-35/run-001-developer")
         mock_move_retry.assert_called_once_with(item, "state:ready-for-dev")
 
     def test_build_codex_architect_task_text_includes_handoff_and_comment_requirements(self):
@@ -2205,7 +2227,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_append_feedback.assert_called_once()
         mock_transition.assert_called_once_with(item)
 
-    def test_launch_agent_codex_architect_review_missing_result_artifact_does_not_transition(self):
+    def test_launch_agent_codex_architect_review_missing_result_artifact_moves_to_retry(self):
         item = {
             "type": "issue",
             "number": 14,
@@ -2243,17 +2265,25 @@ class HandlerObservabilityTests(unittest.TestCase):
                                             handler,
                                             "advance_architect_review_workflow_on_approved",
                                         ) as mock_transition:
-                                            launched = handler.launch_agent(
-                                                item,
-                                                "state:ready-for-architect-review",
-                                                config,
-                                                os.path.normpath(os.path.join("TheFarm", "roles", "architect.md")),
-                                                "Watchtower/runs/issue-14/run-001-architect-review/launch-brief.md",
-                                            )
+                                            with patch.object(
+                                                handler,
+                                                "append_retry_shared_note",
+                                                return_value="Watchtower/runs/issue-14/shared/running-notes.md",
+                                            ) as mock_append_retry:
+                                                with patch.object(handler, "move_workflow_to_retry", return_value=True) as mock_retry:
+                                                    launched = handler.launch_agent(
+                                                        item,
+                                                        "state:ready-for-architect-review",
+                                                        config,
+                                                        os.path.normpath(os.path.join("TheFarm", "roles", "architect.md")),
+                                                        "Watchtower/runs/issue-14/run-001-architect-review/launch-brief.md",
+                                                    )
 
-        self.assertFalse(launched)
+        self.assertTrue(launched)
         self.assertTrue(item.get("missing_review_result_artifact"))
-        mock_add_comment.assert_called_once()
+        mock_add_comment.assert_not_called()
+        mock_append_retry.assert_called_once()
+        mock_retry.assert_called_once_with(item, "state:ready-for-architect-review")
         mock_transition.assert_not_called()
 
     def test_launch_agent_codex_reviewer_adds_sandbox_bypass_flag_when_enabled(self):
@@ -2302,7 +2332,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("WARNING: Codex sandbox bypass ENABLED" in line for line in printed_lines))
 
-    def test_launch_agent_codex_reviewer_ambiguous_output_does_not_transition_labels(self):
+    def test_launch_agent_codex_reviewer_ambiguous_output_moves_to_retry(self):
         item = {
             "type": "issue",
             "number": 9,
@@ -2329,19 +2359,26 @@ class HandlerObservabilityTests(unittest.TestCase):
                                 with patch.object(handler, "advance_reviewer_workflow_on_approved") as mock_approved:
                                     with patch.object(handler, "advance_reviewer_workflow_on_changes_requested") as mock_changes:
                                         with patch.object(handler, "add_comment") as mock_add_comment:
-                                            launched = handler.launch_agent(
-                                                item,
-                                                "state:ready-for-review",
-                                                config,
-                                                os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
-                                                "Watchtower/runs/issue-9/run-001-reviewer/launch-brief.md",
-                                            )
+                                            with patch.object(
+                                                handler,
+                                                "append_retry_shared_note",
+                                                return_value="Watchtower/runs/issue-9/shared/running-notes.md",
+                                            ) as mock_append_retry:
+                                                with patch.object(handler, "move_workflow_to_retry", return_value=True) as mock_retry:
+                                                    launched = handler.launch_agent(
+                                                        item,
+                                                        "state:ready-for-review",
+                                                        config,
+                                                        os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
+                                                        "Watchtower/runs/issue-9/run-001-reviewer/launch-brief.md",
+                                                    )
 
         self.assertTrue(launched)
         mock_approved.assert_not_called()
         mock_changes.assert_not_called()
-        mock_add_comment.assert_called_once_with(item)
-        self.assertIn("no unambiguous review outcome marker", item["comment"])
+        mock_add_comment.assert_not_called()
+        mock_append_retry.assert_called_once()
+        mock_retry.assert_called_once_with(item, "state:ready-for-review")
 
     def test_launch_agent_codex_reviewer_changes_requested_routes_to_changes_requested_transition(self):
         item = {
@@ -2387,7 +2424,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(mock_append_feedback.call_args.args[1], review_result_path)
         self.assertEqual(mock_append_feedback.call_args.args[2], "https://github.com/owner/repo/pull/88")
 
-    def test_launch_agent_codex_reviewer_missing_review_result_artifact_does_not_transition(self):
+    def test_launch_agent_codex_reviewer_missing_review_result_artifact_moves_to_retry(self):
         item = {
             "type": "issue",
             "number": 10,
@@ -2423,13 +2460,19 @@ class HandlerObservabilityTests(unittest.TestCase):
                                         with patch.object(handler, "advance_reviewer_workflow_on_approved") as mock_approved:
                                             with patch.object(handler, "advance_reviewer_workflow_on_changes_requested") as mock_changes:
                                                 with patch.object(handler, "add_comment") as mock_add_comment:
-                                                    launched = handler.launch_agent(
-                                                        item,
-                                                        "state:ready-for-review",
-                                                        config,
-                                                        os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
-                                                        launch_brief_path,
-                                                    )
+                                                    with patch.object(
+                                                        handler,
+                                                        "append_retry_shared_note",
+                                                        return_value="Watchtower/runs/issue-10/shared/running-notes.md",
+                                                    ) as mock_append_retry:
+                                                        with patch.object(handler, "move_workflow_to_retry", return_value=True) as mock_retry:
+                                                            launched = handler.launch_agent(
+                                                                item,
+                                                                "state:ready-for-review",
+                                                                config,
+                                                                os.path.normpath(os.path.join("TheFarm", "roles", "reviewer.md")),
+                                                                launch_brief_path,
+                                                            )
 
             status_path = os.path.join(os.path.dirname(launch_brief_path), "status.json")
             result_path = os.path.join(os.path.dirname(launch_brief_path), "result.md")
@@ -2437,19 +2480,20 @@ class HandlerObservabilityTests(unittest.TestCase):
                 status_payload = json.load(status_file)
 
             self.assertEqual(status_payload["outcome"], "missing result artifact")
-            self.assertFalse(status_payload["success"])
+            self.assertTrue(status_payload["success"])
             self.assertEqual(status_payload["exit_code"], 0)
             self.assertIn("review_result", status_payload["artifacts"])
             self.assertTrue(os.path.isfile(result_path))
+            self.assertIn("retry_context", status_payload)
 
-        self.assertFalse(launched)
+        self.assertTrue(launched)
         mock_parse_outcome.assert_not_called()
         mock_approved.assert_not_called()
         mock_changes.assert_not_called()
-        mock_add_comment.assert_called_once_with(item)
+        mock_add_comment.assert_not_called()
+        mock_append_retry.assert_called_once()
+        mock_retry.assert_called_once_with(item, "state:ready-for-review")
         self.assertTrue(item.get("missing_review_result_artifact"))
-        self.assertIn("was not created", item["comment"])
-        self.assertIn(review_result_path, item["comment"])
 
     def test_junie_command_generation_is_unchanged(self):
         command = handler.build_junie_command(
