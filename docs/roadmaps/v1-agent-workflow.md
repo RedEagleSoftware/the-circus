@@ -111,6 +111,7 @@ over hidden inference and automation.
 - `state:agent-in-progress`
 
 Systems Architect remains a strategic planning role, but now uses explicit GitHub workflow states and human-selected follow-up labels.
+The `state:ready-for-roadmap-update` state is a documentation synchronization step for accepted strategy, not an implementation handoff.
 
 ---
 
@@ -177,6 +178,41 @@ Human review remains authoritative before merge.
 
 ---
 
+### 6. Strategic Roadmap Synchronization
+
+When a Systems Architect recommendation is accepted, the human reviewer applies `state:ready-for-roadmap-update`.
+
+The Roadmap Updater then:
+- identifies the approved Systems Architect recommendation from the issue discussion
+- updates roadmaps, capability trees, and related knowledge artifacts
+- creates a documentation-only pull request
+- leaves a summary comment linking the issue to the PR
+
+Roadmap updates should not mutate workflow labels directly, auto-merge, or produce runtime implementation changes.
+
+---
+
+# Current Strategic Frontier
+
+Issue #19 confirms that the broad capability order remains:
+
+`Workflow Foundation` -> `Self Hosting` -> `Provider Routing` -> `Skills`
+
+The next active frontier is **self-hosting reliability and strategic memory**.
+
+Within that frontier, the intended sequence is:
+
+1. Repository onboarding.
+2. Workspace isolation.
+3. Durable polling.
+4. Stale-lock and run recovery.
+5. Persistent Watchtower visibility.
+6. Strategic memory that records accepted recommendations without making Watchtower the primary review surface.
+
+Provider Routing and Skills remain valid future work, but both should stay behind self-hosting reliability so provider complexity and role specialization are added only after the runtime can observe, recover, and preserve context across repeated runs.
+
+---
+
 # Artifact Model
 
 ## Launch Briefs
@@ -231,6 +267,9 @@ Run artifacts represent:
 
 not:
 - durable project memory
+
+Strategic recommendation comments in GitHub remain the human review surface.
+Watchtower may record recommendation comment URLs or IDs for traceability, but it should not replace the issue discussion as the source of truth.
 
 ---
 
@@ -316,14 +355,16 @@ Agents should not:
 Potential future exploration areas:
 
 - multi-agent concurrency
-- richer Watchtower UI
+- provider routing after self-hosting reliability improves
+- role skills and specialization after provider and execution reliability are stable
+- richer Watchtower UI for persistent visibility
 - live orchestration dashboards
 - replayable execution history
 - proposal/recommendation workflows
 - automatic artifact indexing
 - deeper GitHub integration
 - project-specific custom agent profiles
-- autonomous retry/recovery flows
+- autonomous retry/recovery flows after stale-lock/run recovery is observable and reviewable
 - execution metrics and analytics
 
 These are intentionally deferred until the core workflow model is stable.

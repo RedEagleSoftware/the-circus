@@ -13,6 +13,11 @@ This changelog tracks notable completed work by GitHub issue.
 - [concise user-visible or workflow-significant change]
 - [optional second concise change]
 
+### Issue #19 - Reassess Circus strategic direction after Systems Architect maturation
+
+- Updated strategic roadmap and capability-tree documentation to keep `Self Hosting` as the active frontier before `Provider Routing` and `Skills`.
+- Reconciled operations status with the matured Systems Architect and Roadmap Updater workflows, including the next self-hosting reliability sequence.
+
 ### Issue #20 - Add Roadmap Updater workflow for approved strategic recommendations
 
 - Added Roadmap Updater role and workflow to synchronize documentation and knowledge artifacts based on approved strategic recommendations.

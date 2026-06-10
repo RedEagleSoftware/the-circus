@@ -9,6 +9,9 @@
 - Lock acquisition working
 - One-dispatch-then-exit behavior operational
 - Startup observability added
+- Codex launch prompt/context generation operational for Systems Architect, Roadmap Updater, Reviewer, and Architect Review modes
+- Per-run Watchtower status/result artifacts operational
+- Roadmap Updater workflow available for documentation-only synchronization after accepted Systems Architect recommendations
 
 ## Future Watchtower Concept
 
@@ -24,6 +27,9 @@
 
 ### Current Workflow Labels
 - state:ready-for-architecture
+- state:ready-for-systems-architecture
+- state:systems-architecture-changes-requested
+- state:ready-for-roadmap-update
 - state:ready-for-dev
 - state:ready-for-review
 - state:ready-for-architect-review
@@ -33,11 +39,11 @@
 - state:agent-in-progress
 
 ## Current Known Gaps
-- Codex launch prompt/context not implemented
-- No subprocess execution yet
-- No worktree isolation
-- No artifact contract system
-- No persistent Watchtower visibility
+- Repository onboarding is still manual; no target repo initialization command yet.
+- No worktree isolation for repeated self-hosted runs.
+- Durable polling and stale-lock/run recovery need to be hardened.
+- No artifact contract that records the accepted GitHub Systems Architect recommendation comment URL/ID in Watchtower run history.
+- No persistent Watchtower visibility beyond local run artifacts.
 
 ## Current Architectural Decisions
 - GitHub labels are source of truth
@@ -48,6 +54,8 @@
 - No auto-merge
 - No DB
 - No webhook/event bus yet
+- Systems Architect recommendations are reviewed in GitHub issue comments
+- Roadmap Updater synchronizes documentation only after human-approved strategy
 
 ## Maintenance Rules
 
@@ -58,29 +66,31 @@
 
 ## Last Completed Work
 
+- Add Roadmap Updater workflow for approved strategic recommendations.
+- Require repository-context validation for Systems Architect recommendations.
 - Ensure architect runs inspect the target repo base branch
 - Create pull requests automatically.
 - Set up review flow.
 - Set up architect review flow.
-- Add per-run result/status artifacts to Watchtower runs.
-- Refactor Handler into focused modules.
-- Add target-repo instruction discovery and context-loading conventions.
-- Add durable per-issue workflow step tracking for long-running polling.
  
 ## Current Task
+
+- Reconcile roadmap and capability-tree artifacts with the approved issue #19 Systems Architect recommendation.
 
 
 ## Next Likely Tasks
 
 - Add target repo initialization command (`python main.py --init`).
-- Add configurable agent provider routing.
-- Explore converting role doctrine/reusable workflows into skills.
-- Refactor Handler into focused modules. (round 2)
+- Add worktree isolation for self-hosted runs.
+- Harden durable polling and stale-lock/run recovery.
+- Add persistent Watchtower visibility for active and recent runs.
+- Record accepted GitHub Systems Architect recommendation comment URLs/IDs in Watchtower run history for traceability.
 
 ## Future Roadmap Ideas
 
 - Parallel/multi-issue dispatch.
-- Stale lock detection and recovery.
 - Human review / merge-complete workflow automation.
 - Provider capability detection.
+- Configurable agent provider routing after self-hosting reliability improves.
+- Convert role doctrine/reusable workflows into skills after reliable execution and provider routing are stable.
 - Watchtower dashboard.
