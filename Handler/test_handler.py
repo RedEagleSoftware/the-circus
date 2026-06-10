@@ -1151,6 +1151,25 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("If blocked, leave a GitHub comment", task_text)
         self.assertNotIn("architecture handoff", task_text)
 
+    def test_build_codex_roadmap_updater_task_text_mentions_documentation_pr_contract(self):
+        task_text = handler.build_codex_roadmap_updater_task_text(
+            "C:/abs/Watchtower/runs/issue-20/run-001-roadmap-updater/launch-brief.md"
+        )
+
+        self.assertIn(
+            "Read the launch brief at C:/abs/Watchtower/runs/issue-20/run-001-roadmap-updater/launch-brief.md",
+            task_text,
+        )
+        self.assertIn("execute the roadmap updater workflow", task_text)
+        self.assertIn("human-approved Systems Architect recommendation", task_text)
+        self.assertIn("Update documentation and knowledge artifacts", task_text)
+        self.assertIn("Create a documentation PR", task_text)
+        self.assertIn("Leave a summary comment on the issue linking to the PR", task_text)
+        self.assertIn("Do not modify runtime code", task_text)
+        self.assertIn("Do not modify workflow labels directly", task_text)
+        self.assertIn("Do not auto-merge", task_text)
+        self.assertNotIn("architecture handoff", task_text)
+
     def test_is_codex_sandbox_bypass_enabled_defaults_to_false_when_missing(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertFalse(handler.is_codex_sandbox_bypass_enabled())
@@ -1247,6 +1266,18 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(state_label, "state:systems-architecture-changes-requested")
         self.assertEqual(dispatch_config["agent"], "codex")
         self.assertEqual(dispatch_config["mode"], "systems-architect")
+
+    def test_resolve_dispatch_config_routes_ready_for_roadmap_update_to_codex_roadmap_updater(self):
+        item = {"type": "issue", "number": 20, "labels": []}
+
+        state_label, dispatch_config = handler.resolve_dispatch_config(
+            item,
+            ["state:ready-for-roadmap-update"],
+        )
+
+        self.assertEqual(state_label, "state:ready-for-roadmap-update")
+        self.assertEqual(dispatch_config["agent"], "codex")
+        self.assertEqual(dispatch_config["mode"], "roadmap-updater")
 
     def test_build_codex_reviewer_task_text_contains_required_contract_and_safety_instructions(self):
         task_text = handler.build_codex_reviewer_task_text(
@@ -1730,6 +1761,41 @@ class HandlerObservabilityTests(unittest.TestCase):
             )
         )
         self.assertTrue(any("Adding label: state:ready-for-human-review" in line for line in printed_lines))
+
+    def test_advance_roadmap_update_workflow_on_success_transitions_labels(self):
+        item = {
+            "type": "issue",
+            "number": 20,
+            "title": "Roadmap update complete",
+        }
+
+        with patch.object(handler, "REPO", "owner/repo"):
+            with patch.object(handler, "run_command", return_value="") as mock_run_command:
+                with patch("builtins.print") as mock_print:
+                    transitioned = handler.advance_roadmap_update_workflow_on_success(item)
+
+        self.assertTrue(transitioned)
+        self.assertEqual(
+            mock_run_command.call_args_list,
+            [
+                unittest.mock.call(
+                    'gh issue edit 20 --repo owner/repo --remove-label "state:agent-in-progress"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 20 --repo owner/repo --remove-label "state:ready-for-roadmap-update"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 20 --repo owner/repo --add-label "state:ready-for-review"'
+                ),
+            ],
+        )
+
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("Roadmap Updater workflow completed successfully for issue #20." in line for line in printed_lines))
+        self.assertTrue(any("Removing label: state:agent-in-progress" in line for line in printed_lines))
+        self.assertTrue(any("Removing label: state:ready-for-roadmap-update" in line for line in printed_lines))
+        self.assertTrue(any("Adding label: state:ready-for-review" in line for line in printed_lines))
+        self.assertTrue(any("Documentation update complete; workflow advanced to review stage for issue #20." in line for line in printed_lines))
 
     def test_advance_developer_workflow_on_success_transitions_labels(self):
         item = {

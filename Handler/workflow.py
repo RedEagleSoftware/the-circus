@@ -9,6 +9,7 @@ from Handler.workflow_states import (
     HUMAN_REVIEW_LABEL,
     LOCK_LABEL,
     REVIEW_LABEL,
+    ROADMAP_UPDATE_LABEL,
     SYSTEMS_ARCHITECTURE_LABEL,
     WORKFLOW_STATES,
 )
@@ -189,6 +190,36 @@ def advance_systems_architect_workflow_on_success(
         success_message="[Dispatch] Workflow advanced to human review stage for issue #{number}.",
         failure_message=(
             "[Dispatch] Systems Architect workflow transition encountered label update failures for issue #{number}; "
+            "manual inspection is required."
+        ),
+        remove_label_fn=remove_label_fn,
+        add_label_fn=add_label_fn,
+        update_run_status_fn=update_run_status_fn,
+        log=log,
+    )
+
+
+def advance_roadmap_update_workflow_on_success(
+    item,
+    remove_label_fn,
+    add_label_fn,
+    update_run_status_fn,
+    log=print,
+    from_state_label=ROADMAP_UPDATE_LABEL,
+):
+    transition_steps = [
+        ("remove", LOCK_LABEL),
+        ("remove", from_state_label),
+        ("add", REVIEW_LABEL),
+    ]
+
+    return execute_label_transition(
+        item,
+        workflow_name="Roadmap Updater",
+        transition_steps=transition_steps,
+        success_message="[Dispatch] Documentation update complete; workflow advanced to review stage for issue #{number}.",
+        failure_message=(
+            "[Dispatch] Roadmap Updater workflow transition encountered label update failures for issue #{number}; "
             "manual inspection is required."
         ),
         remove_label_fn=remove_label_fn,

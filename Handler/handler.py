@@ -17,6 +17,7 @@ from Handler import target_instructions
 from Handler import watchtower
 from Handler import workflow
 from Handler.workflow_states import (
+    ROADMAP_UPDATE_LABEL,
     SYSTEMS_ARCHITECTURE_CHANGES_REQUESTED_LABEL,
     SYSTEMS_ARCHITECTURE_LABEL,
 )
@@ -243,6 +244,17 @@ def advance_architect_workflow_on_success(item):
 
 def advance_systems_architect_workflow_on_success(item, from_state_label=SYSTEMS_ARCHITECTURE_LABEL):
     return workflow.advance_systems_architect_workflow_on_success(
+        item,
+        remove_label_fn=remove_label,
+        add_label_fn=add_label,
+        update_run_status_fn=update_run_status,
+        log=print,
+        from_state_label=from_state_label,
+    )
+
+
+def advance_roadmap_update_workflow_on_success(item, from_state_label=ROADMAP_UPDATE_LABEL):
+    return workflow.advance_roadmap_update_workflow_on_success(
         item,
         remove_label_fn=remove_label,
         add_label_fn=add_label,
@@ -487,6 +499,10 @@ def build_codex_architect_task_text(absolute_launch_brief_path):
 
 def build_codex_systems_architect_task_text(absolute_launch_brief_path):
     return agents.build_codex_systems_architect_task_text(absolute_launch_brief_path)
+
+
+def build_codex_roadmap_updater_task_text(absolute_launch_brief_path):
+    return agents.build_codex_roadmap_updater_task_text(absolute_launch_brief_path)
 
 
 def build_codex_reviewer_task_text(absolute_launch_brief_path, review_pr_url, review_result_path):
@@ -956,6 +972,9 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         SYSTEMS_ARCHITECTURE_CHANGES_REQUESTED_LABEL,
     }
 
+    if mode == "roadmap-updater":
+        prepare_developer_branch(item)
+
     if agent == "junie":
         absolute_launch_brief_path = os.path.abspath(launch_brief_path)
         junie_task_text = build_junie_task_text(absolute_launch_brief_path)
@@ -1299,8 +1318,8 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 log=print,
             )
 
-        if mode not in {"architect", "systems-architect"}:
-            print("[Dispatch] TODO: Codex execution flow currently enabled only for architect/reviewer modes.")
+        if mode not in {"architect", "systems-architect", "roadmap-updater"}:
+            print("[Dispatch] TODO: Codex execution flow currently enabled only for architect/reviewer/roadmap-updater modes.")
             update_run_status(
                 item,
                 completed_at=utc_timestamp_now(),
@@ -1315,6 +1334,8 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         absolute_launch_brief_path = os.path.abspath(launch_brief_path)
         if mode == "systems-architect" and state_label in systems_architect_state_labels:
             codex_task_text = build_codex_systems_architect_task_text(absolute_launch_brief_path)
+        elif mode == "roadmap-updater":
+            codex_task_text = build_codex_roadmap_updater_task_text(absolute_launch_brief_path)
         else:
             codex_task_text = build_codex_architect_task_text(absolute_launch_brief_path)
         cmd = build_codex_command_with_optional_sandbox_bypass(
@@ -1396,6 +1417,21 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     success=advanced,
                     outcome="systems architecture recommendation generated",
                     stop_reason=None if advanced else "label transition failed",
+                )
+                write_run_result(item)
+                return advanced
+            elif mode == "roadmap-updater":
+                advanced = finalize_developer_success_with_pull_request(item, launch_brief_path, from_state_label=state_label)
+                if advanced:
+                    advanced = advance_roadmap_update_workflow_on_success(item, from_state_label=state_label)
+
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=0,
+                    success=advanced,
+                    outcome="roadmap documentation update complete",
+                    stop_reason=None if advanced else "PR finalization or label transition failed",
                 )
                 write_run_result(item)
                 return advanced
