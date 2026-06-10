@@ -32,10 +32,14 @@ WORKFLOW_STATES = {
         },
     },
     ROADMAP_UPDATE_LABEL: {
-        "description": "Ready for human roadmap/capability-tree update.",
-        "color": "FBCA04",
-        "human_owned": True,
-        "terminal": True,
+        "description": "Ready for Roadmap Updater agent to synchronize documentation/roadmap artifacts.",
+        "color": "1D76DB",
+        "dispatch": {
+            "agent": "codex",
+            "mode": "roadmap-updater",
+            "model": "gpt-5.5",
+            "effort": "High",
+        },
     },
     ARCHITECTURE_LABEL: {
         "description": "Ready for architecture/specification by architect agent.",

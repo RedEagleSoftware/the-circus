@@ -78,6 +78,47 @@ def finalize_developer_success_with_pull_request(
     build_shared_context_paths_fn,
     get_item_run_root_fn,
 ):
+    def advance_developer_workflow(item, from_state_label):
+        return advance_developer_workflow_on_success_fn(item, from_state_label=from_state_label)
+
+    return finalize_developer_success_with_pull_request_v2(
+        item,
+        launch_brief_path,
+        from_state_label=from_state_label,
+        repo=repo,
+        target_repo_path=target_repo_path,
+        lock_label=lock_label,
+        run_git_command_in_repo_fn=run_git_command_in_repo_fn,
+        get_current_git_branch_fn=get_current_git_branch_fn,
+        find_existing_open_pr_for_branch_fn=find_existing_open_pr_for_branch_fn,
+        create_pull_request_with_body_file_fn=create_pull_request_with_body_file_fn,
+        advance_workflow_on_success_fn=advance_developer_workflow,
+        add_comment_fn=add_comment_fn,
+        normalize_path_for_display_fn=normalize_path_for_display_fn,
+        build_shared_context_paths_fn=build_shared_context_paths_fn,
+        get_item_run_root_fn=get_item_run_root_fn,
+    )
+
+
+def finalize_developer_success_with_pull_request_v2(
+    item,
+    launch_brief_path,
+    *,
+    from_state_label,
+    repo,
+    target_repo_path,
+    lock_label,
+    run_git_command_in_repo_fn,
+    get_current_git_branch_fn,
+    find_existing_open_pr_for_branch_fn,
+    create_pull_request_with_body_file_fn,
+    advance_workflow_on_success_fn,
+    add_comment_fn,
+    normalize_path_for_display_fn,
+    build_shared_context_paths_fn,
+    get_item_run_root_fn,
+    **kwargs,
+):
     repo_path = target_repo_path
     if not repo_path:
         print("[Dispatch] Cannot finalize developer success: CIRCUS_TARGET_REPO_PATH is not configured.")
@@ -190,11 +231,14 @@ def finalize_developer_success_with_pull_request(
     existing_pr_url = existing_pr.get("url")
     if existing_pr_url:
         print(f"[Dispatch] Existing pull request found for branch '{developer_branch}': {existing_pr_url}")
-        transition_ok = advance_developer_workflow_on_success_fn(item, from_state_label=from_state_label)
+        transition_ok = True
+        if advance_workflow_on_success_fn:
+            transition_ok = advance_workflow_on_success_fn(item, from_state_label)
         print(f"[Dispatch] Label transition result after confirming existing PR: {transition_ok}")
         return transition_ok
 
-    pr_title = build_developer_pr_title(item)
+    pr_title_fn = kwargs.get("build_pr_title_fn", build_developer_pr_title)
+    pr_title = pr_title_fn(item)
     pr_body = build_developer_pr_body(
         item,
         launch_brief_path,
@@ -219,6 +263,8 @@ def finalize_developer_success_with_pull_request(
     pr_url = pr_url_match.group(0) if pr_url_match else create_result.strip()
     print(f"[Dispatch] Pull request ready for branch '{developer_branch}': {pr_url}")
 
-    transition_ok = advance_developer_workflow_on_success_fn(item, from_state_label=from_state_label)
+    transition_ok = True
+    if advance_workflow_on_success_fn:
+        transition_ok = advance_workflow_on_success_fn(item, from_state_label)
     print(f"[Dispatch] Label transition result after PR creation: {transition_ok}")
     return transition_ok

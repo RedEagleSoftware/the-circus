@@ -51,6 +51,20 @@ def build_codex_systems_architect_task_text(absolute_launch_brief_path):
     )
 
 
+def build_codex_roadmap_updater_task_text(absolute_launch_brief_path):
+    return (
+        f"Read the launch brief at {absolute_launch_brief_path} and execute the roadmap updater workflow. "
+        "Identify the human-approved Systems Architect recommendation from the issue discussion. "
+        "If approval is ambiguous, block and leave a comment. "
+        "Update documentation and knowledge artifacts (roadmaps, capability tree, etc.) based on the recommendation. "
+        "Create a documentation PR with your changes. "
+        "Leave a summary comment on the issue linking to the PR. "
+        "Do not modify runtime code. "
+        "Do not modify workflow labels directly. "
+        "Do not auto-merge."
+    )
+
+
 def build_codex_reviewer_task_text(absolute_launch_brief_path, review_pr_url, review_result_path):
     return (
         f"Read the launch brief at {absolute_launch_brief_path} and execute the reviewer workflow. "

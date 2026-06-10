@@ -13,6 +13,13 @@ This changelog tracks notable completed work by GitHub issue.
 - [concise user-visible or workflow-significant change]
 - [optional second concise change]
 
+### Issue #20 - Add Roadmap Updater workflow for approved strategic recommendations
+
+- Added Roadmap Updater role and workflow to synchronize documentation and knowledge artifacts based on approved strategic recommendations.
+- Implemented `state:ready-for-roadmap-update` dispatch to Codex Roadmap Updater, enabling documentation-only PR creation and issue-discussion grounding.
+- Added workflow state transition logic to advance from successful roadmap update to `state:ready-for-review`.
+- Integrated Roadmap Updater into the handler's branch and PR management plumbing.
+
 ### Issue #17 - Require repository-context validation for Systems Architect recommendations
 
 - Added Systems Architect repository-context validation guidance so strategic recommendations identify reviewed repository strategy and disclose missing context.

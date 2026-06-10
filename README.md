@@ -79,7 +79,7 @@ The Circus uses GitHub `state:*` labels as a workflow state machine.
 - `state:ready-for-architecture` routes to Codex Architect for implementation-focused architecture handoff work.
 - `state:ready-for-systems-architecture` routes to Codex Systems Architect for strategic system-level recommendations.
 - `state:systems-architecture-changes-requested` routes back to Codex Systems Architect for follow-up iterations.
-- `state:ready-for-roadmap-update` is a human-owned terminal state for roadmap/capability-tree updates.
+- `state:ready-for-roadmap-update` routes to Codex Roadmap Updater for synchronizing documentation and knowledge artifacts based on approved strategic recommendations.
 
 Systems Architect routing remains strategic and non-implementation:
 

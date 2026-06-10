@@ -49,9 +49,20 @@ Use Architect Review for:
 
 Architect Review is a workflow step; it validates architecture after implementation and review.
 
+## Roadmap Updater
+
+Use the [Roadmap Updater](../TheFarm/roles/roadmap-updater.md) for:
+
+- synchronizing documentation and knowledge artifacts after strategic decisions
+- updating roadmaps and capability trees based on approved recommendations
+- ensuring documentation reflects current architectural intent
+
+The Roadmap Updater creates documentation PRs based on human-approved Systems Architect recommendations.
+
 ## Quick Distinction
 
 - Systems Architect: capability planning and long-term system evolution across issues.
+- Roadmap Updater: synchronizing documentation with approved strategic decisions.
 - Feature Architect: issue-level implementation planning and handoff creation.
 - Reviewer: implementation correctness and quality validation.
 - Architect Review: final architectural validation of the implementation before human approval.
