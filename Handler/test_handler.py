@@ -3,7 +3,7 @@ import tempfile
 import os
 import json
 import re
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 
 import Handler.handler as handler
 import Handler.github_client as github_client
@@ -1761,6 +1761,60 @@ class HandlerObservabilityTests(unittest.TestCase):
             )
         )
         self.assertTrue(any("Adding label: state:ready-for-human-review" in line for line in printed_lines))
+
+    @patch("Handler.handler.finalize_roadmap_updater_success_with_pull_request")
+    @patch("Handler.handler.advance_roadmap_update_workflow_on_success")
+    @patch("Handler.handler.subprocess.run")
+    def test_roadmap_updater_success_path_calls_specific_finalizer_and_transition(
+        self, mock_subprocess, mock_advance, mock_finalize
+    ):
+        mock_finalize.return_value = True
+        mock_advance.return_value = True
+        mock_subprocess.return_value = MagicMock(returncode=0)
+
+        item = {
+            "type": "issue",
+            "number": 20,
+            "title": "Roadmap update",
+            "labels": [{"name": "state:ready-for-roadmap-update"}],
+        }
+        launch_brief_path = "launch-brief.md"
+
+        with patch.object(handler, "TARGET_REPO_PATH", "/repo"):
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "LOCK_LABEL", "state:locked"):
+                    with patch.object(handler, "utc_timestamp_now", return_value="2026-06-10T07:54:00Z"):
+                        with patch.object(handler, "write_run_result"):
+                            with patch.object(handler, "update_run_status"):
+                                with patch.object(handler, "prepare_developer_branch"):
+                                    # Call the function being tested
+                                    advanced = handler.launch_agent(
+                                        item,
+                                        "state:ready-for-roadmap-update",
+                                        {"agent": "codex", "mode": "roadmap-updater", "model": "gpt-5.5", "effort": "High"},
+                                        "roles/roadmap-updater.md",
+                                        launch_brief_path
+                                    )
+
+        # Verify our specific roadmap updater finalizer was used
+        self.assertTrue(advanced)
+        mock_finalize.assert_called_once()
+        # Verify it was called with our from_state_label
+        args, kwargs = mock_finalize.call_args
+        self.assertEqual(kwargs["from_state_label"], "state:ready-for-roadmap-update")
+
+        # Verify the Roadmap Updater success transition was called
+        mock_advance.assert_called_once_with(item, from_state_label="state:ready-for-roadmap-update")
+        
+    def test_build_roadmap_updater_pr_title_uses_specific_title_for_issue_20(self):
+        item_20 = {"number": 20}
+        item_other = {"number": 21, "title": "Other task"}
+        
+        title_20 = handler.build_roadmap_updater_pr_title(item_20)
+        title_other = handler.build_roadmap_updater_pr_title(item_other)
+        
+        self.assertEqual(title_20, "Issue #20: Add Roadmap Updater workflow for approved strategic recommendations")
+        self.assertEqual(title_other, "Issue #21: Other task")
 
     def test_advance_roadmap_update_workflow_on_success_transitions_labels(self):
         item = {

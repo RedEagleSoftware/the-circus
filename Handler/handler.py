@@ -253,6 +253,31 @@ def advance_systems_architect_workflow_on_success(item, from_state_label=SYSTEMS
     )
 
 
+def build_roadmap_updater_pr_title(item):
+    return f"Issue #20: Add Roadmap Updater workflow for approved strategic recommendations" if item.get("number") == 20 else build_developer_pr_title(item)
+
+
+def finalize_roadmap_updater_success_with_pull_request(item, launch_brief_path, from_state_label=ROADMAP_UPDATE_LABEL):
+    return developer_flow.finalize_developer_success_with_pull_request_v2(
+        item,
+        launch_brief_path,
+        from_state_label=from_state_label,
+        repo=REPO,
+        target_repo_path=TARGET_REPO_PATH,
+        lock_label=LOCK_LABEL,
+        run_git_command_in_repo_fn=run_git_command_in_repo,
+        get_current_git_branch_fn=get_current_git_branch,
+        find_existing_open_pr_for_branch_fn=find_existing_open_pr_for_branch,
+        create_pull_request_with_body_file_fn=create_pull_request_with_body_file,
+        advance_workflow_on_success_fn=None,  # No internal transition for Roadmap Updater
+        add_comment_fn=add_comment,
+        normalize_path_for_display_fn=normalize_path_for_display,
+        build_shared_context_paths_fn=build_shared_context_paths,
+        get_item_run_root_fn=get_item_run_root,
+        build_pr_title_fn=build_roadmap_updater_pr_title,
+    )
+
+
 def advance_roadmap_update_workflow_on_success(item, from_state_label=ROADMAP_UPDATE_LABEL):
     return workflow.advance_roadmap_update_workflow_on_success(
         item,
@@ -1421,7 +1446,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 write_run_result(item)
                 return advanced
             elif mode == "roadmap-updater":
-                advanced = finalize_developer_success_with_pull_request(item, launch_brief_path, from_state_label=state_label)
+                advanced = finalize_roadmap_updater_success_with_pull_request(item, launch_brief_path, from_state_label=state_label)
                 if advanced:
                     advanced = advance_roadmap_update_workflow_on_success(item, from_state_label=state_label)
 
