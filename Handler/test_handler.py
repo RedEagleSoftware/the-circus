@@ -1762,13 +1762,13 @@ class HandlerObservabilityTests(unittest.TestCase):
         )
         self.assertTrue(any("Adding label: state:ready-for-human-review" in line for line in printed_lines))
 
-    @patch("Handler.handler.finalize_roadmap_updater_success_with_pull_request")
+    @patch("Handler.handler.validate_roadmap_updater_open_pull_request")
     @patch("Handler.handler.advance_roadmap_update_workflow_on_success")
     @patch("Handler.handler.subprocess.run")
-    def test_roadmap_updater_success_path_calls_specific_finalizer_and_transition(
-        self, mock_subprocess, mock_advance, mock_finalize
+    def test_roadmap_updater_success_path_validates_pr_and_transitions(
+        self, mock_subprocess, mock_advance, mock_validate
     ):
-        mock_finalize.return_value = True
+        mock_validate.return_value = True
         mock_advance.return_value = True
         mock_subprocess.return_value = MagicMock(returncode=0)
 
@@ -1786,25 +1786,106 @@ class HandlerObservabilityTests(unittest.TestCase):
                     with patch.object(handler, "utc_timestamp_now", return_value="2026-06-10T07:54:00Z"):
                         with patch.object(handler, "write_run_result"):
                             with patch.object(handler, "update_run_status"):
-                                with patch.object(handler, "prepare_developer_branch"):
-                                    # Call the function being tested
-                                    advanced = handler.launch_agent(
-                                        item,
-                                        "state:ready-for-roadmap-update",
-                                        {"agent": "codex", "mode": "roadmap-updater", "model": "gpt-5.5", "effort": "High"},
-                                        "roles/roadmap-updater.md",
-                                        launch_brief_path
-                                    )
+                                advanced = handler.launch_agent(
+                                    item,
+                                    "state:ready-for-roadmap-update",
+                                    {"agent": "codex", "mode": "roadmap-updater", "model": "gpt-5.5", "effort": "High"},
+                                    "roles/roadmap-updater.md",
+                                    launch_brief_path
+                                )
 
-        # Verify our specific roadmap updater finalizer was used
         self.assertTrue(advanced)
-        mock_finalize.assert_called_once()
-        # Verify it was called with our from_state_label
-        args, kwargs = mock_finalize.call_args
-        self.assertEqual(kwargs["from_state_label"], "state:ready-for-roadmap-update")
-
-        # Verify the Roadmap Updater success transition was called
+        mock_validate.assert_called_once_with(item)
         mock_advance.assert_called_once_with(item, from_state_label="state:ready-for-roadmap-update")
+
+    @patch("Handler.handler.advance_roadmap_update_workflow_on_success")
+    @patch("Handler.handler.validate_roadmap_updater_open_pull_request")
+    @patch("Handler.handler.subprocess.run")
+    def test_roadmap_updater_success_path_blocks_transition_when_pr_validation_fails(
+        self, mock_subprocess, mock_validate, mock_advance
+    ):
+        mock_subprocess.return_value = MagicMock(returncode=0)
+        mock_validate.return_value = False
+
+        item = {
+            "type": "issue",
+            "number": 20,
+            "title": "Roadmap update",
+            "labels": [{"name": "state:ready-for-roadmap-update"}],
+        }
+
+        with patch.object(handler, "TARGET_REPO_PATH", "/repo"):
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "LOCK_LABEL", "state:locked"):
+                    with patch.object(handler, "utc_timestamp_now", return_value="2026-06-10T07:54:00Z"):
+                        with patch.object(handler, "write_run_result"):
+                            with patch.object(handler, "update_run_status") as mock_update_status:
+                                advanced = handler.launch_agent(
+                                    item,
+                                    "state:ready-for-roadmap-update",
+                                    {"agent": "codex", "mode": "roadmap-updater", "model": "gpt-5.5", "effort": "High"},
+                                    "roles/roadmap-updater.md",
+                                    "launch-brief.md"
+                                )
+
+        self.assertFalse(advanced)
+        mock_advance.assert_not_called()
+        self.assertEqual(
+            mock_update_status.call_args.kwargs["stop_reason"],
+            "roadmap updater PR validation failed",
+        )
+
+    def test_validate_roadmap_updater_open_pull_request_requires_working_branch(self):
+        item = {
+            "type": "issue",
+            "number": 25,
+            "title": "Roadmap update",
+        }
+
+        with patch.object(handler, "LOCK_LABEL", "state:agent-in-progress"):
+            with patch.object(handler, "add_comment") as mock_add_comment:
+                validated = handler.validate_roadmap_updater_open_pull_request(item)
+
+        self.assertFalse(validated)
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("no working branch was recorded", item["comment"])
+
+    def test_validate_roadmap_updater_open_pull_request_comments_when_pr_missing(self):
+        item = {
+            "type": "issue",
+            "number": 25,
+            "title": "Roadmap update",
+            "working_branch": "circus/issue-25-roadmap-update",
+        }
+
+        with patch.object(handler, "LOCK_LABEL", "state:agent-in-progress"):
+            with patch.object(handler, "find_existing_open_pr_for_branch", return_value={"ok": True, "url": None}):
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    validated = handler.validate_roadmap_updater_open_pull_request(item)
+
+        self.assertFalse(validated)
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("no open pull request was found", item["comment"])
+
+    def test_validate_roadmap_updater_open_pull_request_succeeds_with_open_pr(self):
+        item = {
+            "type": "issue",
+            "number": 25,
+            "title": "Roadmap update",
+            "working_branch": "circus/issue-25-roadmap-update",
+        }
+
+        with patch.object(
+            handler,
+            "find_existing_open_pr_for_branch",
+            return_value={"ok": True, "url": "https://github.com/owner/repo/pull/24"},
+        ):
+            with patch.object(handler, "add_comment") as mock_add_comment:
+                validated = handler.validate_roadmap_updater_open_pull_request(item)
+
+        self.assertTrue(validated)
+        self.assertEqual(item["roadmap_pr"], "https://github.com/owner/repo/pull/24")
+        mock_add_comment.assert_not_called()
         
     def test_build_roadmap_updater_pr_title_uses_specific_title_for_issue_20(self):
         item_20 = {"number": 20}
@@ -3041,6 +3122,61 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_prepare_branch.assert_not_called()
         mock_prepare_architect.assert_called_once_with(item)
         self.assertEqual(item["execution_branch"], "main")
+
+    def test_process_one_item_roadmap_updater_prepares_working_branch_before_launch(self):
+        item = {
+            "type": "issue",
+            "number": 43,
+            "title": "Roadmap updater branch prep",
+            "labels": [{"name": "state:ready-for-roadmap-update"}],
+        }
+
+        with patch.object(handler, "lock_item", return_value=True):
+            with patch.object(handler, "get_current_item", return_value=(item, True)):
+                with patch.object(
+                    handler,
+                    "prepare_developer_branch",
+                    return_value={"ok": True, "branch": "circus/issue-43-roadmap-updater-branch-prep"},
+                ) as mock_prepare_branch:
+                    with patch.object(handler, "write_launch_brief", return_value="Watchtower/runs/issue-43/run-001-roadmap-updater/launch-brief.md"):
+                        with patch.object(handler, "launch_agent", return_value=True):
+                            dispatched = handler.process_one_item([item])
+
+        self.assertEqual(dispatched, "success")
+        mock_prepare_branch.assert_called_once_with(item)
+        self.assertEqual(item["working_branch"], "circus/issue-43-roadmap-updater-branch-prep")
+
+    def test_process_one_item_dirty_working_tree_blocks_roadmap_updater_launch_and_releases_lock(self):
+        item = {
+            "type": "issue",
+            "number": 44,
+            "title": "Roadmap updater blocked by dirty tree",
+            "labels": [{"name": "state:ready-for-roadmap-update"}],
+        }
+
+        with patch.object(handler, "lock_item", return_value=True):
+            with patch.object(handler, "get_current_item", return_value=(item, True)):
+                with patch.object(
+                    handler,
+                    "prepare_developer_branch",
+                    return_value={
+                        "ok": False,
+                        "reason": "dirty-working-tree",
+                        "branch": "circus/issue-44-roadmap-updater-blocked-by-dirty-tree",
+                        "current_branch": "main",
+                    },
+                ):
+                    with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                        with patch.object(handler, "add_comment") as mock_add_comment:
+                            with patch.object(handler, "write_launch_brief") as mock_write_launch_brief:
+                                dispatched = handler.process_one_item([item])
+
+        self.assertEqual(dispatched, "prelaunch-failed")
+        mock_unlock.assert_called_once_with(item)
+        mock_add_comment.assert_called_once_with(item)
+        mock_write_launch_brief.assert_called_once()
+        self.assertIn("blocked roadmap updater launch", item["comment"])
+        self.assertIn("working tree is dirty", item["comment"])
 
     def test_process_one_item_ready_for_review_with_missing_pr_skips_launch_and_releases_lock(self):
         item = {

@@ -257,25 +257,39 @@ def build_roadmap_updater_pr_title(item):
     return f"Issue #20: Add Roadmap Updater workflow for approved strategic recommendations" if item.get("number") == 20 else build_developer_pr_title(item)
 
 
-def finalize_roadmap_updater_success_with_pull_request(item, launch_brief_path, from_state_label=ROADMAP_UPDATE_LABEL):
-    return developer_flow.finalize_developer_success_with_pull_request_v2(
-        item,
-        launch_brief_path,
-        from_state_label=from_state_label,
-        repo=REPO,
-        target_repo_path=TARGET_REPO_PATH,
-        lock_label=LOCK_LABEL,
-        run_git_command_in_repo_fn=run_git_command_in_repo,
-        get_current_git_branch_fn=get_current_git_branch,
-        find_existing_open_pr_for_branch_fn=find_existing_open_pr_for_branch,
-        create_pull_request_with_body_file_fn=create_pull_request_with_body_file,
-        advance_workflow_on_success_fn=None,  # No internal transition for Roadmap Updater
-        add_comment_fn=add_comment,
-        normalize_path_for_display_fn=normalize_path_for_display,
-        build_shared_context_paths_fn=build_shared_context_paths,
-        get_item_run_root_fn=get_item_run_root,
-        build_pr_title_fn=build_roadmap_updater_pr_title,
-    )
+def validate_roadmap_updater_open_pull_request(item):
+    working_branch = item.get("working_branch")
+    if not working_branch:
+        item["comment"] = (
+            f"Roadmap Updater completed for {item['type']} #{item['number']} but Handler could not validate an open "
+            "pull request because no working branch was recorded before launch. "
+            f"The lock label `{LOCK_LABEL}` remains in place for human inspection."
+        )
+        add_comment(item)
+        return False
+
+    existing_pr = find_existing_open_pr_for_branch(working_branch)
+    if not existing_pr.get("ok"):
+        error = existing_pr.get("error", "unable to query open pull requests")
+        item["comment"] = (
+            f"Roadmap Updater completed for {item['type']} #{item['number']} but Handler could not validate an open "
+            f"pull request for branch `{working_branch}` ({error}). "
+            f"The lock label `{LOCK_LABEL}` remains in place for human inspection."
+        )
+        add_comment(item)
+        return False
+
+    pr_url = existing_pr.get("url")
+    if not pr_url:
+        item["comment"] = (
+            f"Roadmap Updater completed for {item['type']} #{item['number']} but no open pull request was found for "
+            f"branch `{working_branch}`. The lock label `{LOCK_LABEL}` remains in place for human inspection."
+        )
+        add_comment(item)
+        return False
+
+    item["roadmap_pr"] = pr_url
+    return True
 
 
 def advance_roadmap_update_workflow_on_success(item, from_state_label=ROADMAP_UPDATE_LABEL):
@@ -997,9 +1011,6 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         SYSTEMS_ARCHITECTURE_CHANGES_REQUESTED_LABEL,
     }
 
-    if mode == "roadmap-updater":
-        prepare_developer_branch(item)
-
     if agent == "junie":
         absolute_launch_brief_path = os.path.abspath(launch_brief_path)
         junie_task_text = build_junie_task_text(absolute_launch_brief_path)
@@ -1446,17 +1457,28 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 write_run_result(item)
                 return advanced
             elif mode == "roadmap-updater":
-                advanced = finalize_roadmap_updater_success_with_pull_request(item, launch_brief_path, from_state_label=state_label)
-                if advanced:
+                validated = validate_roadmap_updater_open_pull_request(item)
+                advanced = validated
+                if validated:
                     advanced = advance_roadmap_update_workflow_on_success(item, from_state_label=state_label)
+
+                if advanced:
+                    outcome = "roadmap documentation PR ready"
+                    stop_reason = None
+                elif validated:
+                    outcome = "roadmap documentation update complete"
+                    stop_reason = "label transition failed"
+                else:
+                    outcome = "roadmap documentation PR validation failed"
+                    stop_reason = "roadmap updater PR validation failed"
 
                 update_run_status(
                     item,
                     completed_at=utc_timestamp_now(),
                     exit_code=0,
                     success=advanced,
-                    outcome="roadmap documentation update complete",
-                    stop_reason=None if advanced else "PR finalization or label transition failed",
+                    outcome=outcome,
+                    stop_reason=stop_reason,
                 )
                 write_run_result(item)
                 return advanced
@@ -1631,6 +1653,74 @@ def process_one_item(
                     success=False,
                     outcome="failed pre-launch",
                     stop_reason=branch_setup.get("error", "developer branch setup failed"),
+                )
+                write_run_result(item)
+                return "prelaunch-failed"
+
+            item["working_branch"] = branch_setup["branch"]
+
+        if config["agent"] == "codex" and config["mode"] == "roadmap-updater":
+            branch_setup = prepare_developer_branch(item)
+            if not branch_setup.get("ok"):
+                if branch_setup.get("reason") == "dirty-working-tree":
+                    failure_launch_brief_path = write_launch_brief(item, state_label, config, resolve_role_prompt_path(config["mode"]))
+                    print(
+                        f"[Dispatch] Blocking roadmap updater launch for {item['type']} #{item['number']}: "
+                        "target repository working tree is dirty."
+                    )
+                    print(f"[Dispatch] Releasing lock for {item['type']} #{item['number']} due to pre-launch setup failure...")
+                    lock_released = unlock_item(item)
+
+                    if lock_released:
+                        print(f"[Dispatch] Lock cleanup succeeded for {item['type']} #{item['number']}.")
+                    else:
+                        print(
+                            f"[Dispatch] Lock cleanup failed for {item['type']} #{item['number']}; "
+                            "manual cleanup may be required."
+                        )
+
+                    lock_result = "released" if lock_released else "could not be released"
+                    current_branch = branch_setup.get("current_branch") or "<unknown>"
+                    item["comment"] = (
+                        f"Handler blocked roadmap updater launch for {item['type']} #{item['number']} because "
+                        f"the target repository working tree is dirty on branch `{current_branch}`. "
+                        f"The lock label `{LOCK_LABEL}` was {lock_result}. "
+                        "Please clean the workspace and retry dispatch."
+                    )
+                    add_comment(item)
+                    update_run_status(
+                        item,
+                        completed_at=utc_timestamp_now(),
+                        exit_code=None,
+                        success=False,
+                        outcome="failed pre-launch",
+                        stop_reason="target repository working tree is dirty",
+                        launch_brief_path=normalize_path_for_display(failure_launch_brief_path),
+                    )
+                    write_run_result(item)
+                    return "prelaunch-failed"
+
+                print(
+                    f"[Dispatch] Roadmap updater branch setup failed for {item['type']} #{item['number']}: "
+                    f"{branch_setup.get('error', 'unknown error')}"
+                )
+                print(f"[Dispatch] Releasing lock for {item['type']} #{item['number']} due to pre-launch setup failure...")
+                lock_released = unlock_item(item)
+
+                if lock_released:
+                    print(f"[Dispatch] Lock cleanup succeeded for {item['type']} #{item['number']}.")
+                else:
+                    print(f"[Dispatch] Lock cleanup failed for {item['type']} #{item['number']}; manual cleanup may be required.")
+
+                add_prelaunch_setup_failure_comment(item, branch_setup.get("error", "roadmap updater branch setup failed"), lock_released)
+                add_comment(item)
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=None,
+                    success=False,
+                    outcome="failed pre-launch",
+                    stop_reason=branch_setup.get("error", "roadmap updater branch setup failed"),
                 )
                 write_run_result(item)
                 return "prelaunch-failed"
