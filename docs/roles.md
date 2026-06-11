@@ -59,6 +59,12 @@ Use the [Roadmap Updater](../TheFarm/roles/roadmap-updater.md) for:
 
 The Roadmap Updater creates documentation PRs based on human-approved Systems Architect recommendations.
 
+Ownership boundary for this workflow:
+
+- Roadmap Updater owns documentation updates, commits, branch push, PR creation, and the issue summary comment linking to the PR.
+- Handler owns orchestration, post-run PR validation, run-status recording, and workflow `state:*` label transitions.
+- Developer workflow PR finalization remains Handler-owned unless changed by a dedicated workflow-contract issue.
+
 ## Quick Distinction
 
 - Systems Architect: capability planning and long-term system evolution across issues.
