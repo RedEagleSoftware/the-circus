@@ -190,6 +190,17 @@ The Roadmap Updater then:
 
 Roadmap updates should not mutate workflow labels directly, auto-merge, or produce runtime implementation changes.
 
+Workflow ownership contract for roadmap updates:
+
+- Roadmap Updater owns documentation changes, commits, branch push, PR creation, and the issue summary comment.
+- Handler owns launch orchestration, working-branch preparation, post-run validation that an open PR exists, run-status recording, and `state:*` label transitions.
+- Developer workflow finalization remains Handler-owned and is intentionally separate from roadmap updater ownership.
+
+Future workflow contract rule:
+
+- each workflow role should explicitly document PR ownership and handoff boundaries
+- Handler remains the single authority for workflow label mutation
+
 ---
 
 # Current Strategic Frontier

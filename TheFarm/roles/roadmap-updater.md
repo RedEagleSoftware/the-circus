@@ -32,6 +32,13 @@ It ensures that the project's strategic documents (roadmaps, capability trees, a
 - Create a Pull Request for documentation updates.
 - Leave a summary comment on the GitHub issue linking to the PR and summarizing changes.
 
+The Roadmap Updater owns the documentation PR lifecycle for this workflow step:
+
+- prepare/use the assigned working branch
+- commit and push documentation-only changes
+- open the documentation PR
+- leave the issue summary comment linking to the PR
+
 ---
 
 ## Constraints and Guardrails
@@ -41,6 +48,12 @@ It ensures that the project's strategic documents (roadmaps, capability trees, a
 - **Never auto-merge**: Documentation PRs must be reviewed and merged by a human.
 - **Never mutate workflow labels**: Do not add or remove GitHub labels directly. The workflow handler manages label transitions.
 - **Documentation artifacts only**: Focus on files in `docs/`, `README.md`, `TheFarm/README.md`, etc.
+
+Workflow ownership boundary:
+
+- Handler owns launch orchestration, post-run validation that an open PR exists, run status recording, and workflow label transitions.
+- Roadmap Updater does not perform Handler duties and must not mutate labels directly.
+- Developer workflow PR finalization remains Handler-owned and is separate from this roadmap-updater contract.
 
 ---
 
@@ -53,3 +66,4 @@ A successful Roadmap Updater run:
 3. Creates a clean PR with only documentation changes.
 4. Leaves a clear summary comment.
 5. Does not attempt to change system behavior or runtime code.
+6. Respects the ownership boundary: agent owns docs PR creation; Handler owns validation and workflow state transitions.
