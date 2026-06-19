@@ -13,6 +13,11 @@ This changelog tracks notable completed work by GitHub issue.
 - [concise user-visible or workflow-significant change]
 - [optional second concise change]
 
+### Issue #30 - Design Git Worktree-Based Issue Workspaces
+
+- Added worktree-isolation architecture documentation that defines per-issue Git worktrees, branch ownership rules, and lifecycle expectations for concurrent agent workflows.
+- Updated roadmap and operations documentation to track Issue #30 planning/status and align follow-on workflow implementation with the approved design.
+
 ### Issue #19 - Reassess Circus strategic direction after Systems Architect maturation
 
 - Updated strategic roadmap and capability-tree documentation to keep `Self Hosting` as the active frontier before `Provider Routing` and `Skills`.
