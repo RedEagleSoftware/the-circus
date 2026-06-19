@@ -14,9 +14,6 @@ def resolve_worktree_root(repo_path, repo_slug, env_getter, *, dirname, join_pat
     if "/" in repo_basename or "\\" in repo_basename:
         repo_basename = repo_basename.replace("\\", "/").rsplit("/", 1)[1]
 
-    if repo_slug:
-        repo_basename = repo_slug.replace("/", "-")
-
     repo_parent = dirname(repo_path.replace("\\", "/"))
     if not repo_parent:
         repo_parent = dirname(repo_path)
