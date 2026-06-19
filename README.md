@@ -137,7 +137,9 @@ Some files may eventually become protected or agent read-only to prevent uninten
 - Agent notes and collaboration channels
 - Workflow state tracking
 - Human approval checkpoints
-- Session isolation and replayability
+- Git worktree-based session isolation and replayability
+
+The accepted workspace isolation architecture is documented in [docs/worktree-isolation.md](docs/worktree-isolation.md).
 
 ---
 

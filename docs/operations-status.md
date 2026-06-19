@@ -12,6 +12,7 @@
 - Codex launch prompt/context generation operational for Systems Architect, Roadmap Updater, Reviewer, and Architect Review modes
 - Per-run Watchtower status/result artifacts operational
 - Roadmap Updater workflow available for documentation-only synchronization after accepted Systems Architect recommendations
+- Worktree isolation architecture accepted for mutation-capable agent execution; implementation not yet started
 
 ## Future Watchtower Concept
 
@@ -40,7 +41,7 @@
 
 ## Current Known Gaps
 - Repository onboarding is still manual; no target repo initialization command yet.
-- No worktree isolation for repeated self-hosted runs.
+- Worktree isolation is documented but not implemented for repeated self-hosted runs.
 - Durable polling and stale-lock/run recovery need to be hardened.
 - No artifact contract that records the accepted GitHub Systems Architect recommendation comment URL/ID in Watchtower run history.
 - No persistent Watchtower visibility beyond local run artifacts.
@@ -56,6 +57,7 @@
 - No webhook/event bus yet
 - Systems Architect recommendations are reviewed in GitHub issue comments
 - Roadmap Updater synchronizes documentation only after human-approved strategy
+- Git worktrees are the accepted isolation mechanism for Developer and Roadmap Updater execution, with per-item worktrees as the first implementation unit
 
 ## Maintenance Rules
 
@@ -75,14 +77,15 @@
  
 ## Current Task
 
-- Reconcile roadmap and capability-tree artifacts with the approved issue #19 Systems Architect recommendation.
+- Implement workspace path resolution and Watchtower/launch-brief recording for issue-owned worktrees.
 
 
 ## Next Likely Tasks
 
 - Add target repo initialization command (`python main.py --init`).
-- Add worktree isolation for self-hosted runs.
+- Add Developer and Roadmap Updater execution from item worktrees.
 - Harden durable polling and stale-lock/run recovery.
+- Add stale worktree detection/reporting as part of stale-lock/run recovery.
 - Add persistent Watchtower visibility for active and recent runs.
 - Record accepted GitHub Systems Architect recommendation comment URLs/IDs in Watchtower run history for traceability.
 
