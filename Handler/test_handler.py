@@ -3603,6 +3603,66 @@ class HandlerObservabilityTests(unittest.TestCase):
             "# Decision Log\n\nNo decisions have been recorded yet.\n",
         )
 
+    def test_write_run_result_includes_workspace_metadata_fields(self):
+        item = {
+            "type": "issue",
+            "number": 32,
+            "title": "Workspace metadata in run result",
+            "working_branch": "circus/issue-32-workspace-metadata",
+        }
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        workspace_metadata = {
+            "worktree_root": "C:/target/repo-worktrees",
+            "worktree_root_source": "env:CIRCUS_WORKTREE_ROOT",
+            "workspace_name": "issue-32",
+            "workspace_path": "C:/target/repo-worktrees/owner-repo/issue-32",
+            "workspace_branch": "circus/issue-32-workspace-metadata",
+            "workspace_lifecycle": "isolated",
+            "workspace_item_identity": "issue-32",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            launch_brief_path = os.path.join(temp_dir, "owner-repo", "issue-32", "run-001-developer", "launch-brief.md")
+            os.makedirs(os.path.dirname(launch_brief_path), exist_ok=True)
+            with open(launch_brief_path, "w", encoding="utf-8") as launch_brief_file:
+                launch_brief_file.write("# Launch Brief\n")
+
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                    handler.initialize_run_status(
+                        item,
+                        "state:changes-requested",
+                        config,
+                        launch_brief_path,
+                        workspace_metadata,
+                    )
+                    handler.update_run_status(
+                        item,
+                        started_at="2026-06-19T08:00:00Z",
+                        completed_at="2026-06-19T08:05:00Z",
+                        exit_code=0,
+                        success=True,
+                        outcome="success",
+                        stop_reason=None,
+                    )
+                    handler.write_run_result(item)
+
+            result_path = os.path.join(os.path.dirname(launch_brief_path), "result.md")
+            self.assertTrue(os.path.isfile(result_path))
+            with open(result_path, "r", encoding="utf-8") as result_file:
+                result_content = result_file.read()
+
+        self.assertIn("- workspace path: `C:/target/repo-worktrees/owner-repo/issue-32`", result_content)
+        self.assertIn("- workspace branch: `circus/issue-32-workspace-metadata`", result_content)
+        self.assertIn("- workspace lifecycle: `isolated`", result_content)
+        self.assertIn("- workspace item identity: `issue-32`", result_content)
+        self.assertIn("- worktree root source: `env:CIRCUS_WORKTREE_ROOT`", result_content)
+
     def test_ensure_shared_artifacts_does_not_overwrite_existing_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             item_run_root = os.path.join(temp_dir, "issue-7")
