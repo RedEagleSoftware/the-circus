@@ -222,6 +222,30 @@ Within that frontier, the intended sequence is:
 
 Provider Routing and Skills remain valid future work, but both should stay behind self-hosting reliability so provider complexity and role specialization are added only after the runtime can observe, recover, and preserve context across repeated runs.
 
+## Accepted Workspace Isolation Direction
+
+Issue #30 approved Git worktrees as the primary isolation mechanism for normal mutation-capable agent execution.
+
+The accepted direction is:
+
+- keep `CIRCUS_TARGET_REPO_PATH` as the canonical local repository and worktree source
+- introduce a workspace resolver that returns a deterministic per-item workspace path
+- record the resolved workspace path and branch in launch briefs and Watchtower status
+- execute Developer and Roadmap Updater runs from item worktrees first
+- preserve existing Circus branch naming for PR creation compatibility
+- block on dirty or unexpected worktrees rather than resetting automatically
+
+The roadmap sequence for this capability is:
+
+1. Document the accepted worktree architecture and first implementation boundary.
+2. Implement workspace path resolution and Watchtower/launch-brief recording.
+3. Add worktree create/reuse for Developer and Roadmap Updater execution.
+4. Switch Developer PR finalization to the resolved workspace path.
+5. Add stale worktree detection/reporting as part of stale-lock/run recovery.
+6. Move Architect and Reviewer modes onto resolver-managed base/read-only workspaces once the mutation-capable path is proven.
+
+Detailed architecture: [Worktree Isolation](../worktree-isolation.md).
+
 ---
 
 # Artifact Model
