@@ -187,6 +187,41 @@ class HandlerObservabilityTests(unittest.TestCase):
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("remote appears to mismatch" in line for line in printed_lines))
 
+    def test_resolve_worktree_root_uses_git_rev_parse(self):
+        with patch.object(
+            handler,
+            "run_git_command_in_repo",
+            return_value=handler.subprocess.CompletedProcess(
+                args=["git", "rev-parse", "--show-toplevel"],
+                returncode=0,
+                stdout="C:/repos/worktree-root\n",
+                stderr="",
+            ),
+        ):
+            worktree_root, source = handler.resolve_worktree_root("C:/repos/target")
+
+        self.assertEqual(worktree_root, "C:/repos/worktree-root")
+        self.assertEqual(source, "git-rev-parse")
+
+    def test_resolve_worktree_root_falls_back_to_target_repo_path_on_git_failure(self):
+        with patch.object(
+            handler,
+            "run_git_command_in_repo",
+            return_value=handler.subprocess.CompletedProcess(
+                args=["git", "rev-parse", "--show-toplevel"],
+                returncode=1,
+                stdout="",
+                stderr="fatal: not a git repository",
+            ),
+        ):
+            with patch("builtins.print") as mock_print:
+                worktree_root, source = handler.resolve_worktree_root("C:/repos/target")
+
+        self.assertEqual(worktree_root, os.path.normpath("C:/repos/target"))
+        self.assertEqual(source, "target-repo-fallback")
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("Unable to resolve git worktree root" in line for line in printed_lines))
+
     def test_verify_github_repo_access_success(self):
         with patch.object(handler, "REPO", "owner/repo"):
             with patch.object(handler, "run_command", return_value='{"nameWithOwner": "owner/repo"}'):
@@ -2299,10 +2334,10 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("Do not modify workflow labels directly", command[-1])
         self.assertIn("Do not auto-merge", command[-1])
         self.assertEqual(kwargs["cwd"], "C:/target/repo")
-        self.assertEqual(kwargs[".env"]["CIRCUS_REVIEW_PR_URL"], "https://github.com/owner/repo/pull/77")
-        self.assertEqual(kwargs[".env"]["CIRCUS_REVIEW_ISSUE_NUMBER"], "9")
-        self.assertEqual(kwargs[".env"]["CIRCUS_REVIEW_LAUNCH_BRIEF"], absolute_launch_brief_path)
-        self.assertEqual(kwargs[".env"]["CIRCUS_REVIEW_RESULT_PATH"], review_result_path)
+        self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_PR_URL"], "https://github.com/owner/repo/pull/77")
+        self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_ISSUE_NUMBER"], "9")
+        self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_LAUNCH_BRIEF"], absolute_launch_brief_path)
+        self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_RESULT_PATH"], review_result_path)
         mock_transition.assert_called_once_with(item)
 
     def test_launch_agent_codex_architect_review_runs_codex_exec_with_pr_url_and_context(self):
@@ -2373,13 +2408,13 @@ class HandlerObservabilityTests(unittest.TestCase):
         )
         self.assertEqual(kwargs["cwd"], "C:/target/repo")
         self.assertEqual(
-            kwargs[".env"]["CIRCUS_ARCHITECT_REVIEW_PR_URL"],
+            kwargs["env"]["CIRCUS_ARCHITECT_REVIEW_PR_URL"],
             "https://github.com/owner/repo/pull/88",
         )
-        self.assertEqual(kwargs[".env"]["CIRCUS_ARCHITECT_REVIEW_ISSUE_NUMBER"], "12")
-        self.assertEqual(kwargs[".env"]["CIRCUS_ARCHITECT_REVIEW_LAUNCH_BRIEF"], absolute_launch_brief_path)
+        self.assertEqual(kwargs["env"]["CIRCUS_ARCHITECT_REVIEW_ISSUE_NUMBER"], "12")
+        self.assertEqual(kwargs["env"]["CIRCUS_ARCHITECT_REVIEW_LAUNCH_BRIEF"], absolute_launch_brief_path)
         self.assertEqual(
-            kwargs[".env"]["CIRCUS_ARCHITECT_REVIEW_RESULT_PATH"],
+            kwargs["env"]["CIRCUS_ARCHITECT_REVIEW_RESULT_PATH"],
             architect_review_result_path,
         )
         mock_transition.assert_called_once_with(item)
@@ -3496,9 +3531,13 @@ class HandlerObservabilityTests(unittest.TestCase):
             content,
         )
         self.assertIn("- target repo root: `C:/target/repo`", content)
+        self.assertIn("- target worktree root: `C:/target/repo`", content)
         self.assertIn("## Assignment", content)
         self.assertIn("- repository: `owner/repo`", content)
         self.assertIn("- target repo path: `C:/target/repo`", content)
+        self.assertIn("- item workspace name: `workspace-issue-3`", content)
+        self.assertIn("- item workspace path: `C:/target/repo/workspace-issue-3`", content)
+        self.assertIn("- worktree root source: `target-repo-fallback`", content)
         self.assertIn("## Agent Profile", content)
         self.assertIn(
             f"- profile source: `{handler.normalize_path_for_display(handler.get_circus_runtime_root())}/TheFarm/roles/developer.md`",
@@ -3530,6 +3569,11 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(status_payload["mode"], "developer")
         self.assertIsNone(status_payload["started_at"])
         self.assertIsNone(status_payload["exit_code"])
+        self.assertEqual(status_payload["worktree_root"], "C:/target/repo")
+        self.assertEqual(status_payload["worktree_root_source"], "target-repo-fallback")
+        self.assertEqual(status_payload["workspace_name"], "workspace-issue-3")
+        self.assertEqual(status_payload["workspace_path"], "C:/target/repo/workspace-issue-3")
+        self.assertEqual(status_payload["artifacts"]["workspace"], "C:/target/repo/workspace-issue-3")
         self.assertEqual(status_payload["artifacts"]["launch_brief"], brief_path.replace("\\", "/"))
 
         self.assertEqual(

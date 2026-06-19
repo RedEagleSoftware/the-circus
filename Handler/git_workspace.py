@@ -2,6 +2,54 @@ import re
 import subprocess
 
 
+def resolve_worktree_root(repo_path, run_git_command, *, normpath, log=print):
+    if not repo_path:
+        return None, "missing-target-repo"
+
+    result = run_git_command(repo_path, ["rev-parse", "--show-toplevel"])
+    if result is not None and result.returncode == 0:
+        resolved_root = result.stdout.strip()
+        if resolved_root:
+            return normpath(resolved_root), "git-rev-parse"
+
+    if result is not None and result.returncode != 0:
+        stderr = result.stderr.strip() if result.stderr else "unknown error"
+        log(f"[Workspace] Warning: Unable to resolve git worktree root via rev-parse: {stderr}")
+    elif result is None:
+        log("[Workspace] Warning: Unable to resolve git worktree root via rev-parse: git command failed to start")
+
+    return normpath(repo_path), "target-repo-fallback"
+
+
+def resolve_item_workspace_metadata(
+    item,
+    target_repo_path,
+    *,
+    resolve_worktree_root_fn,
+    sanitize_filename_part_fn,
+    join_path,
+    normpath,
+    normalize_path_for_display_fn,
+):
+    worktree_root, root_source = resolve_worktree_root_fn(target_repo_path)
+
+    workspace_suffix = "unknown-unknown"
+    if isinstance(item, dict):
+        workspace_suffix = (
+            f"{sanitize_filename_part_fn(item.get('type'))}-{sanitize_filename_part_fn(item.get('number'))}"
+        )
+
+    workspace_name = f"workspace-{workspace_suffix}"
+    workspace_path = normpath(join_path(worktree_root, workspace_name)) if worktree_root else None
+
+    return {
+        "worktree_root": normalize_path_for_display_fn(worktree_root),
+        "worktree_root_source": root_source,
+        "workspace_name": workspace_name,
+        "workspace_path": normalize_path_for_display_fn(workspace_path),
+    }
+
+
 def extract_github_repo_slug(value):
     if not value:
         return None
