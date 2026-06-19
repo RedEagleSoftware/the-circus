@@ -761,12 +761,14 @@ def validate_target_repo_workspace(target_repo_path, expected_repo):
     )
 
 
-def resolve_worktree_root(target_repo_path):
+def resolve_worktree_root(target_repo_path, repo_slug, env_getter=os.getenv):
     return git_workspace.resolve_worktree_root(
         target_repo_path,
-        run_git_command=run_git_command_in_repo,
+        repo_slug,
+        env_getter,
+        dirname=os.path.dirname,
+        join_path=os.path.join,
         normpath=os.path.normpath,
-        log=print,
     )
 
 
@@ -774,6 +776,8 @@ def resolve_item_workspace_metadata(item):
     return git_workspace.resolve_item_workspace_metadata(
         item,
         TARGET_REPO_PATH,
+        REPO,
+        os.getenv,
         resolve_worktree_root_fn=resolve_worktree_root,
         sanitize_filename_part_fn=sanitize_filename_part,
         join_path=os.path.join,
@@ -2021,7 +2025,8 @@ def poll():
     print(f"[Handler] Resolved Circus runtime root: {normalize_path_for_display(get_circus_runtime_root())}")
     print(f"[Handler] Resolved target repo root: {normalize_path_for_display(TARGET_REPO_PATH) if TARGET_REPO_PATH else '<not configured>'}")
 
-    worktree_root, worktree_root_source = resolve_worktree_root(TARGET_REPO_PATH)
+    workspace_repo_slug = sanitize_filename_part(extract_github_repo_slug(REPO) or "unknown-repo")
+    worktree_root, worktree_root_source = resolve_worktree_root(TARGET_REPO_PATH, workspace_repo_slug)
     print(f"[Handler] Resolved target worktree root: {normalize_path_for_display(worktree_root) if worktree_root else '<not configured>'}")
     print(f"[Handler] Worktree root source: {worktree_root_source}")
 

@@ -187,40 +187,20 @@ class HandlerObservabilityTests(unittest.TestCase):
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("remote appears to mismatch" in line for line in printed_lines))
 
-    def test_resolve_worktree_root_uses_git_rev_parse(self):
-        with patch.object(
-            handler,
-            "run_git_command_in_repo",
-            return_value=handler.subprocess.CompletedProcess(
-                args=["git", "rev-parse", "--show-toplevel"],
-                returncode=0,
-                stdout="C:/repos/worktree-root\n",
-                stderr="",
-            ),
-        ):
-            worktree_root, source = handler.resolve_worktree_root("C:/repos/target")
+    def test_resolve_worktree_root_uses_configured_environment_override(self):
+        with patch.dict(os.environ, {"CIRCUS_WORKTREE_ROOT": "C:/repos/worktrees"}, clear=False):
+            worktree_root, source = handler.resolve_worktree_root("C:/repos/target", "owner-repo")
 
-        self.assertEqual(worktree_root, "C:/repos/worktree-root")
-        self.assertEqual(source, "git-rev-parse")
+        self.assertEqual(worktree_root, "C:/repos/worktrees")
+        self.assertEqual(source, "env:CIRCUS_WORKTREE_ROOT")
 
-    def test_resolve_worktree_root_falls_back_to_target_repo_path_on_git_failure(self):
-        with patch.object(
-            handler,
-            "run_git_command_in_repo",
-            return_value=handler.subprocess.CompletedProcess(
-                args=["git", "rev-parse", "--show-toplevel"],
-                returncode=1,
-                stdout="",
-                stderr="fatal: not a git repository",
-            ),
-        ):
-            with patch("builtins.print") as mock_print:
-                worktree_root, source = handler.resolve_worktree_root("C:/repos/target")
+    def test_resolve_worktree_root_derives_default_from_repo_slug_when_unset(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CIRCUS_WORKTREE_ROOT", None)
+            worktree_root, source = handler.resolve_worktree_root("C:/repos/target", "owner-repo")
 
-        self.assertEqual(worktree_root, os.path.normpath("C:/repos/target"))
-        self.assertEqual(source, "target-repo-fallback")
-        printed_lines = [call.args[0] for call in mock_print.call_args_list]
-        self.assertTrue(any("Unable to resolve git worktree root" in line for line in printed_lines))
+        self.assertEqual(worktree_root, os.path.normpath("C:/repos/owner-repo-worktrees"))
+        self.assertEqual(source, "derived-default")
 
     def test_verify_github_repo_access_success(self):
         with patch.object(handler, "REPO", "owner/repo"):
@@ -3487,12 +3467,14 @@ class HandlerObservabilityTests(unittest.TestCase):
             with patch.object(handler, "LAUNCH_ARTIFACT_DIR", temp_dir):
                 with patch.object(handler, "REPO", "owner/repo"):
                     with patch.object(handler, "TARGET_REPO_PATH", "C:\\target\\repo"):
-                        brief_path = handler.write_launch_brief(
-                            item,
-                            "state:ready-for-dev",
-                            config,
-                            os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
-                        )
+                        with patch.dict(os.environ, {}, clear=False):
+                            os.environ.pop("CIRCUS_WORKTREE_ROOT", None)
+                            brief_path = handler.write_launch_brief(
+                                item,
+                                "state:ready-for-dev",
+                                config,
+                                os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                            )
 
             self.assertTrue(os.path.isfile(brief_path))
             with open(brief_path, "r", encoding="utf-8") as generated_file:
@@ -3531,13 +3513,16 @@ class HandlerObservabilityTests(unittest.TestCase):
             content,
         )
         self.assertIn("- target repo root: `C:/target/repo`", content)
-        self.assertIn("- target worktree root: `C:/target/repo`", content)
+        self.assertIn("- target worktree root: `C:/target/owner-repo-worktrees`", content)
         self.assertIn("## Assignment", content)
         self.assertIn("- repository: `owner/repo`", content)
         self.assertIn("- target repo path: `C:/target/repo`", content)
-        self.assertIn("- item workspace name: `workspace-issue-3`", content)
-        self.assertIn("- item workspace path: `C:/target/repo/workspace-issue-3`", content)
-        self.assertIn("- worktree root source: `target-repo-fallback`", content)
+        self.assertIn("- item workspace name: `issue-3`", content)
+        self.assertIn("- item workspace path: `C:/target/owner-repo-worktrees/owner-repo/issue-3`", content)
+        self.assertIn("- workspace branch: `<not available>`", content)
+        self.assertIn("- workspace lifecycle: `planned`", content)
+        self.assertIn("- workspace item identity: `issue-3`", content)
+        self.assertIn("- worktree root source: `derived-default`", content)
         self.assertIn("## Agent Profile", content)
         self.assertIn(
             f"- profile source: `{handler.normalize_path_for_display(handler.get_circus_runtime_root())}/TheFarm/roles/developer.md`",
@@ -3569,11 +3554,14 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(status_payload["mode"], "developer")
         self.assertIsNone(status_payload["started_at"])
         self.assertIsNone(status_payload["exit_code"])
-        self.assertEqual(status_payload["worktree_root"], "C:/target/repo")
-        self.assertEqual(status_payload["worktree_root_source"], "target-repo-fallback")
-        self.assertEqual(status_payload["workspace_name"], "workspace-issue-3")
-        self.assertEqual(status_payload["workspace_path"], "C:/target/repo/workspace-issue-3")
-        self.assertEqual(status_payload["artifacts"]["workspace"], "C:/target/repo/workspace-issue-3")
+        self.assertEqual(status_payload["worktree_root"], "C:/target/owner-repo-worktrees")
+        self.assertEqual(status_payload["worktree_root_source"], "derived-default")
+        self.assertEqual(status_payload["workspace_name"], "issue-3")
+        self.assertEqual(status_payload["workspace_path"], "C:/target/owner-repo-worktrees/owner-repo/issue-3")
+        self.assertIsNone(status_payload["workspace_branch"])
+        self.assertEqual(status_payload["workspace_lifecycle"], "planned")
+        self.assertEqual(status_payload["workspace_item_identity"], "issue-3")
+        self.assertEqual(status_payload["artifacts"]["workspace"], "C:/target/owner-repo-worktrees/owner-repo/issue-3")
         self.assertEqual(status_payload["artifacts"]["launch_brief"], brief_path.replace("\\", "/"))
 
         self.assertEqual(

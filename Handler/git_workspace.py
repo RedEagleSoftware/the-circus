@@ -2,28 +2,33 @@ import re
 import subprocess
 
 
-def resolve_worktree_root(repo_path, run_git_command, *, normpath, log=print):
+def resolve_worktree_root(repo_path, repo_slug, env_getter, *, dirname, join_path, normpath):
     if not repo_path:
         return None, "missing-target-repo"
 
-    result = run_git_command(repo_path, ["rev-parse", "--show-toplevel"])
-    if result is not None and result.returncode == 0:
-        resolved_root = result.stdout.strip()
-        if resolved_root:
-            return normpath(resolved_root), "git-rev-parse"
+    configured_root = env_getter("CIRCUS_WORKTREE_ROOT")
+    if configured_root:
+        return normpath(configured_root), "env:CIRCUS_WORKTREE_ROOT"
 
-    if result is not None and result.returncode != 0:
-        stderr = result.stderr.strip() if result.stderr else "unknown error"
-        log(f"[Workspace] Warning: Unable to resolve git worktree root via rev-parse: {stderr}")
-    elif result is None:
-        log("[Workspace] Warning: Unable to resolve git worktree root via rev-parse: git command failed to start")
+    repo_basename = repo_path.rstrip("/\\")
+    if "/" in repo_basename or "\\" in repo_basename:
+        repo_basename = repo_basename.replace("\\", "/").rsplit("/", 1)[1]
 
-    return normpath(repo_path), "target-repo-fallback"
+    if repo_slug:
+        repo_basename = repo_slug.replace("/", "-")
+
+    repo_parent = dirname(repo_path.replace("\\", "/"))
+    if not repo_parent:
+        repo_parent = dirname(repo_path)
+
+    return normpath(join_path(repo_parent, f"{repo_basename}-worktrees")), "derived-default"
 
 
 def resolve_item_workspace_metadata(
     item,
     target_repo_path,
+    repo,
+    env_getter,
     *,
     resolve_worktree_root_fn,
     sanitize_filename_part_fn,
@@ -31,22 +36,44 @@ def resolve_item_workspace_metadata(
     normpath,
     normalize_path_for_display_fn,
 ):
-    worktree_root, root_source = resolve_worktree_root_fn(target_repo_path)
+    repo_slug = sanitize_filename_part_fn(extract_github_repo_slug(repo) or "unknown-repo")
+    worktree_root, root_source = resolve_worktree_root_fn(target_repo_path, repo_slug, env_getter)
 
-    workspace_suffix = "unknown-unknown"
+    item_type = "unknown"
+    item_number = "unknown"
+    workspace_branch = None
+    workspace_lifecycle = "planned"
+    workspace_item_identity = "unknown-unknown"
     if isinstance(item, dict):
-        workspace_suffix = (
-            f"{sanitize_filename_part_fn(item.get('type'))}-{sanitize_filename_part_fn(item.get('number'))}"
-        )
+        item_type = sanitize_filename_part_fn(item.get("type"))
+        item_number = sanitize_filename_part_fn(item.get("number"))
+        workspace_branch = item.get("working_branch") or item.get("execution_branch")
+        workspace_lifecycle = sanitize_filename_part_fn(item.get("workspace_lifecycle") or "planned")
+        workspace_item_identity = f"{item_type}-{item_number}"
 
-    workspace_name = f"workspace-{workspace_suffix}"
-    workspace_path = normpath(join_path(worktree_root, workspace_name)) if worktree_root else None
+    workspace_directory_name = workspace_item_identity
+    if item_type == "issue":
+        workspace_directory_name = f"issue-{item_number}"
+    if item_type in {"pr", "pull-request", "pull_request"}:
+        workspace_directory_name = f"pr-{item_number}"
+
+    workspace_name = workspace_directory_name
+    workspace_path = (
+        normpath(join_path(worktree_root, repo_slug, workspace_directory_name)) if worktree_root else None
+    )
+
+    normalized_workspace_branch = None
+    if workspace_branch is not None:
+        normalized_workspace_branch = str(workspace_branch).strip() or None
 
     return {
         "worktree_root": normalize_path_for_display_fn(worktree_root),
         "worktree_root_source": root_source,
         "workspace_name": workspace_name,
         "workspace_path": normalize_path_for_display_fn(workspace_path),
+        "workspace_branch": normalize_path_for_display_fn(normalized_workspace_branch),
+        "workspace_lifecycle": workspace_lifecycle,
+        "workspace_item_identity": workspace_item_identity,
     }
 
 

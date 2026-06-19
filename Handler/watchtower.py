@@ -32,6 +32,9 @@ RUN_STATUS_FIELDS = [
     "worktree_root_source",
     "workspace_name",
     "workspace_path",
+    "workspace_branch",
+    "workspace_lifecycle",
+    "workspace_item_identity",
     "run_dir",
     "launch_brief_path",
     "started_at",
@@ -167,6 +170,9 @@ def initialize_run_status(
         "worktree_root_source": workspace_metadata.get("worktree_root_source"),
         "workspace_name": workspace_metadata.get("workspace_name"),
         "workspace_path": workspace_metadata.get("workspace_path"),
+        "workspace_branch": workspace_metadata.get("workspace_branch"),
+        "workspace_lifecycle": workspace_metadata.get("workspace_lifecycle"),
+        "workspace_item_identity": workspace_metadata.get("workspace_item_identity"),
         "run_dir": normalized_run_dir,
         "launch_brief_path": normalized_brief_path,
         "started_at": None,
@@ -414,6 +420,9 @@ def build_launch_brief_markdown(
     workspace_metadata = workspace_metadata or {}
     workspace_name = workspace_metadata.get("workspace_name")
     workspace_path = workspace_metadata.get("workspace_path")
+    workspace_branch = workspace_metadata.get("workspace_branch")
+    workspace_lifecycle = workspace_metadata.get("workspace_lifecycle")
+    workspace_item_identity = workspace_metadata.get("workspace_item_identity")
     worktree_root = workspace_metadata.get("worktree_root")
     worktree_root_source = workspace_metadata.get("worktree_root_source")
 
@@ -430,6 +439,9 @@ def build_launch_brief_markdown(
         f"- target repo path: `{normalized_target_repo_path}`",
         f"- item workspace name: `{workspace_name or '<not available>'}`",
         f"- item workspace path: `{workspace_path or '<not available>'}`",
+        f"- workspace branch: `{workspace_branch or '<not available>'}`",
+        f"- workspace lifecycle: `{workspace_lifecycle or '<not available>'}`",
+        f"- workspace item identity: `{workspace_item_identity or '<not available>'}`",
         f"- worktree root source: `{worktree_root_source or '<not available>'}`",
     ]
 
