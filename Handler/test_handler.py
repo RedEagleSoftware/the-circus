@@ -2299,10 +2299,10 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("Do not modify workflow labels directly", command[-1])
         self.assertIn("Do not auto-merge", command[-1])
         self.assertEqual(kwargs["cwd"], "C:/target/repo")
-        self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_PR_URL"], "https://github.com/owner/repo/pull/77")
-        self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_ISSUE_NUMBER"], "9")
-        self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_LAUNCH_BRIEF"], absolute_launch_brief_path)
-        self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_RESULT_PATH"], review_result_path)
+        self.assertEqual(kwargs[".env"]["CIRCUS_REVIEW_PR_URL"], "https://github.com/owner/repo/pull/77")
+        self.assertEqual(kwargs[".env"]["CIRCUS_REVIEW_ISSUE_NUMBER"], "9")
+        self.assertEqual(kwargs[".env"]["CIRCUS_REVIEW_LAUNCH_BRIEF"], absolute_launch_brief_path)
+        self.assertEqual(kwargs[".env"]["CIRCUS_REVIEW_RESULT_PATH"], review_result_path)
         mock_transition.assert_called_once_with(item)
 
     def test_launch_agent_codex_architect_review_runs_codex_exec_with_pr_url_and_context(self):
@@ -2373,13 +2373,13 @@ class HandlerObservabilityTests(unittest.TestCase):
         )
         self.assertEqual(kwargs["cwd"], "C:/target/repo")
         self.assertEqual(
-            kwargs["env"]["CIRCUS_ARCHITECT_REVIEW_PR_URL"],
+            kwargs[".env"]["CIRCUS_ARCHITECT_REVIEW_PR_URL"],
             "https://github.com/owner/repo/pull/88",
         )
-        self.assertEqual(kwargs["env"]["CIRCUS_ARCHITECT_REVIEW_ISSUE_NUMBER"], "12")
-        self.assertEqual(kwargs["env"]["CIRCUS_ARCHITECT_REVIEW_LAUNCH_BRIEF"], absolute_launch_brief_path)
+        self.assertEqual(kwargs[".env"]["CIRCUS_ARCHITECT_REVIEW_ISSUE_NUMBER"], "12")
+        self.assertEqual(kwargs[".env"]["CIRCUS_ARCHITECT_REVIEW_LAUNCH_BRIEF"], absolute_launch_brief_path)
         self.assertEqual(
-            kwargs["env"]["CIRCUS_ARCHITECT_REVIEW_RESULT_PATH"],
+            kwargs[".env"]["CIRCUS_ARCHITECT_REVIEW_RESULT_PATH"],
             architect_review_result_path,
         )
         mock_transition.assert_called_once_with(item)

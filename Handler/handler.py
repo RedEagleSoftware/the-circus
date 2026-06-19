@@ -23,8 +23,7 @@ from Handler.workflow_states import (
     SYSTEMS_ARCHITECTURE_LABEL,
 )
 
-load_dotenv()
-
+load_dotenv(override=True)
 # Configuration
 REPO = os.getenv("CIRCUS_REPO")  # Format: owner/repo
 TARGET_REPO_PATH = os.getenv("CIRCUS_TARGET_REPO_PATH")
@@ -106,8 +105,8 @@ def resolve_executable_path(executable_name, env_override_name=None):
     if override_candidate:
         resolved_override = shutil.which(override_candidate)
         if resolved_override:
-            return resolved_override, "env"
-        return None, "missing-env"
+            return resolved_override, ".env"
+        return None, "missing-.env"
 
     resolved_default = shutil.which(executable_name)
     if resolved_default:
@@ -127,7 +126,7 @@ def validate_required_executables():
         resolved_path, resolution_source = resolve_executable_path(executable_name, env_override_name)
 
         if resolved_path:
-            if resolution_source == "env":
+            if resolution_source == ".env":
                 print(
                     f"[Startup] Found executable '{executable_name}' via {env_override_name}: {resolved_path}"
                 )
@@ -137,7 +136,7 @@ def validate_required_executables():
             resolved_paths[executable_name] = resolved_path
             continue
 
-        if resolution_source == "missing-env":
+        if resolution_source == "missing-.env":
             missing_messages.append(
                 f"[Startup] Error: {env_override_name} is set, but executable '{executable_name}' was not found "
                 f"for value '{os.getenv(env_override_name)}'."

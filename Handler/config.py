@@ -14,6 +14,7 @@ def get_max_steps_per_run(
 ):
     raw_value = env_getter(max_steps_env)
     if raw_value is None:
+        log(f"[Handler] {max_steps_env} is not set; using default {default_max_steps}.")
         return default_max_steps
 
     stripped_value = raw_value.strip()
