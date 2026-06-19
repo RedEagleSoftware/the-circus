@@ -202,6 +202,32 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(worktree_root, os.path.normpath("C:/repos/target-worktrees"))
         self.assertEqual(source, "derived-default")
 
+    def test_resolve_item_workspace_metadata_sanitizes_repository_slug_for_issue_workspace_path(self):
+        item = {"type": "issue", "number": 32}
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/repos/target"):
+            with patch.object(handler, "REPO", "Red Eagle Software/The.Circus"):
+                with patch.dict(os.environ, {}, clear=False):
+                    os.environ.pop("CIRCUS_WORKTREE_ROOT", None)
+                    metadata = handler.resolve_item_workspace_metadata(item)
+
+        self.assertEqual(metadata["workspace_name"], "issue-32")
+        self.assertEqual(metadata["workspace_item_identity"], "issue-32")
+        self.assertEqual(metadata["workspace_path"], "C:/repos/target-worktrees/red-eagle-software-the-circus/issue-32")
+
+    def test_resolve_item_workspace_metadata_generates_pull_request_workspace_path(self):
+        item = {"type": "pull_request", "number": 77}
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/repos/target"):
+            with patch.object(handler, "REPO", "RedEagleSoftware/the-circus"):
+                with patch.dict(os.environ, {}, clear=False):
+                    os.environ.pop("CIRCUS_WORKTREE_ROOT", None)
+                    metadata = handler.resolve_item_workspace_metadata(item)
+
+        self.assertEqual(metadata["workspace_name"], "pr-77")
+        self.assertEqual(metadata["workspace_item_identity"], "pull_request-77")
+        self.assertEqual(metadata["workspace_path"], "C:/repos/target-worktrees/redeaglesoftware-the-circus/pr-77")
+
     def test_verify_github_repo_access_success(self):
         with patch.object(handler, "REPO", "owner/repo"):
             with patch.object(handler, "run_command", return_value='{"nameWithOwner": "owner/repo"}'):
