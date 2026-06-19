@@ -41,9 +41,10 @@ class HandlerObservabilityTests(unittest.TestCase):
             }
             return mapping.get(command_name)
 
-        with patch.object(handler.shutil, "which", side_effect=which_side_effect):
-            with patch("builtins.print") as mock_print:
-                resolved = handler.validate_required_executables()
+        with patch.object(handler, "report_python_environment_versions"):
+            with patch.object(handler.shutil, "which", side_effect=which_side_effect):
+                with patch("builtins.print") as mock_print:
+                    resolved = handler.validate_required_executables()
 
         self.assertEqual(
             resolved,
@@ -70,9 +71,10 @@ class HandlerObservabilityTests(unittest.TestCase):
             }
             return mapping.get(command_name)
 
-        with patch.object(handler.shutil, "which", side_effect=which_side_effect):
-            with patch("builtins.print") as mock_print:
-                resolved = handler.validate_required_executables()
+        with patch.object(handler, "report_python_environment_versions"):
+            with patch.object(handler.shutil, "which", side_effect=which_side_effect):
+                with patch("builtins.print") as mock_print:
+                    resolved = handler.validate_required_executables()
 
         self.assertIsNone(resolved)
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
@@ -92,13 +94,48 @@ class HandlerObservabilityTests(unittest.TestCase):
             return mapping.get(command_name)
 
         with patch.dict(os.environ, {"CIRCUS_JUNIE_EXECUTABLE": "C:/custom/junie.exe"}, clear=False):
-            with patch.object(handler.shutil, "which", side_effect=which_side_effect):
-                with patch("builtins.print") as mock_print:
-                    resolved = handler.validate_required_executables()
+            with patch.object(handler, "report_python_environment_versions"):
+                with patch.object(handler.shutil, "which", side_effect=which_side_effect):
+                    with patch("builtins.print") as mock_print:
+                        resolved = handler.validate_required_executables()
 
         self.assertEqual(resolved["junie"], "C:/custom/junie.exe")
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("via CIRCUS_JUNIE_EXECUTABLE" in line for line in printed_lines))
+
+    def test_report_python_environment_versions_prints_python_and_pip_versions(self):
+        pip_result = Mock(returncode=0, stdout="pip 24.1 from /venv/lib/python3.12/site-packages/pip (python 3.12)\n")
+
+        with patch.object(handler.sys, "version_info", Mock(major=3, minor=12, micro=4)):
+            with patch.object(handler.sys, "executable", "/venv/bin/python"):
+                with patch.object(handler.subprocess, "run", return_value=pip_result) as mock_run:
+                    with patch("builtins.print") as mock_print:
+                        handler.report_python_environment_versions()
+
+        mock_run.assert_called_once_with(
+            ["/venv/bin/python", "-m", "pip", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertIn("[Startup] Python version: 3.12.4", printed_lines)
+        self.assertIn("[Startup] Pip version: 24.1", printed_lines)
+
+    def test_report_python_environment_versions_warns_and_continues_when_pip_lookup_fails(self):
+        with patch.object(handler.sys, "version_info", Mock(major=3, minor=11, micro=9)):
+            with patch.object(
+                handler.subprocess,
+                "run",
+                side_effect=handler.subprocess.TimeoutExpired(cmd=["python", "-m", "pip", "--version"], timeout=10),
+            ):
+                with patch("builtins.print") as mock_print:
+                    handler.report_python_environment_versions()
+
+        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        self.assertIn("[Startup] Python version: 3.11.9", printed_lines)
+        self.assertTrue(any("[Startup] Warning: Unable to determine pip version:" in line for line in printed_lines))
 
     def test_validate_target_repo_workspace_missing_path(self):
         with patch("builtins.print") as mock_print:

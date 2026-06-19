@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from datetime import datetime, UTC
 from dotenv import load_dotenv
@@ -116,6 +117,7 @@ def resolve_executable_path(executable_name, env_override_name=None):
 
 
 def validate_required_executables():
+    report_python_environment_versions()
     print("[Startup] Validating required executables...")
 
     resolved_paths = {}
@@ -154,6 +156,45 @@ def validate_required_executables():
         return None
 
     return resolved_paths
+
+
+def report_python_environment_versions():
+    python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    print(f"[Startup] Python version: {python_version}")
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f"[Startup] Warning: Unable to determine pip version: {error}")
+        return
+
+    if result.returncode != 0:
+        failure_reason = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
+        print(f"[Startup] Warning: Unable to determine pip version: {failure_reason}")
+        return
+
+    pip_output = result.stdout.strip()
+    if not pip_output:
+        print("[Startup] Warning: Unable to determine pip version: pip returned empty output.")
+        return
+
+    first_line = pip_output.splitlines()[0].strip()
+    if not first_line:
+        print("[Startup] Warning: Unable to determine pip version: pip output was blank.")
+        return
+
+    pip_tokens = first_line.split()
+    if len(pip_tokens) >= 2 and pip_tokens[0].lower() == "pip":
+        print(f"[Startup] Pip version: {pip_tokens[1]}")
+        return
+
+    print(f"[Startup] Pip version: {first_line}")
 
 
 def get_candidates(item_type, list_cmd):
