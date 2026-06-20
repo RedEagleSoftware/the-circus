@@ -6,6 +6,7 @@ Available roles:
 
 - [Architect Agent (Feature Architect)](roles/architect.md)
 - [Developer Agent](roles/developer.md)
+- [Implementation Planner](roles/implementation-planner.md)
 - [Reviewer](roles/reviewer.md)
 - [Roadmap Updater](roles/roadmap-updater.md)
 - [Systems Architect](roles/systems-architect.md)

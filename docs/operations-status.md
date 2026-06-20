@@ -13,6 +13,7 @@
 - Per-run Watchtower status/result artifacts operational
 - Roadmap Updater workflow available for documentation-only synchronization after accepted Systems Architect recommendations
 - Worktree isolation architecture accepted for mutation-capable agent execution; implementation not yet started
+- Implementation Planning architecture accepted as a review-gated bridge from roadmap updates to generated implementation issues; implementation not yet started
 
 ## Future Watchtower Concept
 
@@ -31,6 +32,10 @@
 - state:ready-for-systems-architecture
 - state:systems-architecture-changes-requested
 - state:ready-for-roadmap-update
+- state:ready-for-implementation-planning
+- state:ready-for-implementation-plan-review
+- state:implementation-planning-changes-requested
+- state:planned
 - state:ready-for-dev
 - state:ready-for-review
 - state:ready-for-architect-review
@@ -45,6 +50,7 @@
 - Durable polling and stale-lock/run recovery need to be hardened.
 - No artifact contract that records the accepted GitHub Systems Architect recommendation comment URL/ID in Watchtower run history.
 - No persistent Watchtower visibility beyond local run artifacts.
+- Implementation Planner workflow, canonical labels, generated issue validation, and plan-review transition are documented but not implemented.
 
 ## Current Architectural Decisions
 - GitHub labels are source of truth
@@ -57,6 +63,7 @@
 - No webhook/event bus yet
 - Systems Architect recommendations are reviewed in GitHub issue comments
 - Roadmap Updater synchronizes documentation only after human-approved strategy
+- Implementation Planner converts accepted documented strategy into generated issues only after roadmap synchronization and human review gating
 - Git worktrees are the accepted isolation mechanism for Developer and Roadmap Updater execution, with per-item worktrees as the first implementation unit
 
 ## Maintenance Rules
@@ -88,6 +95,7 @@
 - Add stale worktree detection/reporting as part of stale-lock/run recovery.
 - Add persistent Watchtower visibility for active and recent runs.
 - Record accepted GitHub Systems Architect recommendation comment URLs/IDs in Watchtower run history for traceability.
+- Add Implementation Planner dispatch, generated issue creation in `state:planned`, and plan-review transitions.
 
 ## Future Roadmap Ideas
 

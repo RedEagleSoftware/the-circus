@@ -5,6 +5,7 @@ Systems Architect stewardship: capability-tree planning and sequencing are owned
 Approved issue #19 direction: keep The Circus focused on the `Self Hosting` frontier before expanding `Provider Routing` or `Skills`.
 Approved issue #30 direction: use Git worktrees as the primary isolation mechanism for normal mutation-capable agent execution.
 Approved issue #34 direction: add explicit dependency blocking as a Handler-owned scheduling capability before broad parallel execution.
+Approved issue #37 direction: add Implementation Planning as a distinct review-gated bridge from accepted strategy to generated implementation issues.
 The next capability frontier is **self-hosting reliability and strategic memory**.
 
 ## Current Frontier
@@ -49,6 +50,7 @@ flowchart LR
     recovery["○ Stale Lock / Run Recovery"]
     visibility["○ Persistent Watchtower Visibility"]
     memory["○ Strategic Memory"]
+    planning["○ Implementation Planning"]
 
     onboarding --> workspace
     workspace --> polling
@@ -56,6 +58,7 @@ flowchart LR
     dependency --> recovery
     recovery --> visibility
     visibility --> memory
+    memory --> planning
 ```
 
 ## Agent Evolution
@@ -103,3 +106,20 @@ The accepted architecture is:
 - Issues without a `## Circus Dependencies` section remain eligible under normal workflow rules; fail-closed handling for missing, malformed, inaccessible, unsafe, or cyclic metadata applies when dependency intent is declared or unblocking is being evaluated.
 
 Detailed architecture: [Issue Dependency Blocking](dependency-blocking.md).
+
+## Implementation Planning
+
+Implementation Planning is now an accepted Self Hosting / Strategic Memory capability direction, based on the approved Systems Architect recommendation in issue #37.
+
+The accepted architecture is:
+
+- Implementation Planning is a distinct workflow role, not an extension of Systems Architect, Roadmap Updater, Feature Architect, or Handler.
+- Implementation Planning happens after roadmap updates, so accepted strategic intent is recorded in durable documentation before issue trees are generated.
+- The Implementation Planner owns issue decomposition, initial sequencing, dependency declaration, generated GitHub issue creation, and the implementation plan review artifact.
+- Generated issues should be created directly in GitHub, but in a non-dispatch state such as `state:planned` or another plan-review state.
+- Generated issues should include source traceability, implementation scope, acceptance criteria, suggested next workflow state, and optional `## Circus Dependencies` metadata where ordering matters.
+- Human approval is required before generated issues become dispatchable.
+- Handler remains responsible for workflow label transitions, dispatch eligibility, dependency blocking, and automatic unblocking.
+- Watchtower records planning artifacts and generated issue links for observability only.
+
+Detailed architecture: [Implementation Planning](implementation-planning.md).
