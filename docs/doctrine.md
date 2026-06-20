@@ -70,6 +70,10 @@
 - `state:ready-for-systems-architecture` -> Codex Systems Architect
 - `state:systems-architecture-changes-requested` -> Codex Systems Architect follow-up
 - `state:ready-for-roadmap-update` -> Codex Roadmap Updater
+- `state:ready-for-implementation-planning` -> Codex Implementation Planner
+- `state:ready-for-implementation-plan-review` -> Human implementation plan review
+- `state:implementation-planning-changes-requested` -> Codex Implementation Planner follow-up
+- `state:planned` -> Non-dispatch generated implementation issue state
 - `state:dependency-blocked` -> Handler-managed dependency wait state
 - `state:ready-for-human-review` -> Human Review
 
