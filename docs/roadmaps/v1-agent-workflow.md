@@ -107,11 +107,13 @@ over hidden inference and automation.
 - `state:systems-architecture-changes-requested`
 - `state:ready-for-roadmap-update`
 - `state:ready-for-human-review`
+- `state:dependency-blocked`
 - `state:blocked`
 - `state:agent-in-progress`
 
 Systems Architect remains a strategic planning role, but now uses explicit GitHub workflow states and human-selected follow-up labels.
 The `state:ready-for-roadmap-update` state is a documentation synchronization step for accepted strategy, not an implementation handoff.
+The `state:dependency-blocked` state is a scheduler-managed waiting state for issues with declared unsatisfied prerequisites. It is not dispatchable.
 
 ---
 
@@ -216,9 +218,10 @@ Within that frontier, the intended sequence is:
 1. Repository onboarding.
 2. Workspace isolation.
 3. Durable polling.
-4. Stale-lock and run recovery.
-5. Persistent Watchtower visibility.
-6. Strategic memory that records accepted recommendations without making Watchtower the primary review surface.
+4. Dependency blocking and automatic unblocking.
+5. Stale-lock and run recovery.
+6. Persistent Watchtower visibility.
+7. Strategic memory that records accepted recommendations without making Watchtower the primary review surface.
 
 Provider Routing and Skills remain valid future work, but both should stay behind self-hosting reliability so provider complexity and role specialization are added only after the runtime can observe, recover, and preserve context across repeated runs.
 
@@ -245,6 +248,34 @@ The roadmap sequence for this capability is:
 6. Move Architect and Reviewer modes onto resolver-managed base/read-only workspaces once the mutation-capable path is proven.
 
 Detailed architecture: [Worktree Isolation](../worktree-isolation.md).
+
+## Accepted Dependency Blocking Direction
+
+Issue #34 approved explicit dependency blocking as a Handler-owned scheduling capability.
+
+The accepted direction is:
+
+- represent dependencies in a dedicated machine-readable `## Circus Dependencies` issue body section
+- include `resume_state` in dependency metadata so automatic unblocking restores exactly one primary workflow state
+- add `state:dependency-blocked` as a non-dispatch state separate from human-owned `state:blocked`
+- run dependency validation before Handler locks and launches any dispatchable item
+- automatically unblock dependency-blocked items during Handler polling when all prerequisites are satisfied
+- treat dependency satisfaction conservatively, with issues satisfied only by closed-completed outcomes and pull requests satisfied only by merge
+- record every block and unblock decision in both GitHub comments and Watchtower status artifacts
+- treat issues without a `## Circus Dependencies` section as having no declared dependencies under normal workflow rules
+- fail closed on missing, malformed, inaccessible, unsafe, or cyclic dependency metadata when dependency intent is declared or unblocking metadata cannot be safely evaluated
+
+The roadmap sequence for this capability is:
+
+1. Document the dependency model and lifecycle.
+2. Add canonical `state:dependency-blocked` label support.
+3. Implement dependency metadata parsing and validation.
+4. Add Handler pre-dispatch dependency gating.
+5. Add automatic unblocking during polling.
+6. Add Watchtower dependency observability fields.
+7. Extend Roadmap Updater and Systems Architect guidance so future roadmap-generated issue trees can include dependency sections at issue creation time.
+
+Detailed architecture: [Issue Dependency Blocking](../dependency-blocking.md).
 
 ---
 

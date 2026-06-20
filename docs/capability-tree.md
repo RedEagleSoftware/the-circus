@@ -4,6 +4,7 @@ Systems Architect stewardship: capability-tree planning and sequencing are owned
 
 Approved issue #19 direction: keep The Circus focused on the `Self Hosting` frontier before expanding `Provider Routing` or `Skills`.
 Approved issue #30 direction: use Git worktrees as the primary isolation mechanism for normal mutation-capable agent execution.
+Approved issue #34 direction: add explicit dependency blocking as a Handler-owned scheduling capability before broad parallel execution.
 The next capability frontier is **self-hosting reliability and strategic memory**.
 
 ## Current Frontier
@@ -44,13 +45,15 @@ flowchart LR
     onboarding["◐ Repository Onboarding"]
     workspace["◐ Workspace Isolation"]
     polling["○ Durable Polling"]
+    dependency["○ Dependency Blocking"]
     recovery["○ Stale Lock / Run Recovery"]
     visibility["○ Persistent Watchtower Visibility"]
     memory["○ Strategic Memory"]
 
     onboarding --> workspace
     workspace --> polling
-    polling --> recovery
+    polling --> dependency
+    dependency --> recovery
     recovery --> visibility
     visibility --> memory
 ```
@@ -83,3 +86,20 @@ The accepted architecture is:
 - Dirty or unexpected worktrees should block rather than be reset automatically.
 
 Detailed architecture: [Worktree Isolation](worktree-isolation.md).
+
+## Dependency Blocking
+
+Dependency Blocking is now an accepted Self Hosting scheduling capability direction, based on the approved Systems Architect recommendation in issue #34.
+
+The accepted architecture is:
+
+- GitHub remains the source of truth for dependency metadata and workflow state.
+- Dependencies are declared in a dedicated machine-readable issue body section headed `## Circus Dependencies` with marker `<!-- circus:dependencies v1 -->`.
+- Handler owns dependency eligibility checks before dispatch, scheduler-managed transitions into `state:dependency-blocked`, and automatic unblocking when all prerequisites are satisfied.
+- Watchtower records dependency decisions and status for observability, but does not become the authority for dependency state.
+- `state:dependency-blocked` is distinct from human-owned `state:blocked`.
+- Each issue keeps exactly one primary `state:*` label; dependency metadata carries `resume_state` so Handler can restore the intended dispatch label after unblocking.
+- V1 satisfaction is conservative: issues satisfy dependencies only when closed completed, and pull requests satisfy dependencies only when merged.
+- Issues without a `## Circus Dependencies` section remain eligible under normal workflow rules; fail-closed handling for missing, malformed, inaccessible, unsafe, or cyclic metadata applies when dependency intent is declared or unblocking is being evaluated.
+
+Detailed architecture: [Issue Dependency Blocking](dependency-blocking.md).
