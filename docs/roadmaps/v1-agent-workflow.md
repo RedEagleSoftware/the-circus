@@ -262,7 +262,8 @@ The accepted direction is:
 - automatically unblock dependency-blocked items during Handler polling when all prerequisites are satisfied
 - treat dependency satisfaction conservatively, with issues satisfied only by closed-completed outcomes and pull requests satisfied only by merge
 - record every block and unblock decision in both GitHub comments and Watchtower status artifacts
-- fail closed on missing, malformed, inaccessible, unsafe, or cyclic dependency metadata
+- treat issues without a `## Circus Dependencies` section as having no declared dependencies under normal workflow rules
+- fail closed on missing, malformed, inaccessible, unsafe, or cyclic dependency metadata when dependency intent is declared or unblocking metadata cannot be safely evaluated
 
 The roadmap sequence for this capability is:
 

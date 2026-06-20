@@ -27,7 +27,11 @@ blocked_by:
 ```
 ````
 
-The dependency section is intentionally human-inspectable and machine-readable. Handler should fail closed when the section is missing, malformed, cyclic, inaccessible, or unsafe for automatic evaluation.
+The dependency section is intentionally human-inspectable and machine-readable.
+
+If an otherwise dispatchable issue does not declare a `## Circus Dependencies` section, Handler should treat it as having no declared dependencies and keep normal workflow eligibility behavior.
+
+Fail-closed behavior applies to dependency-managed issues: when dependency intent is declared (for example, an issue is in `state:dependency-blocked` or provides dependency metadata), missing, malformed, cyclic, inaccessible, or unsafe dependency metadata must route to human attention instead of automatic dispatch or resume.
 
 ## Workflow State
 
@@ -60,7 +64,7 @@ Handler polling should inspect `state:dependency-blocked` issues.
 
 If all declared dependencies are satisfied, Handler should remove `state:dependency-blocked`, restore the declared `resume_state`, leave a GitHub comment explaining the unblock, and record the decision in Watchtower.
 
-If dependency metadata is missing, malformed, cyclic, inaccessible, or unsafe, Handler should move or leave the issue in human-owned blocked state and comment with the blocker instead of silently resuming work.
+If automatic unblocking cannot safely evaluate declared dependencies or restore a valid `resume_state` because metadata is missing, malformed, cyclic, inaccessible, or unsafe, Handler should move or leave the issue in human-owned blocked state and comment with the blocker instead of silently resuming work.
 
 ## Satisfaction Rules
 

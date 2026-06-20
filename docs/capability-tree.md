@@ -100,6 +100,6 @@ The accepted architecture is:
 - `state:dependency-blocked` is distinct from human-owned `state:blocked`.
 - Each issue keeps exactly one primary `state:*` label; dependency metadata carries `resume_state` so Handler can restore the intended dispatch label after unblocking.
 - V1 satisfaction is conservative: issues satisfy dependencies only when closed completed, and pull requests satisfy dependencies only when merged.
-- Missing, malformed, inaccessible, unsafe, or cyclic dependency metadata fails closed and requires human attention.
+- Issues without a `## Circus Dependencies` section remain eligible under normal workflow rules; fail-closed handling for missing, malformed, inaccessible, unsafe, or cyclic metadata applies when dependency intent is declared or unblocking is being evaluated.
 
 Detailed architecture: [Issue Dependency Blocking](dependency-blocking.md).
