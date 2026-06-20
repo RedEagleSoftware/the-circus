@@ -761,6 +761,31 @@ def validate_target_repo_workspace(target_repo_path, expected_repo):
     )
 
 
+def resolve_worktree_root(target_repo_path, repo_slug, env_getter=os.getenv):
+    return git_workspace.resolve_worktree_root(
+        target_repo_path,
+        repo_slug,
+        env_getter,
+        dirname=os.path.dirname,
+        join_path=os.path.join,
+        normpath=os.path.normpath,
+    )
+
+
+def resolve_item_workspace_metadata(item):
+    return git_workspace.resolve_item_workspace_metadata(
+        item,
+        TARGET_REPO_PATH,
+        REPO,
+        os.getenv,
+        resolve_worktree_root_fn=resolve_worktree_root,
+        sanitize_filename_part_fn=sanitize_filename_part,
+        join_path=os.path.join,
+        normpath=os.path.normpath,
+        normalize_path_for_display_fn=normalize_path_for_display,
+    )
+
+
 def slugify_branch_title(value, max_length=MAX_BRANCH_SLUG_LENGTH):
     return git_workspace.slugify_branch_title(value, max_length=max_length)
 
@@ -867,12 +892,13 @@ def normalize_path_for_display(path):
     return handler_paths.normalize_path_for_display(path)
 
 
-def initialize_run_status(item, state_label, config, launch_brief_path):
+def initialize_run_status(item, state_label, config, launch_brief_path, workspace_metadata=None):
     return watchtower.initialize_run_status(
         item,
         state_label,
         config,
         launch_brief_path,
+        workspace_metadata=workspace_metadata,
         repo=REPO,
         target_repo_path=TARGET_REPO_PATH,
         normalize_path_for_display_fn=normalize_path_for_display,
@@ -965,6 +991,7 @@ def build_launch_brief_markdown(
     target_repo_path,
     shared_context_paths=None,
     review_result_path=None,
+    workspace_metadata=None,
 ):
     return watchtower.build_launch_brief_markdown(
         item,
@@ -979,6 +1006,7 @@ def build_launch_brief_markdown(
         get_circus_runtime_root_fn=get_circus_runtime_root,
         shared_context_paths=shared_context_paths,
         review_result_path=review_result_path,
+        workspace_metadata=workspace_metadata,
     )
 
 
@@ -997,6 +1025,7 @@ def write_launch_brief(item, state_label, config, role_prompt_path):
         build_architect_review_result_path_fn=build_architect_review_result_path,
         initialize_run_status_fn=initialize_run_status,
         update_run_status_fn=update_run_status,
+        resolve_workspace_metadata_fn=resolve_item_workspace_metadata,
         normalize_path_for_display_fn=normalize_path_for_display,
         timestamp_now_fn=lambda: datetime.now().isoformat(timespec="seconds"),
         log=print,
@@ -1995,6 +2024,11 @@ def poll():
     print(f"[Handler] Configured repository: {REPO}")
     print(f"[Handler] Resolved Circus runtime root: {normalize_path_for_display(get_circus_runtime_root())}")
     print(f"[Handler] Resolved target repo root: {normalize_path_for_display(TARGET_REPO_PATH) if TARGET_REPO_PATH else '<not configured>'}")
+
+    workspace_repo_slug = sanitize_filename_part(extract_github_repo_slug(REPO) or "unknown-repo")
+    worktree_root, worktree_root_source = resolve_worktree_root(TARGET_REPO_PATH, workspace_repo_slug)
+    print(f"[Handler] Resolved target worktree root: {normalize_path_for_display(worktree_root) if worktree_root else '<not configured>'}")
+    print(f"[Handler] Worktree root source: {worktree_root_source}")
 
     resolved_executables = validate_required_executables()
     if resolved_executables is None:

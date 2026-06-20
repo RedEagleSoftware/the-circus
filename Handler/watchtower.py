@@ -28,6 +28,13 @@ RUN_STATUS_FIELDS = [
     "model",
     "effort",
     "target_repo_path",
+    "worktree_root",
+    "worktree_root_source",
+    "workspace_name",
+    "workspace_path",
+    "workspace_branch",
+    "workspace_lifecycle",
+    "workspace_item_identity",
     "run_dir",
     "launch_brief_path",
     "started_at",
@@ -130,6 +137,7 @@ def initialize_run_status(
     state_label,
     config,
     launch_brief_path,
+    workspace_metadata=None,
     *,
     repo,
     target_repo_path,
@@ -145,6 +153,7 @@ def initialize_run_status(
     normalized_brief_path = normalize_path_for_display_fn(launch_brief_path)
     normalized_status_path = normalize_path_for_display_fn(status_path)
     normalized_result_path = normalize_path_for_display_fn(result_path)
+    workspace_metadata = workspace_metadata or {}
 
     status_payload = {
         "repository": repo,
@@ -157,6 +166,13 @@ def initialize_run_status(
         "model": config.get("model"),
         "effort": config.get("effort"),
         "target_repo_path": normalize_path_for_display_fn(target_repo_path),
+        "worktree_root": workspace_metadata.get("worktree_root"),
+        "worktree_root_source": workspace_metadata.get("worktree_root_source"),
+        "workspace_name": workspace_metadata.get("workspace_name"),
+        "workspace_path": workspace_metadata.get("workspace_path"),
+        "workspace_branch": workspace_metadata.get("workspace_branch"),
+        "workspace_lifecycle": workspace_metadata.get("workspace_lifecycle"),
+        "workspace_item_identity": workspace_metadata.get("workspace_item_identity"),
         "run_dir": normalized_run_dir,
         "launch_brief_path": normalized_brief_path,
         "started_at": None,
@@ -271,6 +287,13 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
         f"- completed at: `{status_payload.get('completed_at')}`",
         f"- stop reason: `{status_payload.get('stop_reason')}`",
         f"- target repo path: `{status_payload.get('target_repo_path')}`",
+        f"- worktree root: `{status_payload.get('worktree_root')}`",
+        f"- worktree root source: `{status_payload.get('worktree_root_source')}`",
+        f"- workspace name: `{status_payload.get('workspace_name')}`",
+        f"- workspace path: `{status_payload.get('workspace_path')}`",
+        f"- workspace branch: `{status_payload.get('workspace_branch')}`",
+        f"- workspace lifecycle: `{status_payload.get('workspace_lifecycle')}`",
+        f"- workspace item identity: `{status_payload.get('workspace_item_identity')}`",
         f"- run dir: `{status_payload.get('run_dir')}`",
         "",
         "## Outcome",
@@ -389,6 +412,7 @@ def build_launch_brief_markdown(
     get_circus_runtime_root_fn,
     shared_context_paths=None,
     review_result_path=None,
+    workspace_metadata=None,
 ):
     profile_source = resolve_profile_source_fn(role_prompt_path)
     normalized_target_repo_path = normalize_path_for_display_fn(target_repo_path)
@@ -397,6 +421,14 @@ def build_launch_brief_markdown(
         target_repo_path,
         config.get("mode"),
     )
+    workspace_metadata = workspace_metadata or {}
+    workspace_name = workspace_metadata.get("workspace_name")
+    workspace_path = workspace_metadata.get("workspace_path")
+    workspace_branch = workspace_metadata.get("workspace_branch")
+    workspace_lifecycle = workspace_metadata.get("workspace_lifecycle")
+    workspace_item_identity = workspace_metadata.get("workspace_item_identity")
+    worktree_root = workspace_metadata.get("worktree_root")
+    worktree_root_source = workspace_metadata.get("worktree_root_source")
 
     lines = [
         "# Launch Brief",
@@ -404,10 +436,17 @@ def build_launch_brief_markdown(
         "## Runtime Roots",
         f"- circus repo root: `{normalized_circus_runtime_root}`",
         f"- target repo root: `{normalized_target_repo_path}`",
+        f"- target worktree root: `{worktree_root or '<not available>'}`",
         "",
         "## Assignment",
         f"- repository: `{repo}`",
         f"- target repo path: `{normalized_target_repo_path}`",
+        f"- item workspace name: `{workspace_name or '<not available>'}`",
+        f"- item workspace path: `{workspace_path or '<not available>'}`",
+        f"- workspace branch: `{workspace_branch or '<not available>'}`",
+        f"- workspace lifecycle: `{workspace_lifecycle or '<not available>'}`",
+        f"- workspace item identity: `{workspace_item_identity or '<not available>'}`",
+        f"- worktree root source: `{worktree_root_source or '<not available>'}`",
     ]
 
     if item.get("working_branch"):
@@ -514,6 +553,7 @@ def write_launch_brief(
     build_architect_review_result_path_fn,
     initialize_run_status_fn,
     update_run_status_fn,
+    resolve_workspace_metadata_fn,
     normalize_path_for_display_fn,
     timestamp_now_fn=None,
     log=print,
@@ -522,6 +562,7 @@ def write_launch_brief(
     timestamp = timestamp_now()
     item_run_root = get_item_run_root_fn(item)
     shared_context_paths = ensure_shared_artifacts_fn(item_run_root)
+    workspace_metadata = resolve_workspace_metadata_fn(item)
     brief_path = build_launch_brief_path_fn(item, config["mode"])
     review_result_path = None
     if config.get("mode") == "reviewer":
@@ -538,13 +579,14 @@ def write_launch_brief(
         target_repo_path or "<not configured>",
         shared_context_paths,
         review_result_path,
+        workspace_metadata,
     )
     os.makedirs(os.path.dirname(brief_path), exist_ok=True)
 
     with open(brief_path, "w", encoding="utf-8") as brief_file:
         brief_file.write(f"{brief_content}\n")
 
-    initialize_run_status_fn(item, state_label, config, brief_path)
+    initialize_run_status_fn(item, state_label, config, brief_path, workspace_metadata=workspace_metadata)
     artifact_updates = {
         "architecture_handoff": shared_context_paths["architecture_handoff"],
         "running_notes": shared_context_paths["running_notes"],
@@ -554,10 +596,15 @@ def write_launch_brief(
     if review_result_path:
         artifact_updates["result_contract"] = normalize_path_for_display_fn(review_result_path)
 
+    if workspace_metadata.get("workspace_path"):
+        artifact_updates["workspace"] = workspace_metadata.get("workspace_path")
+
     update_run_status_fn(item, launch_brief_path=normalize_path_for_display_fn(brief_path), artifacts=artifact_updates)
 
     log(f"[Dispatch] Shared artifact path (architecture handoff): {shared_context_paths['architecture_handoff']}")
     log(f"[Dispatch] Shared artifact path (running notes): {shared_context_paths['running_notes']}")
     log(f"[Dispatch] Shared artifact path (decision log): {shared_context_paths['decision_log']}")
+    log(f"[Dispatch] Workspace root: {workspace_metadata.get('worktree_root') or '<not available>'}")
+    log(f"[Dispatch] Workspace path: {workspace_metadata.get('workspace_path') or '<not available>'}")
 
     return brief_path

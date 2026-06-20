@@ -187,6 +187,47 @@ class HandlerObservabilityTests(unittest.TestCase):
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("remote appears to mismatch" in line for line in printed_lines))
 
+    def test_resolve_worktree_root_uses_configured_environment_override(self):
+        with patch.dict(os.environ, {"CIRCUS_WORKTREE_ROOT": "C:/repos/worktrees"}, clear=False):
+            worktree_root, source = handler.resolve_worktree_root("C:/repos/target", "owner-repo")
+
+        self.assertEqual(worktree_root, "C:/repos/worktrees")
+        self.assertEqual(source, "env:CIRCUS_WORKTREE_ROOT")
+
+    def test_resolve_worktree_root_derives_default_from_target_repo_name_when_unset(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CIRCUS_WORKTREE_ROOT", None)
+            worktree_root, source = handler.resolve_worktree_root("C:/repos/target", "owner-repo")
+
+        self.assertEqual(worktree_root, os.path.normpath("C:/repos/target-worktrees"))
+        self.assertEqual(source, "derived-default")
+
+    def test_resolve_item_workspace_metadata_sanitizes_repository_slug_for_issue_workspace_path(self):
+        item = {"type": "issue", "number": 32}
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/repos/target"):
+            with patch.object(handler, "REPO", "Red Eagle Software/The.Circus"):
+                with patch.dict(os.environ, {}, clear=False):
+                    os.environ.pop("CIRCUS_WORKTREE_ROOT", None)
+                    metadata = handler.resolve_item_workspace_metadata(item)
+
+        self.assertEqual(metadata["workspace_name"], "issue-32")
+        self.assertEqual(metadata["workspace_item_identity"], "issue-32")
+        self.assertEqual(metadata["workspace_path"], "C:/repos/target-worktrees/red-eagle-software-the-circus/issue-32")
+
+    def test_resolve_item_workspace_metadata_generates_pull_request_workspace_path(self):
+        item = {"type": "pull_request", "number": 77}
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/repos/target"):
+            with patch.object(handler, "REPO", "RedEagleSoftware/the-circus"):
+                with patch.dict(os.environ, {}, clear=False):
+                    os.environ.pop("CIRCUS_WORKTREE_ROOT", None)
+                    metadata = handler.resolve_item_workspace_metadata(item)
+
+        self.assertEqual(metadata["workspace_name"], "pr-77")
+        self.assertEqual(metadata["workspace_item_identity"], "pull_request-77")
+        self.assertEqual(metadata["workspace_path"], "C:/repos/target-worktrees/redeaglesoftware-the-circus/pr-77")
+
     def test_verify_github_repo_access_success(self):
         with patch.object(handler, "REPO", "owner/repo"):
             with patch.object(handler, "run_command", return_value='{"nameWithOwner": "owner/repo"}'):
@@ -2299,10 +2340,10 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("Do not modify workflow labels directly", command[-1])
         self.assertIn("Do not auto-merge", command[-1])
         self.assertEqual(kwargs["cwd"], "C:/target/repo")
-        self.assertEqual(kwargs[".env"]["CIRCUS_REVIEW_PR_URL"], "https://github.com/owner/repo/pull/77")
-        self.assertEqual(kwargs[".env"]["CIRCUS_REVIEW_ISSUE_NUMBER"], "9")
-        self.assertEqual(kwargs[".env"]["CIRCUS_REVIEW_LAUNCH_BRIEF"], absolute_launch_brief_path)
-        self.assertEqual(kwargs[".env"]["CIRCUS_REVIEW_RESULT_PATH"], review_result_path)
+        self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_PR_URL"], "https://github.com/owner/repo/pull/77")
+        self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_ISSUE_NUMBER"], "9")
+        self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_LAUNCH_BRIEF"], absolute_launch_brief_path)
+        self.assertEqual(kwargs["env"]["CIRCUS_REVIEW_RESULT_PATH"], review_result_path)
         mock_transition.assert_called_once_with(item)
 
     def test_launch_agent_codex_architect_review_runs_codex_exec_with_pr_url_and_context(self):
@@ -2373,13 +2414,13 @@ class HandlerObservabilityTests(unittest.TestCase):
         )
         self.assertEqual(kwargs["cwd"], "C:/target/repo")
         self.assertEqual(
-            kwargs[".env"]["CIRCUS_ARCHITECT_REVIEW_PR_URL"],
+            kwargs["env"]["CIRCUS_ARCHITECT_REVIEW_PR_URL"],
             "https://github.com/owner/repo/pull/88",
         )
-        self.assertEqual(kwargs[".env"]["CIRCUS_ARCHITECT_REVIEW_ISSUE_NUMBER"], "12")
-        self.assertEqual(kwargs[".env"]["CIRCUS_ARCHITECT_REVIEW_LAUNCH_BRIEF"], absolute_launch_brief_path)
+        self.assertEqual(kwargs["env"]["CIRCUS_ARCHITECT_REVIEW_ISSUE_NUMBER"], "12")
+        self.assertEqual(kwargs["env"]["CIRCUS_ARCHITECT_REVIEW_LAUNCH_BRIEF"], absolute_launch_brief_path)
         self.assertEqual(
-            kwargs[".env"]["CIRCUS_ARCHITECT_REVIEW_RESULT_PATH"],
+            kwargs["env"]["CIRCUS_ARCHITECT_REVIEW_RESULT_PATH"],
             architect_review_result_path,
         )
         mock_transition.assert_called_once_with(item)
@@ -3452,12 +3493,14 @@ class HandlerObservabilityTests(unittest.TestCase):
             with patch.object(handler, "LAUNCH_ARTIFACT_DIR", temp_dir):
                 with patch.object(handler, "REPO", "owner/repo"):
                     with patch.object(handler, "TARGET_REPO_PATH", "C:\\target\\repo"):
-                        brief_path = handler.write_launch_brief(
-                            item,
-                            "state:ready-for-dev",
-                            config,
-                            os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
-                        )
+                        with patch.dict(os.environ, {}, clear=False):
+                            os.environ.pop("CIRCUS_WORKTREE_ROOT", None)
+                            brief_path = handler.write_launch_brief(
+                                item,
+                                "state:ready-for-dev",
+                                config,
+                                os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                            )
 
             self.assertTrue(os.path.isfile(brief_path))
             with open(brief_path, "r", encoding="utf-8") as generated_file:
@@ -3496,9 +3539,16 @@ class HandlerObservabilityTests(unittest.TestCase):
             content,
         )
         self.assertIn("- target repo root: `C:/target/repo`", content)
+        self.assertIn("- target worktree root: `C:/target/repo-worktrees`", content)
         self.assertIn("## Assignment", content)
         self.assertIn("- repository: `owner/repo`", content)
         self.assertIn("- target repo path: `C:/target/repo`", content)
+        self.assertIn("- item workspace name: `issue-3`", content)
+        self.assertIn("- item workspace path: `C:/target/repo-worktrees/owner-repo/issue-3`", content)
+        self.assertIn("- workspace branch: `<not available>`", content)
+        self.assertIn("- workspace lifecycle: `planned`", content)
+        self.assertIn("- workspace item identity: `issue-3`", content)
+        self.assertIn("- worktree root source: `derived-default`", content)
         self.assertIn("## Agent Profile", content)
         self.assertIn(
             f"- profile source: `{handler.normalize_path_for_display(handler.get_circus_runtime_root())}/TheFarm/roles/developer.md`",
@@ -3530,6 +3580,14 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(status_payload["mode"], "developer")
         self.assertIsNone(status_payload["started_at"])
         self.assertIsNone(status_payload["exit_code"])
+        self.assertEqual(status_payload["worktree_root"], "C:/target/repo-worktrees")
+        self.assertEqual(status_payload["worktree_root_source"], "derived-default")
+        self.assertEqual(status_payload["workspace_name"], "issue-3")
+        self.assertEqual(status_payload["workspace_path"], "C:/target/repo-worktrees/owner-repo/issue-3")
+        self.assertIsNone(status_payload["workspace_branch"])
+        self.assertEqual(status_payload["workspace_lifecycle"], "planned")
+        self.assertEqual(status_payload["workspace_item_identity"], "issue-3")
+        self.assertEqual(status_payload["artifacts"]["workspace"], "C:/target/repo-worktrees/owner-repo/issue-3")
         self.assertEqual(status_payload["artifacts"]["launch_brief"], brief_path.replace("\\", "/"))
 
         self.assertEqual(
@@ -3544,6 +3602,66 @@ class HandlerObservabilityTests(unittest.TestCase):
             decision_log_content,
             "# Decision Log\n\nNo decisions have been recorded yet.\n",
         )
+
+    def test_write_run_result_includes_workspace_metadata_fields(self):
+        item = {
+            "type": "issue",
+            "number": 32,
+            "title": "Workspace metadata in run result",
+            "working_branch": "circus/issue-32-workspace-metadata",
+        }
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        workspace_metadata = {
+            "worktree_root": "C:/target/repo-worktrees",
+            "worktree_root_source": "env:CIRCUS_WORKTREE_ROOT",
+            "workspace_name": "issue-32",
+            "workspace_path": "C:/target/repo-worktrees/owner-repo/issue-32",
+            "workspace_branch": "circus/issue-32-workspace-metadata",
+            "workspace_lifecycle": "isolated",
+            "workspace_item_identity": "issue-32",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            launch_brief_path = os.path.join(temp_dir, "owner-repo", "issue-32", "run-001-developer", "launch-brief.md")
+            os.makedirs(os.path.dirname(launch_brief_path), exist_ok=True)
+            with open(launch_brief_path, "w", encoding="utf-8") as launch_brief_file:
+                launch_brief_file.write("# Launch Brief\n")
+
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                    handler.initialize_run_status(
+                        item,
+                        "state:changes-requested",
+                        config,
+                        launch_brief_path,
+                        workspace_metadata,
+                    )
+                    handler.update_run_status(
+                        item,
+                        started_at="2026-06-19T08:00:00Z",
+                        completed_at="2026-06-19T08:05:00Z",
+                        exit_code=0,
+                        success=True,
+                        outcome="success",
+                        stop_reason=None,
+                    )
+                    handler.write_run_result(item)
+
+            result_path = os.path.join(os.path.dirname(launch_brief_path), "result.md")
+            self.assertTrue(os.path.isfile(result_path))
+            with open(result_path, "r", encoding="utf-8") as result_file:
+                result_content = result_file.read()
+
+        self.assertIn("- workspace path: `C:/target/repo-worktrees/owner-repo/issue-32`", result_content)
+        self.assertIn("- workspace branch: `circus/issue-32-workspace-metadata`", result_content)
+        self.assertIn("- workspace lifecycle: `isolated`", result_content)
+        self.assertIn("- workspace item identity: `issue-32`", result_content)
+        self.assertIn("- worktree root source: `env:CIRCUS_WORKTREE_ROOT`", result_content)
 
     def test_ensure_shared_artifacts_does_not_overwrite_existing_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:

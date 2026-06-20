@@ -2,6 +2,78 @@ import re
 import subprocess
 
 
+def resolve_worktree_root(repo_path, repo_slug, env_getter, *, dirname, join_path, normpath):
+    if not repo_path:
+        return None, "missing-target-repo"
+
+    configured_root = env_getter("CIRCUS_WORKTREE_ROOT")
+    if configured_root:
+        return normpath(configured_root), "env:CIRCUS_WORKTREE_ROOT"
+
+    repo_basename = repo_path.rstrip("/\\")
+    if "/" in repo_basename or "\\" in repo_basename:
+        repo_basename = repo_basename.replace("\\", "/").rsplit("/", 1)[1]
+
+    repo_parent = dirname(repo_path.replace("\\", "/"))
+    if not repo_parent:
+        repo_parent = dirname(repo_path)
+
+    return normpath(join_path(repo_parent, f"{repo_basename}-worktrees")), "derived-default"
+
+
+def resolve_item_workspace_metadata(
+    item,
+    target_repo_path,
+    repo,
+    env_getter,
+    *,
+    resolve_worktree_root_fn,
+    sanitize_filename_part_fn,
+    join_path,
+    normpath,
+    normalize_path_for_display_fn,
+):
+    repo_slug = sanitize_filename_part_fn(extract_github_repo_slug(repo) or "unknown-repo")
+    worktree_root, root_source = resolve_worktree_root_fn(target_repo_path, repo_slug, env_getter)
+
+    item_type = "unknown"
+    item_number = "unknown"
+    workspace_branch = None
+    workspace_lifecycle = "planned"
+    workspace_item_identity = "unknown-unknown"
+    if isinstance(item, dict):
+        item_type = sanitize_filename_part_fn(item.get("type"))
+        item_number = sanitize_filename_part_fn(item.get("number"))
+        workspace_branch = item.get("working_branch") or item.get("execution_branch")
+        workspace_lifecycle = sanitize_filename_part_fn(item.get("workspace_lifecycle") or "planned")
+        workspace_item_identity = f"{item_type}-{item_number}"
+
+    workspace_directory_name = workspace_item_identity
+    if item_type == "issue":
+        workspace_directory_name = f"issue-{item_number}"
+    if item_type in {"pr", "pull-request", "pull_request"}:
+        workspace_directory_name = f"pr-{item_number}"
+
+    workspace_name = workspace_directory_name
+    workspace_path = (
+        normpath(join_path(worktree_root, repo_slug, workspace_directory_name)) if worktree_root else None
+    )
+
+    normalized_workspace_branch = None
+    if workspace_branch is not None:
+        normalized_workspace_branch = str(workspace_branch).strip() or None
+
+    return {
+        "worktree_root": normalize_path_for_display_fn(worktree_root),
+        "worktree_root_source": root_source,
+        "workspace_name": workspace_name,
+        "workspace_path": normalize_path_for_display_fn(workspace_path),
+        "workspace_branch": normalize_path_for_display_fn(normalized_workspace_branch),
+        "workspace_lifecycle": workspace_lifecycle,
+        "workspace_item_identity": workspace_item_identity,
+    }
+
+
 def extract_github_repo_slug(value):
     if not value:
         return None
