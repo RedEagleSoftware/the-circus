@@ -106,6 +106,10 @@ over hidden inference and automation.
 - `state:ready-for-systems-architecture`
 - `state:systems-architecture-changes-requested`
 - `state:ready-for-roadmap-update`
+- `state:ready-for-implementation-planning`
+- `state:ready-for-implementation-plan-review`
+- `state:implementation-planning-changes-requested`
+- `state:planned`
 - `state:ready-for-human-review`
 - `state:dependency-blocked`
 - `state:blocked`
@@ -113,6 +117,10 @@ over hidden inference and automation.
 
 Systems Architect remains a strategic planning role, but now uses explicit GitHub workflow states and human-selected follow-up labels.
 The `state:ready-for-roadmap-update` state is a documentation synchronization step for accepted strategy, not an implementation handoff.
+The `state:ready-for-implementation-planning` state routes accepted and documented strategy to Implementation Planner.
+The `state:ready-for-implementation-plan-review` state holds generated implementation plans for human approval before generated issues become dispatchable.
+The `state:implementation-planning-changes-requested` state routes implementation plans back for revision.
+The `state:planned` state marks generated issues that are not yet dispatchable.
 The `state:dependency-blocked` state is a scheduler-managed waiting state for issues with declared unsatisfied prerequisites. It is not dispatchable.
 
 ---
@@ -203,6 +211,31 @@ Future workflow contract rule:
 - each workflow role should explicitly document PR ownership and handoff boundaries
 - Handler remains the single authority for workflow label mutation
 
+### 7. Implementation Planning
+
+After roadmap documentation is reviewed and merged, the human reviewer may apply `state:ready-for-implementation-planning`.
+
+The Implementation Planner then:
+
+- reads the approved Systems Architect recommendation
+- reads the updated roadmap and capability-tree documentation
+- decomposes the accepted strategy into generated GitHub issues
+- proposes initial issue ordering
+- declares conservative `## Circus Dependencies` metadata where ordering matters
+- creates generated issues in a non-dispatch state such as `state:planned`
+- leaves a structured implementation plan comment listing generated issues, dependencies, dispatch readiness, and human review options
+
+Generated implementation issues do not become dispatchable automatically.
+
+Human reviewers approve the plan before Handler or a dedicated approved transition moves eligible generated issues into dispatchable states such as `state:ready-for-architecture` or `state:ready-for-dev`.
+
+Workflow ownership contract for implementation planning:
+
+- Implementation Planner owns issue decomposition, generated issue content, proposed ordering, dependency declarations, and the plan review artifact.
+- Handler owns planner dispatch, workflow label transitions, dependency enforcement, automatic unblocking, and transitions from plan review into dispatchable states.
+- Roadmap Updater owns strategic documentation before implementation planning begins.
+- Watchtower records generated issue numbers and planning artifacts for run history only.
+
 ---
 
 # Current Strategic Frontier
@@ -222,6 +255,7 @@ Within that frontier, the intended sequence is:
 5. Stale-lock and run recovery.
 6. Persistent Watchtower visibility.
 7. Strategic memory that records accepted recommendations without making Watchtower the primary review surface.
+8. Implementation planning that converts accepted strategy into review-gated generated implementation issues.
 
 Provider Routing and Skills remain valid future work, but both should stay behind self-hosting reliability so provider complexity and role specialization are added only after the runtime can observe, recover, and preserve context across repeated runs.
 
@@ -276,6 +310,33 @@ The roadmap sequence for this capability is:
 7. Extend Roadmap Updater and Systems Architect guidance so future roadmap-generated issue trees can include dependency sections at issue creation time.
 
 Detailed architecture: [Issue Dependency Blocking](../dependency-blocking.md).
+
+## Accepted Implementation Planning Direction
+
+Issue #37 approved Implementation Planning as a distinct role and capability.
+
+The accepted direction is:
+
+- add Implementation Planner as a separate role after Roadmap Updater
+- keep roadmap and capability-tree docs as the durable strategic anchor before planning starts
+- let the planner own issue decomposition, proposed sequencing, dependency declaration, generated issue creation, and plan review artifacts
+- create generated issues directly in GitHub, but in a non-dispatch review state
+- require source traceability from generated issues back to the recommendation and roadmap update
+- require human approval before generated issues become dispatchable
+- keep Handler responsible for label transitions, dispatch eligibility, dependency enforcement, and automatic unblocking
+- keep Watchtower as observability and run history, not the authority for generated work
+
+The roadmap sequence for this capability is:
+
+1. Document the Implementation Planner role, workflow states, generated issue contract, and review gate.
+2. Add canonical label support for `state:ready-for-implementation-planning`, `state:ready-for-implementation-plan-review`, `state:implementation-planning-changes-requested`, and `state:planned`.
+3. Add Handler dispatch support for `state:ready-for-implementation-planning`.
+4. Implement the planner workflow that reads one approved recommendation and merged roadmap docs.
+5. Add generated GitHub issue creation in a non-dispatch review state.
+6. Add structured plan comments and Watchtower generated-issue observability.
+7. Add the human-approved transition from plan review into existing dispatchable workflow states.
+
+Detailed architecture: [Implementation Planning](../implementation-planning.md).
 
 ---
 

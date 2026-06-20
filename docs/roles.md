@@ -65,10 +65,31 @@ Ownership boundary for this workflow:
 - Handler owns orchestration, post-run PR validation, run-status recording, and workflow `state:*` label transitions.
 - Developer workflow PR finalization remains Handler-owned unless changed by a dedicated workflow-contract issue.
 
+## Implementation Planner
+
+Use the [Implementation Planner](../TheFarm/roles/implementation-planner.md) for:
+
+- converting approved strategic recommendations and merged roadmap docs into executable implementation plans
+- decomposing accepted capabilities into generated GitHub issues
+- proposing initial issue ordering
+- declaring conservative issue dependencies where ordering matters
+- creating generated issues in a non-dispatch review state
+- leaving a structured implementation plan for human approval
+
+The Implementation Planner focuses on turning accepted strategy into review-gated backlog, not on defining strategy or implementing code.
+
+Ownership boundary for this workflow:
+
+- Implementation Planner owns issue decomposition, generated issue content, proposed ordering, dependency declaration, and the plan review artifact.
+- Roadmap Updater owns durable strategic documentation before planning starts.
+- Handler owns dispatch eligibility, workflow label transitions, dependency blocking, automatic unblocking, and approved transitions from plan review into dispatchable workflow states.
+- Feature Architect and Developer workflows remain responsible for one approved implementation issue at a time after human plan approval.
+
 ## Quick Distinction
 
 - Systems Architect: capability planning and long-term system evolution across issues.
 - Roadmap Updater: synchronizing documentation with approved strategic decisions.
+- Implementation Planner: generating human-reviewed implementation issue trees from accepted strategy.
 - Feature Architect: issue-level implementation planning and handoff creation.
 - Reviewer: implementation correctness and quality validation.
 - Architect Review: final architectural validation of the implementation before human approval.
