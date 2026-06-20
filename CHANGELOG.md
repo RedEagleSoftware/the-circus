@@ -13,6 +13,10 @@ This changelog tracks notable completed work by GitHub issue.
 - [concise user-visible or workflow-significant change]
 - [optional second concise change]
 
+### Issue #39 - Document Implementation Planner Role and Workflow States
+
+- Documented Implementation Planner workflow states in doctrine guidance, including ownership and review transition expectations.
+
 ### Issue #30 - Design Git Worktree-Based Issue Workspaces
 
 - Added worktree-isolation architecture documentation that defines per-issue Git worktrees, branch ownership rules, and lifecycle expectations for concurrent agent workflows.
