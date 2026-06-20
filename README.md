@@ -80,6 +80,7 @@ The Circus uses GitHub `state:*` labels as a workflow state machine.
 - `state:ready-for-systems-architecture` routes to Codex Systems Architect for strategic system-level recommendations.
 - `state:systems-architecture-changes-requested` routes back to Codex Systems Architect for follow-up iterations.
 - `state:ready-for-roadmap-update` routes to Codex Roadmap Updater for synchronizing documentation and knowledge artifacts based on approved strategic recommendations.
+- `state:dependency-blocked` pauses an issue with declared unsatisfied prerequisites until Handler can safely restore the declared resume state.
 
 Systems Architect routing remains strategic and non-implementation:
 
@@ -138,8 +139,10 @@ Some files may eventually become protected or agent read-only to prevent uninten
 - Workflow state tracking
 - Human approval checkpoints
 - Git worktree-based session isolation and replayability
+- Explicit issue dependency blocking and automatic unblocking
 
 The accepted workspace isolation architecture is documented in [docs/worktree-isolation.md](docs/worktree-isolation.md).
+The accepted issue dependency blocking architecture is documented in [docs/dependency-blocking.md](docs/dependency-blocking.md).
 
 ---
 

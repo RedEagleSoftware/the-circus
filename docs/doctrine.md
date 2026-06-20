@@ -67,6 +67,10 @@
 - `state:ready-for-dev` -> Junie Developer
 - `state:ready-for-review` -> Codex PR Reviewer
 - `state:ready-for-architect-review` -> Codex Architect Approval
+- `state:ready-for-systems-architecture` -> Codex Systems Architect
+- `state:systems-architecture-changes-requested` -> Codex Systems Architect follow-up
+- `state:ready-for-roadmap-update` -> Codex Roadmap Updater
+- `state:dependency-blocked` -> Handler-managed dependency wait state
 - `state:ready-for-human-review` -> Human Review
 
 ## Tool Stack
@@ -106,5 +110,6 @@
 - Each issue/PR should have exactly one primary `state:*` label.
 - `state:agent-in-progress` is a lock label and may coexist with one primary state.
 - `state:blocked` is terminal until a human removes it.
+- `state:dependency-blocked` is non-dispatchable and may be automatically replaced with its declared `resume_state` only when Handler verifies all declared dependencies are satisfied.
 - `state:ready-for-human-review` is human-owned and should not be dispatched automatically.
 - `state:changes-requested` routes back to development.
