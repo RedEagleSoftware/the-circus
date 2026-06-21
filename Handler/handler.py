@@ -1818,7 +1818,8 @@ def process_one_item(
             item["working_branch"] = branch_setup["branch"]
             item["workspace_path"] = branch_setup.get("workspace_path", workspace_path)
 
-        if config["agent"] == "codex" and config["mode"] == "roadmap-updater":
+        if config["agent"] == "codex" and config["mode"] in {"roadmap-updater", "implementation-planner"}:
+            mode_display_name = "roadmap updater" if config["mode"] == "roadmap-updater" else "implementation planner"
             workspace_metadata = resolve_item_workspace_metadata(item)
             workspace_path = workspace_metadata.get("workspace_path")
             item["workspace_path"] = workspace_path
@@ -1827,7 +1828,7 @@ def process_one_item(
                 if branch_setup.get("reason") == "dirty-working-tree":
                     failure_launch_brief_path = write_launch_brief(item, state_label, config, resolve_role_prompt_path(config["mode"]))
                     print(
-                        f"[Dispatch] Blocking roadmap updater launch for {item['type']} #{item['number']}: "
+                        f"[Dispatch] Blocking {mode_display_name} launch for {item['type']} #{item['number']}: "
                         "target repository working tree is dirty."
                     )
                     print(f"[Dispatch] Releasing lock for {item['type']} #{item['number']} due to pre-launch setup failure...")
@@ -1844,7 +1845,7 @@ def process_one_item(
                     lock_result = "released" if lock_released else "could not be released"
                     current_branch = branch_setup.get("current_branch") or "<unknown>"
                     item["comment"] = (
-                        f"Handler blocked roadmap updater launch for {item['type']} #{item['number']} because "
+                        f"Handler blocked {mode_display_name} launch for {item['type']} #{item['number']} because "
                         f"the target repository working tree is dirty on branch `{current_branch}`. "
                         f"The lock label `{LOCK_LABEL}` was {lock_result}. "
                         "Please clean the workspace and retry dispatch."
@@ -1863,7 +1864,7 @@ def process_one_item(
                     return "prelaunch-failed"
 
                 print(
-                    f"[Dispatch] Roadmap updater branch setup failed for {item['type']} #{item['number']}: "
+                    f"[Dispatch] {mode_display_name.capitalize()} branch setup failed for {item['type']} #{item['number']}: "
                     f"{branch_setup.get('error', 'unknown error')}"
                 )
                 print(f"[Dispatch] Releasing lock for {item['type']} #{item['number']} due to pre-launch setup failure...")
@@ -1874,7 +1875,7 @@ def process_one_item(
                 else:
                     print(f"[Dispatch] Lock cleanup failed for {item['type']} #{item['number']}; manual cleanup may be required.")
 
-                add_prelaunch_setup_failure_comment(item, branch_setup.get("error", "roadmap updater branch setup failed"), lock_released)
+                add_prelaunch_setup_failure_comment(item, branch_setup.get("error", f"{mode_display_name} branch setup failed"), lock_released)
                 add_comment(item)
                 update_run_status(
                     item,
@@ -1882,7 +1883,7 @@ def process_one_item(
                     exit_code=None,
                     success=False,
                     outcome="failed pre-launch",
-                    stop_reason=branch_setup.get("error", "roadmap updater branch setup failed"),
+                    stop_reason=branch_setup.get("error", f"{mode_display_name} branch setup failed"),
                 )
                 write_run_result(item)
                 return "prelaunch-failed"
