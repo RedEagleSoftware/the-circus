@@ -112,15 +112,26 @@ The planner should declare dependencies conservatively and only where ordering m
 
 ## Implementation Plan Artifact
 
-The planner should leave a structured GitHub issue comment or durable artifact that lists:
+The canonical detailed output contract lives in `TheFarm/roles/implementation-planner.md`.
 
-- generated issue links
-- intended execution order
-- dependency graph
-- dispatch readiness
-- generated issue states
-- human review options
-- source recommendation and roadmap references
+This document summarizes the required artifact shape for architecture consistency. The planner should leave exactly one structured GitHub issue comment with:
+
+- `## Implementation Plan`
+- `### Source`
+- `### Planning Summary`
+- `### Generated Issues`
+- `### Proposed Order`
+- `### Dependencies`
+- `### Dispatch Readiness`
+- `### Human Review Options`
+
+Optional sections may be included when needed:
+
+- `### Automation Notes`
+- `### Risks And Open Questions`
+- `### Deferred Work`
+
+If the planner cannot produce a valid plan, it should leave a blocker comment instead of a partial plan and explicitly state the blocker condition.
 
 The plan artifact should make stale plans easy to detect. If the source recommendation or roadmap docs change before approval, the issue should return to `state:implementation-planning-changes-requested` rather than silently dispatching generated work.
 
