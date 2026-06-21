@@ -870,10 +870,22 @@ def is_commit_ancestor_of_branch(repo_path, ancestor_commit, branch_name):
     )
 
 
-def prepare_developer_branch(item):
+def create_or_reset_worktree_branch(repo_path, workspace_path, branch_name, base_ref):
+    return git_workspace.create_or_reset_worktree_branch(
+        repo_path,
+        workspace_path,
+        branch_name,
+        base_ref,
+        run_git_command=run_git_command_in_repo,
+        log=print,
+    )
+
+
+def prepare_developer_branch(item, workspace_path):
     return git_workspace.prepare_developer_branch(
         item,
         TARGET_REPO_PATH,
+        workspace_path,
         build_branch_name=build_developer_branch_name,
         get_current_branch=get_current_git_branch,
         check_working_tree_clean=is_working_tree_clean,
@@ -881,8 +893,8 @@ def prepare_developer_branch(item):
         refresh_base_branch=refresh_local_base_branch,
         resolve_ref_commit=resolve_git_ref_commit,
         check_commit_ancestor=is_commit_ancestor_of_branch,
-        check_local_branch_exists=local_branch_exists,
-        checkout_or_create_branch=checkout_or_create_local_branch,
+        create_or_reset_worktree_branch=create_or_reset_worktree_branch,
+        path_exists=os.path.exists,
         log=print,
     )
 
@@ -1112,11 +1124,16 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         SYSTEMS_ARCHITECTURE_CHANGES_REQUESTED_LABEL,
     }
 
+    workspace_path = item.get("workspace_path")
+    developer_execution_path = workspace_path or TARGET_REPO_PATH
+
     if agent == "junie":
         absolute_launch_brief_path = os.path.abspath(launch_brief_path)
         junie_task_text = build_junie_task_text(absolute_launch_brief_path)
-        cmd = build_junie_command(model, effort, TARGET_REPO_PATH or "", junie_task_text)
-        normalized_target_repo_path = normalize_path_for_display(TARGET_REPO_PATH) if TARGET_REPO_PATH else "<not configured>"
+        cmd = build_junie_command(model, effort, developer_execution_path or "", junie_task_text)
+        normalized_target_repo_path = (
+            normalize_path_for_display(developer_execution_path) if developer_execution_path else "<not configured>"
+        )
         command_shape = (
             f"{cmd[0]} --project {cmd[2]} --model {cmd[4]} --effort {cmd[6]} "
             f"\"{cmd[7]}\""
@@ -1127,10 +1144,10 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         print(f"[Dispatch] Junie target repo path: {normalized_target_repo_path}")
         print("[Dispatch] Junie handoff path: passing short positional task argument.")
         print(f"[Dispatch] Executing: {command_shape}")
-        print(f"[Dispatch] Junie execution cwd: {TARGET_REPO_PATH}")
+        print(f"[Dispatch] Junie execution cwd: {developer_execution_path}")
 
         try:
-            result = subprocess.run(cmd, cwd=TARGET_REPO_PATH, text=True)
+            result = subprocess.run(cmd, cwd=developer_execution_path, text=True)
         except OSError as error:
             item["prelaunch_error"] = str(error)
             print(f"[Dispatch] Junie failed to launch before execution started: {error}")
@@ -1475,13 +1492,14 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             codex_task_text = build_codex_roadmap_updater_task_text(absolute_launch_brief_path)
         else:
             codex_task_text = build_codex_architect_task_text(absolute_launch_brief_path)
+        codex_execution_path = developer_execution_path if mode == "roadmap-updater" else TARGET_REPO_PATH
         cmd = build_codex_command_with_optional_sandbox_bypass(
             model,
-            TARGET_REPO_PATH or "",
+            codex_execution_path or "",
             codex_task_text,
             bypass_sandbox=codex_bypass_sandbox,
         )
-        normalized_target_repo_path = normalize_path_for_display(TARGET_REPO_PATH) if TARGET_REPO_PATH else "<not configured>"
+        normalized_target_repo_path = normalize_path_for_display(codex_execution_path) if codex_execution_path else "<not configured>"
         command_arguments = cmd[1:-1]
         command_shape = f"{cmd[0]} {' '.join(command_arguments)} \"{cmd[-1]}\""
 
@@ -1490,10 +1508,10 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         print(f"[Dispatch] Codex target repo path: {normalized_target_repo_path}")
         print("[Dispatch] Codex handoff path: passing short positional prompt argument.")
         print(f"[Dispatch] Executing: {command_shape}")
-        print(f"[Dispatch] Codex execution cwd: {TARGET_REPO_PATH}")
+        print(f"[Dispatch] Codex execution cwd: {codex_execution_path}")
 
         try:
-            result = subprocess.run(cmd, cwd=TARGET_REPO_PATH, text=True)
+            result = subprocess.run(cmd, cwd=codex_execution_path, text=True)
         except OSError as error:
             item["prelaunch_error"] = str(error)
             print(f"[Dispatch] Codex failed to launch before execution started: {error}")
@@ -1693,7 +1711,10 @@ def process_one_item(
         item.pop("execution_branch", None)
         item.pop("review_pr", None)
         if config["agent"] == "junie" and config["mode"] == "developer":
-            branch_setup = prepare_developer_branch(item)
+            workspace_metadata = resolve_item_workspace_metadata(item)
+            workspace_path = workspace_metadata.get("workspace_path")
+            item["workspace_path"] = workspace_path
+            branch_setup = prepare_developer_branch(item, workspace_path)
             if not branch_setup.get("ok"):
                 if branch_setup.get("reason") == "dirty-working-tree":
                     failure_launch_brief_path = write_launch_brief(item, state_label, config, resolve_role_prompt_path(config["mode"]))
@@ -1759,9 +1780,13 @@ def process_one_item(
                 return "prelaunch-failed"
 
             item["working_branch"] = branch_setup["branch"]
+            item["workspace_path"] = branch_setup.get("workspace_path", workspace_path)
 
         if config["agent"] == "codex" and config["mode"] == "roadmap-updater":
-            branch_setup = prepare_developer_branch(item)
+            workspace_metadata = resolve_item_workspace_metadata(item)
+            workspace_path = workspace_metadata.get("workspace_path")
+            item["workspace_path"] = workspace_path
+            branch_setup = prepare_developer_branch(item, workspace_path)
             if not branch_setup.get("ok"):
                 if branch_setup.get("reason") == "dirty-working-tree":
                     failure_launch_brief_path = write_launch_brief(item, state_label, config, resolve_role_prompt_path(config["mode"]))
@@ -1827,6 +1852,7 @@ def process_one_item(
                 return "prelaunch-failed"
 
             item["working_branch"] = branch_setup["branch"]
+            item["workspace_path"] = branch_setup.get("workspace_path", workspace_path)
 
         if config["agent"] == "codex" and config["mode"] == "architect":
             branch_setup = prepare_architect_execution_branch(item)
