@@ -249,15 +249,15 @@ def refresh_local_base_branch(repo_path, branch_name, run_git_command, log=print
     return True
 
 
-def create_or_reset_worktree_branch(repo_path, workspace_path, branch_name, base_ref, run_git_command, log=print):
+def create_worktree_branch_from_base(repo_path, workspace_path, branch_name, base_ref, run_git_command, log=print):
     result = run_git_command(
         repo_path,
-        ["worktree", "add", "--checkout", "-B", branch_name, workspace_path, base_ref],
+        ["worktree", "add", "--checkout", "-b", branch_name, workspace_path, base_ref],
     )
     if result is None or result.returncode != 0:
         stderr = result.stderr.strip() if result and result.stderr else "unknown error"
         log(
-            "[Dispatch] Failed to create or reset issue worktree "
+            "[Dispatch] Failed to create issue worktree "
             f"(workspace='{workspace_path}', branch='{branch_name}', base_ref='{base_ref}'): {stderr}"
         )
         return False
@@ -304,7 +304,8 @@ def prepare_developer_branch(
     refresh_base_branch,
     resolve_ref_commit,
     check_commit_ancestor,
-    create_or_reset_worktree_branch,
+    check_local_branch_exists,
+    create_worktree_branch_from_base,
     path_exists=os.path.exists,
     log=print,
 ):
@@ -377,8 +378,26 @@ def prepare_developer_branch(
     if workspace_already_exists:
         log(f"[Dispatch] Existing issue worktree detected at '{workspace_path}'; validating for reuse...")
     else:
+        branch_exists = check_local_branch_exists(repo_path, selected_branch)
+        if branch_exists is None:
+            return {
+                "ok": False,
+                "reason": "git-error",
+                "error": f"unable to determine whether issue branch '{selected_branch}' already exists",
+            }
+
+        if branch_exists:
+            return {
+                "ok": False,
+                "reason": "git-error",
+                "error": (
+                    f"issue branch '{selected_branch}' already exists without expected workspace "
+                    f"'{workspace_path}'; refusing to reset branch"
+                ),
+            }
+
         log(f"[Dispatch] Creating issue worktree at '{workspace_path}' from '{base_ref}'...")
-        if not create_or_reset_worktree_branch(repo_path, workspace_path, selected_branch, base_ref):
+        if not create_worktree_branch_from_base(repo_path, workspace_path, selected_branch, base_ref):
             return {
                 "ok": False,
                 "reason": "git-error",

@@ -3065,9 +3065,10 @@ class HandlerObservabilityTests(unittest.TestCase):
                         with patch.object(handler, "refresh_local_base_branch", return_value=True) as mock_refresh_base:
                             with patch.object(handler, "resolve_git_ref_commit", return_value="abc123") as mock_resolve_base:
                                 with patch.object(handler.os.path, "exists", return_value=False):
-                                    with patch.object(handler, "create_or_reset_worktree_branch", return_value=True) as mock_create_worktree:
-                                        with patch.object(handler, "is_commit_ancestor_of_branch", return_value=True) as mock_is_fresh:
-                                            result = handler.prepare_developer_branch(item, workspace_path)
+                                    with patch.object(handler, "local_branch_exists", return_value=False) as mock_local_branch_exists:
+                                        with patch.object(handler, "create_worktree_branch_from_base", return_value=True) as mock_create_worktree:
+                                            with patch.object(handler, "is_commit_ancestor_of_branch", return_value=True) as mock_is_fresh:
+                                                result = handler.prepare_developer_branch(item, workspace_path)
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["branch"], "circus/issue-7-create-branch-before-launch")
@@ -3075,6 +3076,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_detect_base.assert_called_once_with("C:/target/repo")
         mock_refresh_base.assert_called_once_with("C:/target/repo", "main")
         mock_resolve_base.assert_called_once_with("C:/target/repo", "origin/main")
+        mock_local_branch_exists.assert_called_once_with("C:/target/repo", "circus/issue-7-create-branch-before-launch")
         mock_create_worktree.assert_called_once_with(
             "C:/target/repo",
             workspace_path,
@@ -3095,7 +3097,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                             with patch.object(handler, "resolve_git_ref_commit", return_value="def456") as mock_resolve_base:
                                 with patch.object(handler.os.path, "exists", return_value=True):
                                     with patch.object(handler, "is_commit_ancestor_of_branch", return_value=True) as mock_is_fresh:
-                                        with patch.object(handler, "create_or_reset_worktree_branch") as mock_create_worktree:
+                                        with patch.object(handler, "create_worktree_branch_from_base") as mock_create_worktree:
                                             result = handler.prepare_developer_branch(item, workspace_path)
 
         self.assertTrue(result["ok"])
@@ -3135,7 +3137,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                             with patch.object(handler, "resolve_git_ref_commit", return_value="fedcba"):
                                 with patch.object(handler.os.path, "exists", return_value=True):
                                     with patch.object(handler, "is_commit_ancestor_of_branch", return_value=False):
-                                        with patch.object(handler, "create_or_reset_worktree_branch") as mock_create_worktree:
+                                        with patch.object(handler, "create_worktree_branch_from_base") as mock_create_worktree:
                                             result = handler.prepare_developer_branch(item, workspace_path)
 
         self.assertFalse(result["ok"])
@@ -3144,6 +3146,34 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(result["base_ref"], "origin/main")
         self.assertEqual(result["base_commit"], "fedcba")
         self.assertEqual(result["workspace_path"], workspace_path)
+        mock_create_worktree.assert_not_called()
+
+    def test_prepare_developer_branch_blocks_existing_issue_branch_without_workspace(self):
+        item = {"number": 13, "title": "Block existing issue branch without workspace"}
+        workspace_path = "C:/worktrees/repo/issue-13"
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "get_current_git_branch", return_value="main"):
+                with patch.object(handler, "is_working_tree_clean", return_value=True):
+                    with patch.object(handler, "detect_default_base_branch", return_value=("main", "remote-head")):
+                        with patch.object(handler, "refresh_local_base_branch", return_value=True):
+                            with patch.object(handler, "resolve_git_ref_commit", return_value="bead00"):
+                                with patch.object(handler.os.path, "exists", return_value=False):
+                                    with patch.object(handler, "local_branch_exists", return_value=True) as mock_local_branch_exists:
+                                        with patch.object(handler, "create_worktree_branch_from_base") as mock_create_worktree:
+                                            result = handler.prepare_developer_branch(item, workspace_path)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "git-error")
+        self.assertEqual(
+            result["error"],
+            "issue branch 'circus/issue-13-block-existing-issue-branch-without-workspace' already exists "
+            "without expected workspace 'C:/worktrees/repo/issue-13'; refusing to reset branch",
+        )
+        mock_local_branch_exists.assert_called_once_with(
+            "C:/target/repo",
+            "circus/issue-13-block-existing-issue-branch-without-workspace",
+        )
         mock_create_worktree.assert_not_called()
 
     def test_prepare_developer_branch_blocks_dirty_stale_existing_worktree(self):

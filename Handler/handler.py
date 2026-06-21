@@ -870,8 +870,8 @@ def is_commit_ancestor_of_branch(repo_path, ancestor_commit, branch_name):
     )
 
 
-def create_or_reset_worktree_branch(repo_path, workspace_path, branch_name, base_ref):
-    return git_workspace.create_or_reset_worktree_branch(
+def create_worktree_branch_from_base(repo_path, workspace_path, branch_name, base_ref):
+    return git_workspace.create_worktree_branch_from_base(
         repo_path,
         workspace_path,
         branch_name,
@@ -893,7 +893,8 @@ def prepare_developer_branch(item, workspace_path):
         refresh_base_branch=refresh_local_base_branch,
         resolve_ref_commit=resolve_git_ref_commit,
         check_commit_ancestor=is_commit_ancestor_of_branch,
-        create_or_reset_worktree_branch=create_or_reset_worktree_branch,
+        check_local_branch_exists=local_branch_exists,
+        create_worktree_branch_from_base=create_worktree_branch_from_base,
         path_exists=os.path.exists,
         log=print,
     )
