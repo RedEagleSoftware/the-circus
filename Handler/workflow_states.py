@@ -1,6 +1,10 @@
 SYSTEMS_ARCHITECTURE_LABEL = "state:ready-for-systems-architecture"
 SYSTEMS_ARCHITECTURE_CHANGES_REQUESTED_LABEL = "state:systems-architecture-changes-requested"
 ROADMAP_UPDATE_LABEL = "state:ready-for-roadmap-update"
+IMPLEMENTATION_PLANNING_LABEL = "state:ready-for-implementation-planning"
+IMPLEMENTATION_PLANNING_CHANGES_REQUESTED_LABEL = "state:implementation-planning-changes-requested"
+IMPLEMENTATION_PLAN_REVIEW_LABEL = "state:ready-for-implementation-plan-review"
+PLANNED_LABEL = "state:planned"
 ARCHITECTURE_LABEL = "state:ready-for-architecture"
 DEVELOPER_LABEL = "state:ready-for-dev"
 CHANGES_REQUESTED_LABEL = "state:changes-requested"
@@ -40,6 +44,37 @@ WORKFLOW_STATES = {
             "model": "gpt-5.5",
             "effort": "High",
         },
+    },
+    IMPLEMENTATION_PLANNING_LABEL: {
+        "description": "Ready for implementation planner agent to produce an implementation plan.",
+        "color": "1D76DB",
+        "dispatch": {
+            "agent": "codex",
+            "mode": "implementation-planner",
+            "model": "gpt-5.5",
+            "effort": "High",
+        },
+    },
+    IMPLEMENTATION_PLANNING_CHANGES_REQUESTED_LABEL: {
+        "description": "Implementation planning changes requested; route back to implementation planner.",
+        "color": "FBCA04",
+        "dispatch": {
+            "agent": "codex",
+            "mode": "implementation-planner",
+            "model": "gpt-5.5",
+            "effort": "High",
+        },
+    },
+    IMPLEMENTATION_PLAN_REVIEW_LABEL: {
+        "description": "Implementation plan ready for human review and approval before coding dispatch.",
+        "color": "FBCA04",
+        "human_owned": True,
+        "terminal": True,
+    },
+    PLANNED_LABEL: {
+        "description": "Implementation plan approved and queued for coding dispatch.",
+        "color": "0E8A16",
+        "human_owned": True,
     },
     ARCHITECTURE_LABEL: {
         "description": "Ready for architecture/specification by architect agent.",
