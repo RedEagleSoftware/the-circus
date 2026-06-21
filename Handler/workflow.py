@@ -7,6 +7,8 @@ from Handler.workflow_states import (
     CHANGES_REQUESTED_LABEL,
     DEVELOPER_LABEL,
     HUMAN_REVIEW_LABEL,
+    IMPLEMENTATION_PLAN_REVIEW_LABEL,
+    IMPLEMENTATION_PLANNING_LABEL,
     LOCK_LABEL,
     REVIEW_LABEL,
     ROADMAP_UPDATE_LABEL,
@@ -220,6 +222,38 @@ def advance_roadmap_update_workflow_on_success(
         success_message="[Dispatch] Documentation update complete; workflow advanced to review stage for issue #{number}.",
         failure_message=(
             "[Dispatch] Roadmap Updater workflow transition encountered label update failures for issue #{number}; "
+            "manual inspection is required."
+        ),
+        remove_label_fn=remove_label_fn,
+        add_label_fn=add_label_fn,
+        update_run_status_fn=update_run_status_fn,
+        log=log,
+    )
+
+
+def advance_implementation_planning_workflow_on_success(
+    item,
+    remove_label_fn,
+    add_label_fn,
+    update_run_status_fn,
+    log=print,
+    from_state_label=IMPLEMENTATION_PLANNING_LABEL,
+):
+    transition_steps = [
+        ("remove", LOCK_LABEL),
+        ("remove", from_state_label),
+        ("add", IMPLEMENTATION_PLAN_REVIEW_LABEL),
+    ]
+
+    return execute_label_transition(
+        item,
+        workflow_name="Implementation Planner",
+        transition_steps=transition_steps,
+        success_message=(
+            "[Dispatch] Implementation plan generated; workflow advanced to implementation-plan review stage for issue #{number}."
+        ),
+        failure_message=(
+            "[Dispatch] Implementation Planner workflow transition encountered label update failures for issue #{number}; "
             "manual inspection is required."
         ),
         remove_label_fn=remove_label_fn,

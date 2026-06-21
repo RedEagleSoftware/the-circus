@@ -18,6 +18,8 @@ from Handler import target_instructions
 from Handler import watchtower
 from Handler import workflow
 from Handler.workflow_states import (
+    IMPLEMENTATION_PLANNING_CHANGES_REQUESTED_LABEL,
+    IMPLEMENTATION_PLANNING_LABEL,
     ROADMAP_UPDATE_LABEL,
     SYSTEMS_ARCHITECTURE_CHANGES_REQUESTED_LABEL,
     SYSTEMS_ARCHITECTURE_LABEL,
@@ -343,6 +345,17 @@ def advance_roadmap_update_workflow_on_success(item, from_state_label=ROADMAP_UP
     )
 
 
+def advance_implementation_planning_workflow_on_success(item, from_state_label=IMPLEMENTATION_PLANNING_LABEL):
+    return workflow.advance_implementation_planning_workflow_on_success(
+        item,
+        remove_label_fn=remove_label,
+        add_label_fn=add_label,
+        update_run_status_fn=update_run_status,
+        log=print,
+        from_state_label=from_state_label,
+    )
+
+
 def advance_developer_workflow_on_success(item, from_state_label="state:ready-for-dev"):
     return workflow.advance_developer_workflow_on_success(
         item,
@@ -582,6 +595,10 @@ def build_codex_systems_architect_task_text(absolute_launch_brief_path):
 
 def build_codex_roadmap_updater_task_text(absolute_launch_brief_path):
     return agents.build_codex_roadmap_updater_task_text(absolute_launch_brief_path)
+
+
+def build_codex_implementation_planner_task_text(absolute_launch_brief_path):
+    return agents.build_codex_implementation_planner_task_text(absolute_launch_brief_path)
 
 
 def build_codex_reviewer_task_text(absolute_launch_brief_path, review_pr_url, review_result_path):
@@ -1124,6 +1141,10 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         SYSTEMS_ARCHITECTURE_LABEL,
         SYSTEMS_ARCHITECTURE_CHANGES_REQUESTED_LABEL,
     }
+    implementation_planner_state_labels = {
+        IMPLEMENTATION_PLANNING_LABEL,
+        IMPLEMENTATION_PLANNING_CHANGES_REQUESTED_LABEL,
+    }
 
     workspace_path = item.get("workspace_path")
     developer_execution_path = workspace_path or TARGET_REPO_PATH
@@ -1473,7 +1494,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 log=print,
             )
 
-        if mode not in {"architect", "systems-architect", "roadmap-updater"}:
+        if mode not in {"architect", "systems-architect", "roadmap-updater", "implementation-planner"}:
             print("[Dispatch] TODO: Codex execution flow currently enabled only for architect/reviewer/roadmap-updater modes.")
             update_run_status(
                 item,
@@ -1489,6 +1510,8 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         absolute_launch_brief_path = os.path.abspath(launch_brief_path)
         if mode == "systems-architect" and state_label in systems_architect_state_labels:
             codex_task_text = build_codex_systems_architect_task_text(absolute_launch_brief_path)
+        elif mode == "implementation-planner" and state_label in implementation_planner_state_labels:
+            codex_task_text = build_codex_implementation_planner_task_text(absolute_launch_brief_path)
         elif mode == "roadmap-updater":
             codex_task_text = build_codex_roadmap_updater_task_text(absolute_launch_brief_path)
         else:
@@ -1599,6 +1622,18 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     success=advanced,
                     outcome=outcome,
                     stop_reason=stop_reason,
+                )
+                write_run_result(item)
+                return advanced
+            elif mode == "implementation-planner" and state_label in implementation_planner_state_labels:
+                advanced = advance_implementation_planning_workflow_on_success(item, from_state_label=state_label)
+                update_run_status(
+                    item,
+                    completed_at=utc_timestamp_now(),
+                    exit_code=0,
+                    success=advanced,
+                    outcome="implementation plan generated",
+                    stop_reason=None if advanced else "label transition failed",
                 )
                 write_run_result(item)
                 return advanced
@@ -1783,7 +1818,8 @@ def process_one_item(
             item["working_branch"] = branch_setup["branch"]
             item["workspace_path"] = branch_setup.get("workspace_path", workspace_path)
 
-        if config["agent"] == "codex" and config["mode"] == "roadmap-updater":
+        if config["agent"] == "codex" and config["mode"] in {"roadmap-updater", "implementation-planner"}:
+            mode_display_name = "roadmap updater" if config["mode"] == "roadmap-updater" else "implementation planner"
             workspace_metadata = resolve_item_workspace_metadata(item)
             workspace_path = workspace_metadata.get("workspace_path")
             item["workspace_path"] = workspace_path
@@ -1792,7 +1828,7 @@ def process_one_item(
                 if branch_setup.get("reason") == "dirty-working-tree":
                     failure_launch_brief_path = write_launch_brief(item, state_label, config, resolve_role_prompt_path(config["mode"]))
                     print(
-                        f"[Dispatch] Blocking roadmap updater launch for {item['type']} #{item['number']}: "
+                        f"[Dispatch] Blocking {mode_display_name} launch for {item['type']} #{item['number']}: "
                         "target repository working tree is dirty."
                     )
                     print(f"[Dispatch] Releasing lock for {item['type']} #{item['number']} due to pre-launch setup failure...")
@@ -1809,7 +1845,7 @@ def process_one_item(
                     lock_result = "released" if lock_released else "could not be released"
                     current_branch = branch_setup.get("current_branch") or "<unknown>"
                     item["comment"] = (
-                        f"Handler blocked roadmap updater launch for {item['type']} #{item['number']} because "
+                        f"Handler blocked {mode_display_name} launch for {item['type']} #{item['number']} because "
                         f"the target repository working tree is dirty on branch `{current_branch}`. "
                         f"The lock label `{LOCK_LABEL}` was {lock_result}. "
                         "Please clean the workspace and retry dispatch."
@@ -1828,7 +1864,7 @@ def process_one_item(
                     return "prelaunch-failed"
 
                 print(
-                    f"[Dispatch] Roadmap updater branch setup failed for {item['type']} #{item['number']}: "
+                    f"[Dispatch] {mode_display_name.capitalize()} branch setup failed for {item['type']} #{item['number']}: "
                     f"{branch_setup.get('error', 'unknown error')}"
                 )
                 print(f"[Dispatch] Releasing lock for {item['type']} #{item['number']} due to pre-launch setup failure...")
@@ -1839,7 +1875,7 @@ def process_one_item(
                 else:
                     print(f"[Dispatch] Lock cleanup failed for {item['type']} #{item['number']}; manual cleanup may be required.")
 
-                add_prelaunch_setup_failure_comment(item, branch_setup.get("error", "roadmap updater branch setup failed"), lock_released)
+                add_prelaunch_setup_failure_comment(item, branch_setup.get("error", f"{mode_display_name} branch setup failed"), lock_released)
                 add_comment(item)
                 update_run_status(
                     item,
@@ -1847,7 +1883,7 @@ def process_one_item(
                     exit_code=None,
                     success=False,
                     outcome="failed pre-launch",
-                    stop_reason=branch_setup.get("error", "roadmap updater branch setup failed"),
+                    stop_reason=branch_setup.get("error", f"{mode_display_name} branch setup failed"),
                 )
                 write_run_result(item)
                 return "prelaunch-failed"

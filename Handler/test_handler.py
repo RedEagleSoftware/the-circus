@@ -1248,6 +1248,21 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("Do not auto-merge", task_text)
         self.assertNotIn("architecture handoff", task_text)
 
+    def test_build_codex_implementation_planner_task_text_mentions_plan_contract(self):
+        task_text = handler.build_codex_implementation_planner_task_text(
+            "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/launch-brief.md"
+        )
+
+        self.assertIn(
+            "Read the launch brief at C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/launch-brief.md",
+            task_text,
+        )
+        self.assertIn("execute the implementation planner workflow", task_text)
+        self.assertIn("Review the architecture handoff", task_text)
+        self.assertIn("Publish a structured implementation plan as a GitHub issue comment", task_text)
+        self.assertIn("Do not modify runtime code", task_text)
+        self.assertIn("Do not modify workflow labels directly", task_text)
+
     def test_is_codex_sandbox_bypass_enabled_defaults_to_false_when_missing(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertFalse(handler.is_codex_sandbox_bypass_enabled())
@@ -1297,6 +1312,12 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         self.assertEqual(config["agent"], "codex")
         self.assertEqual(config["mode"], "architect-review")
+
+    def test_label_map_routes_ready_for_implementation_planning_to_codex_implementation_planner_mode(self):
+        config = handler.LABEL_MAP["state:ready-for-implementation-planning"]
+
+        self.assertEqual(config["agent"], "codex")
+        self.assertEqual(config["mode"], "implementation-planner")
 
     def test_required_workflow_labels_include_ready_for_system_architecture(self):
         self.assertIn("state:ready-for-systems-architecture", workflow_labels.REQUIRED_WORKFLOW_LABELS)
@@ -1442,10 +1463,10 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(command[1], "exec")
         self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
         self.assertEqual(command[4:6], ["--cd", "C:/target/repo"])
-        self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", command[6])
-        self.assertIn("execute the architect workflow", command[6])
-        self.assertIn("Produce or update the architecture handoff artifact", command[6])
-        self.assertIn("leave a GitHub comment summarizing the handoff or blocker", command[6])
+        self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", command[-1])
+        self.assertIn("execute the architect workflow", command[-1])
+        self.assertIn("Produce or update the architecture handoff artifact", command[-1])
+        self.assertIn("leave a GitHub comment summarizing the handoff or blocker", command[-1])
 
         self.assertEqual(mock_subprocess_run.call_args.kwargs["cwd"], "C:/target/repo")
         self.assertTrue(mock_subprocess_run.call_args.kwargs["text"])
@@ -1588,10 +1609,10 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(command[1], "exec")
         self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
         self.assertEqual(command[4:6], ["--cd", "C:/target/repo"])
-        self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", command[6])
-        self.assertIn("execute the systems architect workflow", command[6])
-        self.assertIn("structured GitHub issue comment as the primary human review artifact", command[6])
-        self.assertNotIn("architecture handoff", command[6])
+        self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", command[-1])
+        self.assertIn("execute the systems architect workflow", command[-1])
+        self.assertIn("structured GitHub issue comment as the primary human review artifact", command[-1])
+        self.assertNotIn("architecture handoff", command[-1])
 
         self.assertEqual(mock_subprocess_run.call_args.kwargs["cwd"], "C:/target/repo")
         self.assertTrue(mock_subprocess_run.call_args.kwargs["text"])
@@ -1641,16 +1662,63 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(command[1], "exec")
         self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
         self.assertEqual(command[4:6], ["--cd", "C:/target/repo"])
-        self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", command[6])
-        self.assertIn("execute the systems architect workflow", command[6])
-        self.assertIn("structured GitHub issue comment as the primary human review artifact", command[6])
-        self.assertNotIn("architecture handoff", command[6])
+        self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", command[-1])
+        self.assertIn("execute the systems architect workflow", command[-1])
+        self.assertIn("structured GitHub issue comment as the primary human review artifact", command[-1])
+        self.assertNotIn("architecture handoff", command[-1])
 
         self.assertEqual(mock_subprocess_run.call_args.kwargs["cwd"], "C:/target/repo")
         self.assertTrue(mock_subprocess_run.call_args.kwargs["text"])
         mock_advance_transition.assert_called_once_with(
             item,
             from_state_label="state:systems-architecture-changes-requested",
+        )
+
+    def test_launch_agent_codex_implementation_planner_routes_to_plan_review_state(self):
+        item = {
+            "type": "issue",
+            "number": 43,
+            "title": "Draft implementation plan",
+            "url": "https://github.com/owner/repo/issues/43",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "implementation-planner",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-43/run-001-implementation-planner/launch-brief.md"
+        absolute_launch_brief_path = "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/launch-brief.md"
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
+                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
+                    with patch.object(
+                        handler,
+                        "advance_implementation_planning_workflow_on_success",
+                        return_value=True,
+                    ) as mock_advance_transition:
+                        launched = handler.launch_agent(
+                            item,
+                            "state:ready-for-implementation-planning",
+                            config,
+                            os.path.normpath(os.path.join("TheFarm", "roles", "implementation-planner.md")),
+                            launch_brief_path,
+                        )
+
+        self.assertTrue(launched)
+        mock_subprocess_run.assert_called_once()
+        command = mock_subprocess_run.call_args.args[0]
+        self.assertEqual(command[0], "codex")
+        self.assertEqual(command[1], "exec")
+        self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
+        self.assertEqual(command[4:6], ["--cd", "C:/target/repo"])
+        self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", command[-1])
+        self.assertIn("execute the implementation planner workflow", command[-1])
+
+        mock_advance_transition.assert_called_once_with(
+            item,
+            from_state_label="state:ready-for-implementation-planning",
         )
 
     def test_launch_agent_codex_systems_architect_changes_requested_advances_to_human_review(self):
@@ -1839,6 +1907,33 @@ class HandlerObservabilityTests(unittest.TestCase):
             )
         )
         self.assertTrue(any("Adding label: state:ready-for-human-review" in line for line in printed_lines))
+
+    def test_advance_implementation_planning_workflow_on_success_transitions_to_plan_review(self):
+        item = {
+            "type": "issue",
+            "number": 143,
+            "title": "Implementation planning complete",
+        }
+
+        with patch.object(handler, "REPO", "owner/repo"):
+            with patch.object(handler, "run_command", return_value="") as mock_run_command:
+                transitioned = handler.advance_implementation_planning_workflow_on_success(item)
+
+        self.assertTrue(transitioned)
+        self.assertEqual(
+            mock_run_command.call_args_list,
+            [
+                unittest.mock.call(
+                    'gh issue edit 143 --repo owner/repo --remove-label "state:agent-in-progress"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 143 --repo owner/repo --remove-label "state:ready-for-implementation-planning"'
+                ),
+                unittest.mock.call(
+                    'gh issue edit 143 --repo owner/repo --add-label "state:ready-for-implementation-plan-review"'
+                ),
+            ],
+        )
 
     @patch("Handler.handler.validate_roadmap_updater_open_pull_request")
     @patch("Handler.handler.advance_roadmap_update_workflow_on_success")
@@ -3373,6 +3468,44 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_prepare_branch.assert_called_once_with(item, "C:/worktrees/repo/issue-43")
         self.assertEqual(item["working_branch"], "circus/issue-43-roadmap-updater-branch-prep")
         self.assertEqual(item["workspace_path"], "C:/worktrees/repo/issue-43")
+
+    def test_process_one_item_implementation_planner_prepares_working_branch_before_launch(self):
+        item = {
+            "type": "issue",
+            "number": 143,
+            "title": "Implementation planner branch prep",
+            "labels": [{"name": "state:ready-for-implementation-planning"}],
+        }
+
+        with patch.object(handler, "lock_item", return_value=True):
+            with patch.object(handler, "get_current_item", return_value=(item, True)):
+                with patch.object(
+                    handler,
+                    "resolve_item_workspace_metadata",
+                    return_value={"workspace_path": "C:/worktrees/repo/issue-143"},
+                ) as mock_workspace_metadata:
+                    with patch.object(
+                        handler,
+                        "prepare_developer_branch",
+                        return_value={
+                            "ok": True,
+                            "branch": "circus/issue-143-implementation-planner-branch-prep",
+                            "workspace_path": "C:/worktrees/repo/issue-143",
+                        },
+                    ) as mock_prepare_branch:
+                        with patch.object(
+                            handler,
+                            "write_launch_brief",
+                            return_value="Watchtower/runs/issue-143/run-001-implementation-planner/launch-brief.md",
+                        ):
+                            with patch.object(handler, "launch_agent", return_value=True):
+                                dispatched = handler.process_one_item([item])
+
+        self.assertEqual(dispatched, "success")
+        mock_workspace_metadata.assert_called_once_with(item)
+        mock_prepare_branch.assert_called_once_with(item, "C:/worktrees/repo/issue-143")
+        self.assertEqual(item["working_branch"], "circus/issue-143-implementation-planner-branch-prep")
+        self.assertEqual(item["workspace_path"], "C:/worktrees/repo/issue-143")
 
     def test_process_one_item_dirty_working_tree_blocks_roadmap_updater_launch_and_releases_lock(self):
         item = {
