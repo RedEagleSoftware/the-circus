@@ -50,24 +50,72 @@ The role bridges accepted strategy and dispatchable implementation work. It shou
 
 ## Workflow Output Contract
 
-When launched through `state:ready-for-implementation-planning`, the Implementation Planner should produce a GitHub issue comment with:
+When launched through `state:ready-for-implementation-planning`, the Implementation Planner should produce exactly one GitHub issue comment artifact with this stable heading structure:
 
-1. `## Implementation Plan`
-2. `### Source`
-3. `### Generated Issues`
-4. `### Proposed Order`
-5. `### Dependencies`
-6. `### Human Review Options`
+```md
+## Implementation Plan
 
-Generated issues should include:
+### Source
+### Planning Summary
+### Generated Issues
+### Proposed Order
+### Dependencies
+### Dispatch Readiness
+### Human Review Options
+### Automation Notes
+### Risks And Open Questions
+```
 
-- source recommendation URL or comment ID
-- source roadmap PR or documentation reference
-- implementation scope
-- acceptance criteria
-- suggested next workflow state
-- parent planning issue reference
-- optional `## Circus Dependencies` section
+### Required Sections
+
+- `## Implementation Plan`
+  - Present exactly once and used only for the planner output artifact.
+- `### Source`
+  - Cite parent planning issue, approved Systems Architect recommendation URL/comment, merged roadmap or documentation reference, and planner run context when available.
+- `### Planning Summary`
+  - Briefly describe decomposed scope and explicit planning assumptions.
+- `### Generated Issues`
+  - List every generated or proposed implementation issue and include:
+    - title and issue URL/number when created
+    - implementation scope
+    - acceptance criteria summary
+    - initial non-dispatch state
+    - suggested next workflow state after human approval
+    - parent planning issue traceability
+    - optional `## Circus Dependencies` metadata when ordering materially affects correctness
+- `### Proposed Order`
+  - Define intended execution sequence and identify parallelizable work.
+- `### Dependencies`
+  - Map required ordering dependencies to generated issues, or explicitly state `None`.
+- `### Dispatch Readiness`
+  - State that generated issues are non-dispatch until human approval and identify readiness target for each issue after approval (for example, `state:ready-for-architecture` or `state:ready-for-dev`).
+- `### Human Review Options`
+  - Provide explicit reviewer choices: approve plan, request changes via `state:implementation-planning-changes-requested`, or close/revise generated issues.
+
+### Optional Sections
+
+- `### Automation Notes`
+  - Include stable parse hints, identifiers, or an optional versioned machine-readable summary for future tooling.
+- `### Risks And Open Questions`
+  - Required when assumptions are unresolved, source references may be stale, dependencies are uncertain, or scope is ambiguous.
+- `### Deferred Work`
+  - Use when intentionally leaving part of accepted strategy for later planning.
+
+### Blocker Output Contract
+
+If a valid plan cannot be produced, the planner should leave a blocker comment instead of a partial implementation plan. The blocker comment should identify the blocking condition, such as:
+
+- missing approved source recommendation
+- missing merged roadmap reference
+- inaccessible repository context
+- conflicting workflow state
+- stale source concern requiring replanning
+
+### Future Automation Compatibility
+
+- Stable headings are the primary parser contract in V1.
+- Keep machine-readable blocks optional and versioned.
+- Do not make runtime dispatch behavior depend on machine-readable planner output in this phase.
 
 ---
 
