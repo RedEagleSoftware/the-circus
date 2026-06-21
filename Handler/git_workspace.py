@@ -238,6 +238,49 @@ def checkout_or_create_local_branch(repo_path, branch_name, branch_exists, run_g
     return True
 
 
+def refresh_local_base_branch(repo_path, branch_name, run_git_command, log=print):
+    fetch_result = run_git_command(repo_path, ["fetch", "origin", branch_name])
+    if fetch_result is None or fetch_result.returncode != 0:
+        stderr = fetch_result.stderr.strip() if fetch_result and fetch_result.stderr else "unknown error"
+        log(f"[Dispatch] Failed to fetch latest base branch '{branch_name}' from origin: {stderr}")
+        return False
+
+    checkout_result = run_git_command(repo_path, ["checkout", "-B", branch_name, f"origin/{branch_name}"])
+    if checkout_result is None or checkout_result.returncode != 0:
+        stderr = checkout_result.stderr.strip() if checkout_result and checkout_result.stderr else "unknown error"
+        log(f"[Dispatch] Failed to reset local base branch '{branch_name}' to origin/{branch_name}: {stderr}")
+        return False
+
+    return True
+
+
+def resolve_git_ref_commit(repo_path, ref_name, run_git_command, log=print):
+    result = run_git_command(repo_path, ["rev-parse", ref_name])
+    if result is None or result.returncode != 0:
+        stderr = result.stderr.strip() if result and result.stderr else "unknown error"
+        log(f"[Dispatch] Failed to resolve git ref '{ref_name}': {stderr}")
+        return None
+
+    commit_hash = result.stdout.strip()
+    return commit_hash or None
+
+
+def is_commit_ancestor_of_branch(repo_path, ancestor_commit, branch_name, run_git_command, log=print):
+    result = run_git_command(repo_path, ["merge-base", "--is-ancestor", ancestor_commit, branch_name])
+    if result is None:
+        log(f"[Dispatch] Unable to verify ancestry for branch '{branch_name}' and commit '{ancestor_commit}'.")
+        return None
+
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+
+    stderr = result.stderr.strip() if result.stderr else "unknown error"
+    log(f"[Dispatch] Failed to verify ancestry for branch '{branch_name}': {stderr}")
+    return None
+
+
 def prepare_developer_branch(
     item,
     repo_path,
@@ -245,6 +288,10 @@ def prepare_developer_branch(
     build_branch_name,
     get_current_branch,
     check_working_tree_clean,
+    detect_default_branch,
+    refresh_base_branch,
+    resolve_ref_commit,
+    check_commit_ancestor,
     check_local_branch_exists,
     checkout_or_create_branch,
     log=print,
@@ -282,6 +329,31 @@ def prepare_developer_branch(
             "current_branch": current_branch,
         }
 
+    base_branch, detection_source = detect_default_branch(repo_path)
+    if detection_source == "fallback":
+        log("[Dispatch] Default branch detection failed; falling back to base branch: main")
+    else:
+        log(f"[Dispatch] Detected base branch for developer branch creation: {base_branch}")
+
+    log(f"[Dispatch] Refreshing local base branch '{base_branch}' from origin before branch creation...")
+    if not refresh_base_branch(repo_path, base_branch):
+        return {
+            "ok": False,
+            "reason": "git-error",
+            "error": f"unable to refresh base branch '{base_branch}'",
+        }
+
+    base_ref = f"origin/{base_branch}"
+    base_commit = resolve_ref_commit(repo_path, base_ref)
+    if base_commit is None:
+        return {
+            "ok": False,
+            "reason": "git-error",
+            "error": f"unable to resolve base commit for '{base_ref}'",
+        }
+
+    log(f"[Dispatch] Developer base ref: {base_ref} @ {base_commit}")
+
     branch_exists = check_local_branch_exists(repo_path, selected_branch)
     if branch_exists is None:
         return {
@@ -289,6 +361,28 @@ def prepare_developer_branch(
             "reason": "git-error",
             "error": f"unable to verify local branch '{selected_branch}'",
         }
+
+    if branch_exists:
+        contains_latest_base = check_commit_ancestor(repo_path, base_commit, selected_branch)
+        if contains_latest_base is None:
+            return {
+                "ok": False,
+                "reason": "git-error",
+                "error": f"unable to verify freshness of branch '{selected_branch}'",
+            }
+
+        if not contains_latest_base:
+            log(
+                "[Dispatch] Existing developer branch is stale compared to latest base; blocking launch "
+                f"(branch='{selected_branch}', base_ref='{base_ref}', base_commit='{base_commit}')."
+            )
+            return {
+                "ok": False,
+                "reason": "stale-clean-branch",
+                "branch": selected_branch,
+                "base_ref": base_ref,
+                "base_commit": base_commit,
+            }
 
     if not checkout_or_create_branch(repo_path, selected_branch, branch_exists):
         return {

@@ -842,6 +842,34 @@ def checkout_or_create_local_branch(repo_path, branch_name, branch_exists):
     )
 
 
+def refresh_local_base_branch(repo_path, branch_name):
+    return git_workspace.refresh_local_base_branch(
+        repo_path,
+        branch_name,
+        run_git_command=run_git_command_in_repo,
+        log=print,
+    )
+
+
+def resolve_git_ref_commit(repo_path, ref_name):
+    return git_workspace.resolve_git_ref_commit(
+        repo_path,
+        ref_name,
+        run_git_command=run_git_command_in_repo,
+        log=print,
+    )
+
+
+def is_commit_ancestor_of_branch(repo_path, ancestor_commit, branch_name):
+    return git_workspace.is_commit_ancestor_of_branch(
+        repo_path,
+        ancestor_commit,
+        branch_name,
+        run_git_command=run_git_command_in_repo,
+        log=print,
+    )
+
+
 def prepare_developer_branch(item):
     return git_workspace.prepare_developer_branch(
         item,
@@ -849,6 +877,10 @@ def prepare_developer_branch(item):
         build_branch_name=build_developer_branch_name,
         get_current_branch=get_current_git_branch,
         check_working_tree_clean=is_working_tree_clean,
+        detect_default_branch=detect_default_base_branch,
+        refresh_base_branch=refresh_local_base_branch,
+        resolve_ref_commit=resolve_git_ref_commit,
+        check_commit_ancestor=is_commit_ancestor_of_branch,
         check_local_branch_exists=local_branch_exists,
         checkout_or_create_branch=checkout_or_create_local_branch,
         log=print,

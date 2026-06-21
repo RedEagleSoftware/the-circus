@@ -3060,12 +3060,18 @@ class HandlerObservabilityTests(unittest.TestCase):
         with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
             with patch.object(handler, "get_current_git_branch", side_effect=["main", "circus/issue-7-create-branch-before-launch"]):
                 with patch.object(handler, "is_working_tree_clean", return_value=True):
-                    with patch.object(handler, "local_branch_exists", return_value=False):
-                        with patch.object(handler, "checkout_or_create_local_branch", return_value=True) as mock_checkout:
-                            result = handler.prepare_developer_branch(item)
+                    with patch.object(handler, "detect_default_base_branch", return_value=("main", "remote-head")) as mock_detect_base:
+                        with patch.object(handler, "refresh_local_base_branch", return_value=True) as mock_refresh_base:
+                            with patch.object(handler, "resolve_git_ref_commit", return_value="abc123") as mock_resolve_base:
+                                with patch.object(handler, "local_branch_exists", return_value=False):
+                                    with patch.object(handler, "checkout_or_create_local_branch", return_value=True) as mock_checkout:
+                                        result = handler.prepare_developer_branch(item)
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["branch"], "circus/issue-7-create-branch-before-launch")
+        mock_detect_base.assert_called_once_with("C:/target/repo")
+        mock_refresh_base.assert_called_once_with("C:/target/repo", "main")
+        mock_resolve_base.assert_called_once_with("C:/target/repo", "origin/main")
         mock_checkout.assert_called_once_with("C:/target/repo", "circus/issue-7-create-branch-before-launch", False)
 
     def test_prepare_developer_branch_uses_existing_branch_when_present(self):
@@ -3074,13 +3080,74 @@ class HandlerObservabilityTests(unittest.TestCase):
         with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
             with patch.object(handler, "get_current_git_branch", side_effect=["main", "circus/issue-8-reuse-existing-branch"]):
                 with patch.object(handler, "is_working_tree_clean", return_value=True):
-                    with patch.object(handler, "local_branch_exists", return_value=True):
-                        with patch.object(handler, "checkout_or_create_local_branch", return_value=True) as mock_checkout:
-                            result = handler.prepare_developer_branch(item)
+                    with patch.object(handler, "detect_default_base_branch", return_value=("main", "remote-head")) as mock_detect_base:
+                        with patch.object(handler, "refresh_local_base_branch", return_value=True) as mock_refresh_base:
+                            with patch.object(handler, "resolve_git_ref_commit", return_value="def456") as mock_resolve_base:
+                                with patch.object(handler, "local_branch_exists", return_value=True):
+                                    with patch.object(handler, "is_commit_ancestor_of_branch", return_value=True) as mock_is_fresh:
+                                        with patch.object(handler, "checkout_or_create_local_branch", return_value=True) as mock_checkout:
+                                            result = handler.prepare_developer_branch(item)
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["branch"], "circus/issue-8-reuse-existing-branch")
+        mock_detect_base.assert_called_once_with("C:/target/repo")
+        mock_refresh_base.assert_called_once_with("C:/target/repo", "main")
+        mock_resolve_base.assert_called_once_with("C:/target/repo", "origin/main")
+        mock_is_fresh.assert_called_once_with("C:/target/repo", "def456", "circus/issue-8-reuse-existing-branch")
         mock_checkout.assert_called_once_with("C:/target/repo", "circus/issue-8-reuse-existing-branch", True)
+
+    def test_prepare_developer_branch_returns_git_error_when_base_refresh_fails(self):
+        item = {"number": 9, "title": "Refresh base branch"}
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "get_current_git_branch", return_value="feature/stale"):
+                with patch.object(handler, "is_working_tree_clean", return_value=True):
+                    with patch.object(handler, "detect_default_base_branch", return_value=("main", "remote-head")):
+                        with patch.object(handler, "refresh_local_base_branch", return_value=False) as mock_refresh_base:
+                            result = handler.prepare_developer_branch(item)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "git-error")
+        self.assertEqual(result["error"], "unable to refresh base branch 'main'")
+        mock_refresh_base.assert_called_once_with("C:/target/repo", "main")
+
+    def test_prepare_developer_branch_blocks_clean_stale_existing_branch(self):
+        item = {"number": 10, "title": "Block stale existing branch"}
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "get_current_git_branch", return_value="main"):
+                with patch.object(handler, "is_working_tree_clean", return_value=True):
+                    with patch.object(handler, "detect_default_base_branch", return_value=("main", "remote-head")):
+                        with patch.object(handler, "refresh_local_base_branch", return_value=True):
+                            with patch.object(handler, "resolve_git_ref_commit", return_value="fedcba"):
+                                with patch.object(handler, "local_branch_exists", return_value=True):
+                                    with patch.object(handler, "is_commit_ancestor_of_branch", return_value=False):
+                                        with patch.object(handler, "checkout_or_create_local_branch", return_value=True) as mock_checkout:
+                                            result = handler.prepare_developer_branch(item)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "stale-clean-branch")
+        self.assertEqual(result["branch"], "circus/issue-10-block-stale-existing-branch")
+        self.assertEqual(result["base_ref"], "origin/main")
+        self.assertEqual(result["base_commit"], "fedcba")
+        mock_checkout.assert_not_called()
+
+    def test_prepare_developer_branch_blocks_dirty_tree_without_refreshing_base(self):
+        item = {"number": 11, "title": "Dirty tree guard"}
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "get_current_git_branch", return_value="feature/stale"):
+                with patch.object(handler, "is_working_tree_clean", return_value=False):
+                    with patch.object(handler, "detect_default_base_branch", return_value=("main", "remote-head")) as mock_detect_base:
+                        with patch.object(handler, "refresh_local_base_branch", return_value=True) as mock_refresh_base:
+                            result = handler.prepare_developer_branch(item)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "dirty-working-tree")
+        self.assertEqual(result["branch"], "circus/issue-11-dirty-tree-guard")
+        self.assertEqual(result["current_branch"], "feature/stale")
+        mock_detect_base.assert_not_called()
+        mock_refresh_base.assert_not_called()
 
     def test_detect_default_base_branch_prefers_origin_head_symbolic_ref(self):
         with patch.object(
