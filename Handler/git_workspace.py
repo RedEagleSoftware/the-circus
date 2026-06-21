@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 
@@ -238,15 +239,74 @@ def checkout_or_create_local_branch(repo_path, branch_name, branch_exists, run_g
     return True
 
 
+def refresh_local_base_branch(repo_path, branch_name, run_git_command, log=print):
+    fetch_result = run_git_command(repo_path, ["fetch", "origin", branch_name])
+    if fetch_result is None or fetch_result.returncode != 0:
+        stderr = fetch_result.stderr.strip() if fetch_result and fetch_result.stderr else "unknown error"
+        log(f"[Dispatch] Failed to fetch latest base branch '{branch_name}' from origin: {stderr}")
+        return False
+
+    return True
+
+
+def create_worktree_branch_from_base(repo_path, workspace_path, branch_name, base_ref, run_git_command, log=print):
+    result = run_git_command(
+        repo_path,
+        ["worktree", "add", "--checkout", "-b", branch_name, workspace_path, base_ref],
+    )
+    if result is None or result.returncode != 0:
+        stderr = result.stderr.strip() if result and result.stderr else "unknown error"
+        log(
+            "[Dispatch] Failed to create issue worktree "
+            f"(workspace='{workspace_path}', branch='{branch_name}', base_ref='{base_ref}'): {stderr}"
+        )
+        return False
+
+    return True
+
+
+def resolve_git_ref_commit(repo_path, ref_name, run_git_command, log=print):
+    result = run_git_command(repo_path, ["rev-parse", ref_name])
+    if result is None or result.returncode != 0:
+        stderr = result.stderr.strip() if result and result.stderr else "unknown error"
+        log(f"[Dispatch] Failed to resolve git ref '{ref_name}': {stderr}")
+        return None
+
+    commit_hash = result.stdout.strip()
+    return commit_hash or None
+
+
+def is_commit_ancestor_of_branch(repo_path, ancestor_commit, branch_name, run_git_command, log=print):
+    result = run_git_command(repo_path, ["merge-base", "--is-ancestor", ancestor_commit, branch_name])
+    if result is None:
+        log(f"[Dispatch] Unable to verify ancestry for branch '{branch_name}' and commit '{ancestor_commit}'.")
+        return None
+
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+
+    stderr = result.stderr.strip() if result.stderr else "unknown error"
+    log(f"[Dispatch] Failed to verify ancestry for branch '{branch_name}': {stderr}")
+    return None
+
+
 def prepare_developer_branch(
     item,
     repo_path,
+    workspace_path,
     *,
     build_branch_name,
     get_current_branch,
     check_working_tree_clean,
+    detect_default_branch,
+    refresh_base_branch,
+    resolve_ref_commit,
+    check_commit_ancestor,
     check_local_branch_exists,
-    checkout_or_create_branch,
+    create_worktree_branch_from_base,
+    path_exists=os.path.exists,
     log=print,
 ):
     if not repo_path:
@@ -254,6 +314,13 @@ def prepare_developer_branch(
             "ok": False,
             "reason": "git-error",
             "error": "CIRCUS_TARGET_REPO_PATH is not configured",
+        }
+
+    if not workspace_path:
+        return {
+            "ok": False,
+            "reason": "git-error",
+            "error": "unable to resolve workspace path",
         }
 
     selected_branch = build_branch_name(item)
@@ -282,32 +349,127 @@ def prepare_developer_branch(
             "current_branch": current_branch,
         }
 
-    branch_exists = check_local_branch_exists(repo_path, selected_branch)
-    if branch_exists is None:
-        return {
-            "ok": False,
-            "reason": "git-error",
-            "error": f"unable to verify local branch '{selected_branch}'",
-        }
-
-    if not checkout_or_create_branch(repo_path, selected_branch, branch_exists):
-        return {
-            "ok": False,
-            "reason": "git-error",
-            "error": f"unable to switch to branch '{selected_branch}'",
-        }
-
-    if branch_exists:
-        log(f"[Dispatch] Checked out existing branch: {selected_branch}")
+    base_branch, detection_source = detect_default_branch(repo_path)
+    if detection_source == "fallback":
+        log("[Dispatch] Default branch detection failed; falling back to base branch: main")
     else:
-        log(f"[Dispatch] Created and checked out branch: {selected_branch}")
+        log(f"[Dispatch] Detected base branch for developer branch creation: {base_branch}")
 
-    final_branch = get_current_branch(repo_path)
-    log(f"[Dispatch] Final branch before launching Junie: {final_branch or '<unknown>'}")
+    log(f"[Dispatch] Fetching latest base branch '{base_branch}' from origin before workspace preparation...")
+    if not refresh_base_branch(repo_path, base_branch):
+        return {
+            "ok": False,
+            "reason": "git-error",
+            "error": f"unable to refresh base branch '{base_branch}'",
+        }
+
+    base_ref = f"origin/{base_branch}"
+    base_commit = resolve_ref_commit(repo_path, base_ref)
+    if base_commit is None:
+        return {
+            "ok": False,
+            "reason": "git-error",
+            "error": f"unable to resolve base commit for '{base_ref}'",
+        }
+    
+    log(f"[Dispatch] Developer base ref: {base_ref} @ {base_commit}")
+
+    workspace_already_exists = path_exists(workspace_path)
+    if workspace_already_exists:
+        log(f"[Dispatch] Existing issue worktree detected at '{workspace_path}'; validating for reuse...")
+    else:
+        branch_exists = check_local_branch_exists(repo_path, selected_branch)
+        if branch_exists is None:
+            return {
+                "ok": False,
+                "reason": "git-error",
+                "error": f"unable to determine whether issue branch '{selected_branch}' already exists",
+            }
+
+        if branch_exists:
+            return {
+                "ok": False,
+                "reason": "git-error",
+                "error": (
+                    f"issue branch '{selected_branch}' already exists without expected workspace "
+                    f"'{workspace_path}'; refusing to reset branch"
+                ),
+            }
+
+        log(f"[Dispatch] Creating issue worktree at '{workspace_path}' from '{base_ref}'...")
+        if not create_worktree_branch_from_base(repo_path, workspace_path, selected_branch, base_ref):
+            return {
+                "ok": False,
+                "reason": "git-error",
+                "error": f"unable to create issue worktree at '{workspace_path}'",
+            }
+
+    workspace_branch = get_current_branch(workspace_path)
+    if workspace_branch is None:
+        return {
+            "ok": False,
+            "reason": "git-error",
+            "error": f"unable to determine workspace branch for '{workspace_path}'",
+        }
+
+    clean_workspace_tree = check_working_tree_clean(workspace_path)
+    if clean_workspace_tree is None:
+        return {
+            "ok": False,
+            "reason": "git-error",
+            "error": f"unable to determine workspace status for '{workspace_path}'",
+        }
+
+    contains_latest_base = check_commit_ancestor(workspace_path, base_commit, "HEAD")
+    if contains_latest_base is None:
+        return {
+            "ok": False,
+            "reason": "git-error",
+            "error": f"unable to verify workspace freshness for '{workspace_path}'",
+        }
+
+    if not contains_latest_base:
+        stale_reason = "stale-clean-worktree" if clean_workspace_tree else "stale-dirty-worktree"
+        log(
+            "[Dispatch] Existing issue worktree is stale compared to latest base; blocking launch "
+            f"(workspace='{workspace_path}', branch='{workspace_branch}', expected_branch='{selected_branch}', "
+            f"base_ref='{base_ref}', base_commit='{base_commit}', clean={clean_workspace_tree})."
+        )
+        return {
+            "ok": False,
+            "reason": stale_reason,
+            "branch": selected_branch,
+            "current_branch": workspace_branch,
+            "workspace_path": workspace_path,
+            "base_ref": base_ref,
+            "base_commit": base_commit,
+        }
+
+    if workspace_branch != selected_branch:
+        return {
+            "ok": False,
+            "reason": "git-error",
+            "error": (
+                "workspace branch mismatch: "
+                f"expected '{selected_branch}', got '{workspace_branch}'"
+            ),
+        }
+
+    if not clean_workspace_tree:
+        return {
+            "ok": False,
+            "reason": "dirty-working-tree",
+            "branch": selected_branch,
+            "current_branch": workspace_branch,
+            "workspace_path": workspace_path,
+        }
+
+    log(f"[Dispatch] Developer workspace ready: {workspace_path} @ {workspace_branch}")
 
     return {
         "ok": True,
         "branch": selected_branch,
+        "workspace_path": workspace_path,
     }
 
 
