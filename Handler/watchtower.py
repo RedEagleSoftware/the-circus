@@ -551,10 +551,11 @@ def build_launch_brief_markdown(
         lines.extend(
             [
                 "",
-                "## Implementation Plan Artifact Contract",
+                "## Implementation Planner Result Contract",
                 f"- implementation plan artifact absolute path: `{implementation_plan_path or '<not available>'}`",
                 "- You must write `implementation-plan.md` to this exact absolute path before exiting.",
-                "- This markdown file is mandatory in addition to your issue comment output.",
+                "- The artifact should contain the structured implementation plan described by `TheFarm/roles/implementation-planner.md`.",
+                "- If blocked, write the artifact with a blocker summary and leave the required GitHub blocker comment.",
             ]
         )
 

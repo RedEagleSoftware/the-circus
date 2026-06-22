@@ -716,7 +716,7 @@ def build_thin_prompt(
     if mode == "implementation-planner":
         prompt_lines.extend(
             [
-                "- implementation planner artifact contract: You must write `implementation-plan.md` before exiting.",
+                "- implementation planner result contract: You must write `implementation-plan.md` before exiting.",
                 f"- implementation plan artifact absolute path: {implementation_plan_path or '<not available>'}",
             ]
         )
@@ -1677,18 +1677,21 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         "Please rerun implementation planning and ensure `implementation-plan.md` is written "
                         "before advancing the workflow."
                     )
+                    item["missing_implementation_plan_artifact"] = True
                     add_comment(item)
                     update_run_status(
                         item,
                         completed_at=utc_timestamp_now(),
                         exit_code=0,
                         success=False,
-                        outcome="implementation plan artifact missing",
+                        outcome="missing result artifact",
                         stop_reason=f"missing implementation plan artifact at {normalized_implementation_plan_path}",
+                        artifacts={"implementation_plan": normalized_implementation_plan_path},
                     )
                     write_run_result(item)
                     return False
 
+                item.pop("missing_implementation_plan_artifact", None)
                 advanced = advance_implementation_planning_workflow_on_success(item, from_state_label=state_label)
                 update_run_status(
                     item,
@@ -1697,6 +1700,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     success=advanced,
                     outcome="implementation plan generated",
                     stop_reason=None if advanced else "label transition failed",
+                    artifacts={"implementation_plan": normalize_path_for_display(implementation_plan_path)},
                 )
                 write_run_result(item)
                 return advanced

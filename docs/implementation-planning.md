@@ -39,7 +39,8 @@ Implementation Planner owns:
 - proposing the initial execution order
 - declaring conservative issue dependencies where ordering matters
 - creating generated GitHub issues directly in a non-dispatch review state
-- leaving a structured implementation plan comment or artifact
+- writing a durable `implementation-plan.md` artifact for Handler advancement
+- leaving a structured implementation plan GitHub comment for human review
 - preserving source traceability to the approved recommendation and roadmap update
 
 Handler owns:
@@ -114,7 +115,14 @@ The planner should declare dependencies conservatively and only where ordering m
 
 The canonical detailed output contract lives in `TheFarm/roles/implementation-planner.md`.
 
-This document summarizes the required artifact shape for architecture consistency. The planner should leave exactly one structured GitHub issue comment with:
+This document summarizes the required artifact shape for architecture consistency.
+
+When launched through `state:ready-for-implementation-planning`, the planner must:
+
+- write `implementation-plan.md` as the durable run artifact used by Handler advancement gating
+- leave a structured GitHub issue comment as the human review surface
+
+The durable artifact and the GitHub comment should use this heading structure:
 
 - `## Implementation Plan`
 - `### Source`
@@ -131,7 +139,7 @@ Optional sections may be included when needed:
 - `### Risks And Open Questions`
 - `### Deferred Work`
 
-If the planner cannot produce a valid plan, it should leave a blocker comment instead of a partial plan and explicitly state the blocker condition.
+If the planner cannot produce a valid plan, it should still write `implementation-plan.md` with blocker context and leave a blocker comment instead of a partial plan.
 
 The plan artifact should make stale plans easy to detect. If the source recommendation or roadmap docs change before approval, the issue should return to `state:implementation-planning-changes-requested` rather than silently dispatching generated work.
 
@@ -140,7 +148,7 @@ The plan artifact should make stale plans easy to detect. If the source recommen
 The first implementation should build the smallest useful Implementation Planner workflow:
 
 1. Read one approved Systems Architect recommendation and the updated roadmap docs.
-2. Produce one structured implementation plan comment.
+2. Produce one structured implementation plan artifact and matching GitHub comment.
 3. Create generated GitHub issues in a non-dispatch review state.
 4. Include acceptance criteria and suggested next workflow state in generated issues.
 5. Include `## Circus Dependencies` metadata when generated issue ordering matters.

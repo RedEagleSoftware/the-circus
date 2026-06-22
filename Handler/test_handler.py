@@ -1266,7 +1266,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("Publish a structured implementation plan as a GitHub issue comment", task_text)
         self.assertIn(
             "Write implementation-plan.md to this exact absolute path: "
-            "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/implementation-plan.md",
+            "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/implementation-plan.md before exiting",
             task_text,
         )
         self.assertIn("Do not modify runtime code", task_text)
@@ -1784,6 +1784,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_subprocess_run.assert_called_once()
         mock_advance_transition.assert_not_called()
         mock_add_comment.assert_called_once_with(item)
+        self.assertTrue(item.get("missing_implementation_plan_artifact"))
         self.assertIn("required artifact was not produced", item["comment"])
         self.assertIn(implementation_plan_path, item["comment"])
 
@@ -3175,7 +3176,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                 implementation_plan_path=implementation_plan_path,
             )
 
-        self.assertIn("## Implementation Plan Artifact Contract", markdown)
+        self.assertIn("## Implementation Planner Result Contract", markdown)
         self.assertIn(f"- implementation plan artifact absolute path: `{implementation_plan_path}`", markdown)
         self.assertIn("- You must write `implementation-plan.md` to this exact absolute path before exiting.", markdown)
 
