@@ -252,10 +252,11 @@ Within that frontier, the intended sequence is:
 2. Workspace isolation.
 3. Durable polling.
 4. Dependency blocking and automatic unblocking.
-5. Stale-lock and run recovery.
-6. Persistent Watchtower visibility.
-7. Strategic memory that records accepted recommendations without making Watchtower the primary review surface.
-8. Implementation planning that converts accepted strategy into review-gated generated implementation issues.
+5. Worktree and branch lifecycle management.
+6. Stale-lock and run recovery.
+7. Persistent Watchtower visibility.
+8. Strategic memory that records accepted recommendations without making Watchtower the primary review surface.
+9. Implementation planning that converts accepted strategy into review-gated generated implementation issues.
 
 Provider Routing and Skills remain valid future work, but both should stay behind self-hosting reliability so provider complexity and role specialization are added only after the runtime can observe, recover, and preserve context across repeated runs.
 
@@ -282,6 +283,34 @@ The roadmap sequence for this capability is:
 6. Move Architect and Reviewer modes onto resolver-managed base/read-only workspaces once the mutation-capable path is proven.
 
 Detailed architecture: [Worktree Isolation](../worktree-isolation.md).
+
+## Accepted Worktree and Branch Lifecycle Direction
+
+Issue #51 approved Worktree and Branch Lifecycle Management as the next Self Hosting reliability capability.
+
+The accepted direction is:
+
+- keep the lifecycle invariant explicit: one GitHub item maps to one deterministic workspace, one expected Circus branch, and zero or one open PR
+- use GitHub as the source of truth for workflow state and human decisions
+- use Git as the source of truth for repository, worktree, branch, upstream, and cleanliness facts
+- keep Watchtower observational, recording lifecycle classifications, diagnostics, run history, and recommendation traceability without becoming the cleanup authority
+- classify workspaces as `planned`, `ready`, `active`, `suspended`, `recoverable`, `stale-clean`, `retired`, `cleanup-eligible`, or `blocked-unsafe`
+- start recovery with an inventory that correlates worktree metadata, branch/upstream state, cleanliness, open PRs, workflow labels, and recent Watchtower run status
+- allow only narrow non-destructive automatic repairs, such as unambiguous upstream tracking repair
+- require human approval before cleanup or any action that deletes, resets, force-pushes, rebases, removes branches, or removes worktrees
+
+The roadmap sequence for this capability is:
+
+1. Document the lifecycle state model and safety rules.
+2. Add a workspace inventory and classification service.
+3. Add an operator-facing lifecycle diagnostic command or report with no mutations.
+4. Add non-destructive recovery helpers for missing upstream tracking and interrupted-run diagnostics.
+5. Integrate lifecycle classification into stale-lock and run recovery before relaunch.
+6. Add dry-run cleanup reporting for `retired` and `stale-clean` workspaces only.
+7. Add a reviewed cleanup execution path for clean registered worktrees.
+8. Record accepted Systems Architect recommendation comment URLs and IDs in Watchtower run history.
+
+Detailed architecture: [Worktree and Branch Lifecycle Management](../worktree-lifecycle.md).
 
 ## Accepted Dependency Blocking Direction
 

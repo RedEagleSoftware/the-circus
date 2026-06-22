@@ -6,6 +6,7 @@ Approved issue #19 direction: keep The Circus focused on the `Self Hosting` fron
 Approved issue #30 direction: use Git worktrees as the primary isolation mechanism for normal mutation-capable agent execution.
 Approved issue #34 direction: add explicit dependency blocking as a Handler-owned scheduling capability before broad parallel execution.
 Approved issue #37 direction: add Implementation Planning as a distinct review-gated bridge from accepted strategy to generated implementation issues.
+Approved issue #51 direction: formalize worktree and branch lifecycle management around conservative inventory, recovery, and cleanup safety rules.
 The next capability frontier is **self-hosting reliability and strategic memory**.
 
 ## Current Frontier
@@ -39,7 +40,7 @@ flowchart LR
 ## Self Hosting
 
 Self Hosting now means reliable repeated execution across fresh sessions without hidden context drift.
-The approved sequence is repository onboarding, workspace isolation, durable polling, stale-lock/run recovery, and persistent Watchtower visibility.
+The approved sequence is repository onboarding, workspace isolation, durable polling, dependency blocking, worktree/branch lifecycle management, stale-lock/run recovery, persistent Watchtower visibility, strategic memory, and implementation planning.
 
 ```mermaid
 flowchart LR
@@ -47,6 +48,7 @@ flowchart LR
     workspace["◐ Workspace Isolation"]
     polling["○ Durable Polling"]
     dependency["○ Dependency Blocking"]
+    lifecycle["○ Worktree / Branch Lifecycle"]
     recovery["○ Stale Lock / Run Recovery"]
     visibility["○ Persistent Watchtower Visibility"]
     memory["○ Strategic Memory"]
@@ -55,7 +57,8 @@ flowchart LR
     onboarding --> workspace
     workspace --> polling
     polling --> dependency
-    dependency --> recovery
+    dependency --> lifecycle
+    lifecycle --> recovery
     recovery --> visibility
     visibility --> memory
     memory --> planning
@@ -89,6 +92,23 @@ The accepted architecture is:
 - Dirty or unexpected worktrees should block rather than be reset automatically.
 
 Detailed architecture: [Worktree Isolation](worktree-isolation.md).
+
+## Worktree and Branch Lifecycle Management
+
+Worktree and Branch Lifecycle Management is now an accepted Self Hosting reliability capability direction, based on the approved Systems Architect recommendation in issue #51.
+
+The accepted architecture is:
+
+- One GitHub item maps to one deterministic workspace, one expected Circus branch, and zero or one open PR.
+- GitHub remains the source of truth for workflow state and human decisions.
+- Git remains the source of truth for repository, worktree, branch, upstream, and cleanliness facts.
+- Watchtower records run history, workspace metadata, lifecycle classifications, diagnostics, and recommendation traceability, but does not become the authority for lifecycle state.
+- Workspaces should be classified as `planned`, `ready`, `active`, `suspended`, `recoverable`, `stale-clean`, `retired`, `cleanup-eligible`, or `blocked-unsafe`.
+- Recovery is inventory-first, combining Git worktree data, branch/upstream state, open PRs, workflow labels, and recent Watchtower run status before any repair or cleanup action.
+- V1 may automate detection, diagnostics, reporting, and narrow non-destructive repair. It must not automate destructive cleanup.
+- Human approval is required before any action that deletes, resets, force-pushes, rebases, removes a branch, or removes a worktree.
+
+Detailed architecture: [Worktree and Branch Lifecycle Management](worktree-lifecycle.md).
 
 ## Dependency Blocking
 

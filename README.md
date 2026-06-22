@@ -154,6 +154,7 @@ Some files may eventually become protected or agent read-only to prevent uninten
 - Implementation planning that generates review-gated implementation issues from accepted strategic recommendations
 
 The accepted workspace isolation architecture is documented in [docs/worktree-isolation.md](docs/worktree-isolation.md).
+The accepted worktree and branch lifecycle architecture is documented in [docs/worktree-lifecycle.md](docs/worktree-lifecycle.md).
 The accepted issue dependency blocking architecture is documented in [docs/dependency-blocking.md](docs/dependency-blocking.md).
 The accepted implementation planning architecture is documented in [docs/implementation-planning.md](docs/implementation-planning.md).
 

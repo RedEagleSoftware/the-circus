@@ -13,6 +13,7 @@
 - Per-run Watchtower status/result artifacts operational
 - Roadmap Updater workflow available for documentation-only synchronization after accepted Systems Architect recommendations
 - Worktree isolation architecture accepted for mutation-capable agent execution; implementation not yet started
+- Worktree and branch lifecycle architecture accepted for conservative inventory, recovery, and cleanup safety; implementation not yet started
 - Implementation Planning architecture accepted as a review-gated bridge from roadmap updates to generated implementation issues; implementation not yet started
 
 ## Future Watchtower Concept
@@ -47,6 +48,7 @@
 ## Current Known Gaps
 - Repository onboarding is still manual; no target repo initialization command yet.
 - Worktree isolation is documented but not implemented for repeated self-hosted runs.
+- Worktree and branch lifecycle classification is documented but not implemented.
 - Durable polling and stale-lock/run recovery need to be hardened.
 - No artifact contract that records the accepted GitHub Systems Architect recommendation comment URL/ID in Watchtower run history.
 - No persistent Watchtower visibility beyond local run artifacts.
@@ -65,6 +67,7 @@
 - Roadmap Updater synchronizes documentation only after human-approved strategy
 - Implementation Planner converts accepted documented strategy into generated issues only after roadmap synchronization and human review gating
 - Git worktrees are the accepted isolation mechanism for Developer and Roadmap Updater execution, with per-item worktrees as the first implementation unit
+- Worktree and branch lifecycle management should be inventory-first, non-destructive by default, and human-approved before cleanup
 
 ## Maintenance Rules
 
@@ -85,6 +88,7 @@
 ## Current Task
 
 - Implement workspace path resolution and Watchtower/launch-brief recording for issue-owned worktrees.
+- Implement lifecycle inventory and classification before destructive cleanup or relaunch automation.
 
 
 ## Next Likely Tasks
@@ -92,7 +96,8 @@
 - Add target repo initialization command (`python main.py --init`).
 - Add Developer and Roadmap Updater execution from item worktrees.
 - Harden durable polling and stale-lock/run recovery.
-- Add stale worktree detection/reporting as part of stale-lock/run recovery.
+- Add lifecycle inventory and stale worktree detection/reporting as part of stale-lock/run recovery.
+- Add dry-run cleanup reporting for retired and stale-clean workspaces only.
 - Add persistent Watchtower visibility for active and recent runs.
 - Record accepted GitHub Systems Architect recommendation comment URLs/IDs in Watchtower run history for traceability.
 - Add Implementation Planner dispatch, generated issue creation in `state:planned`, and plan-review transitions.
