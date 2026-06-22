@@ -46,6 +46,7 @@ RUN_STATUS_FIELDS = [
     "stop_reason",
     "linked_pr",
     "working_branch",
+    "lifecycle_diagnostics",
     "label_transition",
     "artifacts",
 ]
@@ -268,6 +269,72 @@ def update_run_status(item, *, get_run_state_fn, read_run_status_fn, write_run_s
     write_run_status_fn(run_state, status_payload)
 
 
+def render_lifecycle_diagnostics_report(lifecycle_diagnostics):
+    lines = ["## Lifecycle Diagnostics"]
+
+    if not isinstance(lifecycle_diagnostics, list) or not lifecycle_diagnostics:
+        lines.extend(["- none", ""])
+        return lines
+
+    for index, diagnostic in enumerate(lifecycle_diagnostics, start=1):
+        if not isinstance(diagnostic, dict):
+            continue
+
+        workspace_path = diagnostic.get("workspace_path")
+        issue_association = (
+            diagnostic.get("issue_association")
+            or diagnostic.get("issue_number")
+            or diagnostic.get("item_number")
+        )
+        pr_association = (
+            diagnostic.get("pr_association")
+            or diagnostic.get("pr_number")
+            or diagnostic.get("pr_url")
+        )
+        branch_name = diagnostic.get("branch") or diagnostic.get("branch_name")
+        classification = diagnostic.get("classification")
+
+        reasons = diagnostic.get("reasons")
+        if isinstance(reasons, list):
+            reasons_text = ", ".join(str(reason) for reason in reasons if reason is not None) or "<none>"
+        elif reasons:
+            reasons_text = str(reasons)
+        else:
+            reasons_text = "<none>"
+
+        ambiguity_indicator = diagnostic.get("ambiguity")
+        if ambiguity_indicator is None:
+            ambiguity_indicator = diagnostic.get("is_ambiguous")
+        if ambiguity_indicator is None:
+            ambiguity_indicator = diagnostic.get("ambiguity_indicator")
+
+        recommended_action = (
+            diagnostic.get("recommended_operator_action")
+            or diagnostic.get("recommended_action")
+            or diagnostic.get("operator_action")
+        )
+
+        lines.extend(
+            [
+                f"### Workspace {index}",
+                f"- workspace path: `{workspace_path}`",
+                f"- issue association: `{issue_association}`",
+                f"- PR association: `{pr_association}`",
+                f"- branch name: `{branch_name}`",
+                f"- lifecycle classification: `{classification}`",
+                f"- classification reasons: `{reasons_text}`",
+                f"- ambiguity indicator: `{ambiguity_indicator}`",
+                f"- recommended operator action: `{recommended_action}`",
+            ]
+        )
+
+    if len(lines) == 1:
+        lines.append("- none")
+
+    lines.append("")
+    return lines
+
+
 def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
     run_state = get_run_state_fn(item)
     if not run_state:
@@ -317,7 +384,9 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
     for key in sorted(artifacts.keys()):
         lines.append(f"- {key}: `{artifacts.get(key)}`")
 
-    lines.extend(["", "## Label Transition"])
+    lines.extend([""])
+    lines.extend(render_lifecycle_diagnostics_report(status_payload.get("lifecycle_diagnostics")))
+    lines.append("## Label Transition")
 
     if isinstance(label_transition, dict):
         lines.append(f"- ok: `{label_transition.get('ok')}`")

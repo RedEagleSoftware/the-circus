@@ -4185,6 +4185,96 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("- workspace item identity: `issue-32`", result_content)
         self.assertIn("- worktree root source: `env:CIRCUS_WORKTREE_ROOT`", result_content)
 
+    def test_render_lifecycle_diagnostics_report_includes_required_fields(self):
+        lifecycle_diagnostics = [
+            {
+                "workspace_path": "C:/target/repo-worktrees/owner-repo/issue-56",
+                "issue_number": 56,
+                "pr_url": "https://github.com/owner/repo/pull/88",
+                "branch": "circus/issue-56-lifecycle-diagnostics",
+                "classification": "recoverable",
+                "reasons": ["missing_upstream_tracking", "open_pr_detected"],
+                "is_ambiguous": True,
+                "recommended_operator_action": "Inspect upstream tracking and continue manually.",
+            }
+        ]
+
+        report_lines = handler.render_lifecycle_diagnostics_report(lifecycle_diagnostics)
+        report = "\n".join(report_lines)
+
+        self.assertIn("## Lifecycle Diagnostics", report)
+        self.assertIn("- workspace path: `C:/target/repo-worktrees/owner-repo/issue-56`", report)
+        self.assertIn("- issue association: `56`", report)
+        self.assertIn("- PR association: `https://github.com/owner/repo/pull/88`", report)
+        self.assertIn("- branch name: `circus/issue-56-lifecycle-diagnostics`", report)
+        self.assertIn("- lifecycle classification: `recoverable`", report)
+        self.assertIn("- classification reasons: `missing_upstream_tracking, open_pr_detected`", report)
+        self.assertIn("- ambiguity indicator: `True`", report)
+        self.assertIn(
+            "- recommended operator action: `Inspect upstream tracking and continue manually.`",
+            report,
+        )
+
+    def test_write_run_result_includes_lifecycle_diagnostics_section(self):
+        item = {
+            "type": "issue",
+            "number": 56,
+            "title": "Lifecycle diagnostics reporting",
+            "working_branch": "circus/issue-56-lifecycle-diagnostics",
+        }
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            launch_brief_path = os.path.join(temp_dir, "owner-repo", "issue-56", "run-001-developer", "launch-brief.md")
+            os.makedirs(os.path.dirname(launch_brief_path), exist_ok=True)
+            with open(launch_brief_path, "w", encoding="utf-8") as launch_brief_file:
+                launch_brief_file.write("# Launch Brief\n")
+
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                    handler.initialize_run_status(item, "state:ready-for-dev", config, launch_brief_path)
+                    handler.update_run_status(
+                        item,
+                        started_at="2026-06-22T08:30:00Z",
+                        completed_at="2026-06-22T08:35:00Z",
+                        exit_code=0,
+                        success=True,
+                        outcome="success",
+                        stop_reason=None,
+                        lifecycle_diagnostics=[
+                            {
+                                "workspace_path": "C:/target/repo-worktrees/owner-repo/issue-56",
+                                "issue_number": 56,
+                                "pr_number": 88,
+                                "branch_name": "circus/issue-56-lifecycle-diagnostics",
+                                "classification": "active",
+                                "reasons": ["branch_ahead_of_base"],
+                                "ambiguity_indicator": False,
+                                "recommended_action": "Monitor active development and avoid cleanup actions.",
+                            }
+                        ],
+                    )
+                    handler.write_run_result(item)
+
+            result_path = os.path.join(os.path.dirname(launch_brief_path), "result.md")
+            with open(result_path, "r", encoding="utf-8") as result_file:
+                result_content = result_file.read()
+
+        self.assertIn("## Lifecycle Diagnostics", result_content)
+        self.assertIn("- issue association: `56`", result_content)
+        self.assertIn("- PR association: `88`", result_content)
+        self.assertIn("- lifecycle classification: `active`", result_content)
+        self.assertIn("- ambiguity indicator: `False`", result_content)
+        self.assertIn(
+            "- recommended operator action: `Monitor active development and avoid cleanup actions.`",
+            result_content,
+        )
+
     def test_ensure_shared_artifacts_does_not_overwrite_existing_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             item_run_root = os.path.join(temp_dir, "issue-7")

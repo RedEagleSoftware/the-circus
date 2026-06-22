@@ -1032,6 +1032,10 @@ def write_run_result(item):
     )
 
 
+def render_lifecycle_diagnostics_report(lifecycle_diagnostics):
+    return watchtower.render_lifecycle_diagnostics_report(lifecycle_diagnostics)
+
+
 def get_next_run_number(item_run_root):
     return watchtower.get_next_run_number(item_run_root)
 
