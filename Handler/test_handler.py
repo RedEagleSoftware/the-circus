@@ -1199,6 +1199,142 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("detected no changes", item["comment"])
         self.assertIn("No pull request was created", item["comment"])
 
+    def test_finalize_developer_success_with_workspace_path_uses_workspace_for_git_operations(self):
+        item = {
+            "type": "issue",
+            "number": 49,
+            "title": "Fix workspace post-run detection",
+            "url": "https://github.com/owner/repo/issues/49",
+            "working_branch": "circus/issue-49-fix-workspace-path",
+            "workspace_path": "C:/worktrees/issue-49",
+        }
+
+        git_results = [
+            Mock(returncode=0, stdout=" M Handler/developer_flow.py\n", stderr=""),
+            Mock(returncode=0, stdout="", stderr=""),
+            Mock(returncode=0, stdout="[circus/issue-49-fix-workspace-path abc123] commit\n", stderr=""),
+            Mock(returncode=0, stdout="branch set up\n", stderr=""),
+        ]
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "run_git_command_in_repo", side_effect=git_results) as mock_git:
+                    with patch.object(handler, "run_command", side_effect=["[]", "https://github.com/owner/repo/pull/49"]):
+                        with patch.object(handler, "advance_developer_workflow_on_success", return_value=True) as mock_advance:
+                            transitioned = handler.finalize_developer_success_with_pull_request(
+                                item,
+                                "Watchtower/runs/issue-49/run-001-developer/launch-brief.md",
+                            )
+
+        self.assertTrue(transitioned)
+        self.assertEqual(
+            mock_git.call_args_list,
+            [
+                unittest.mock.call("C:/worktrees/issue-49", ["status", "--porcelain"]),
+                unittest.mock.call("C:/worktrees/issue-49", ["add", "-A"]),
+                unittest.mock.call("C:/worktrees/issue-49", ["commit", "-m", "Implement issue #49: Fix workspace post-run detection"]),
+                unittest.mock.call("C:/worktrees/issue-49", ["push", "-u", "origin", "circus/issue-49-fix-workspace-path"]),
+            ],
+        )
+        mock_advance.assert_called_once_with(item, from_state_label="state:ready-for-dev")
+
+    def test_finalize_developer_success_without_changes_mentions_inspected_workspace_path(self):
+        item = {
+            "type": "issue",
+            "number": 49,
+            "title": "No-op workspace run",
+            "url": "https://github.com/owner/repo/issues/49",
+            "working_branch": "circus/issue-49-no-op-workspace",
+            "workspace_path": "C:/worktrees/issue-49",
+        }
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(
+                handler,
+                "run_git_command_in_repo",
+                return_value=Mock(returncode=0, stdout="", stderr=""),
+            ) as mock_git:
+                with patch.object(handler, "run_command") as mock_run_command:
+                    with patch.object(handler, "advance_developer_workflow_on_success") as mock_advance:
+                        with patch.object(handler, "add_comment") as mock_add_comment:
+                            transitioned = handler.finalize_developer_success_with_pull_request(
+                                item,
+                                "Watchtower/runs/issue-49/run-001-developer/launch-brief.md",
+                            )
+
+        self.assertFalse(transitioned)
+        self.assertEqual(
+            mock_git.call_args_list,
+            [unittest.mock.call("C:/worktrees/issue-49", ["status", "--porcelain"])],
+        )
+        mock_run_command.assert_not_called()
+        mock_advance.assert_not_called()
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("Inspected path: `C:/worktrees/issue-49`", item["comment"])
+
+    def test_finalize_developer_success_resumed_run_with_workspace_path_uses_workspace_even_with_existing_branch(self):
+        item = {
+            "type": "issue",
+            "number": 49,
+            "title": "Resume run with pending workspace changes",
+            "url": "https://github.com/owner/repo/issues/49",
+            "working_branch": "circus/issue-49-resume",
+            "workspace_path": "C:/worktrees/issue-49",
+        }
+
+        git_results = [
+            Mock(returncode=0, stdout=" M Handler/handler.py\n", stderr=""),
+            Mock(returncode=0, stdout="", stderr=""),
+            Mock(returncode=0, stdout="[circus/issue-49-resume abc123] commit\n", stderr=""),
+            Mock(returncode=0, stdout="branch set up\n", stderr=""),
+        ]
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "run_git_command_in_repo", side_effect=git_results) as mock_git:
+                    with patch.object(handler, "run_command", side_effect=["[]", "https://github.com/owner/repo/pull/50"]):
+                        with patch.object(handler, "advance_developer_workflow_on_success", return_value=True):
+                            with patch.object(handler, "get_current_git_branch") as mock_get_branch:
+                                transitioned = handler.finalize_developer_success_with_pull_request(
+                                    item,
+                                    "Watchtower/runs/issue-49/run-001-developer/launch-brief.md",
+                                )
+
+        self.assertTrue(transitioned)
+        mock_get_branch.assert_not_called()
+        self.assertEqual(mock_git.call_args_list[0], unittest.mock.call("C:/worktrees/issue-49", ["status", "--porcelain"]))
+        self.assertEqual(mock_git.call_args_list[3], unittest.mock.call("C:/worktrees/issue-49", ["push", "-u", "origin", "circus/issue-49-resume"]))
+
+    def test_finalize_developer_success_without_workspace_path_falls_back_to_target_repo(self):
+        item = {
+            "type": "issue",
+            "number": 49,
+            "title": "Fallback to target repo",
+            "url": "https://github.com/owner/repo/issues/49",
+            "working_branch": "circus/issue-49-fallback",
+        }
+
+        git_results = [
+            Mock(returncode=0, stdout=" M Handler/developer_flow.py\n", stderr=""),
+            Mock(returncode=0, stdout="", stderr=""),
+            Mock(returncode=0, stdout="[circus/issue-49-fallback abc123] commit\n", stderr=""),
+            Mock(returncode=0, stdout="branch set up\n", stderr=""),
+        ]
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "run_git_command_in_repo", side_effect=git_results) as mock_git:
+                    with patch.object(handler, "run_command", side_effect=["[]", "https://github.com/owner/repo/pull/51"]):
+                        with patch.object(handler, "advance_developer_workflow_on_success", return_value=True):
+                            transitioned = handler.finalize_developer_success_with_pull_request(
+                                item,
+                                "Watchtower/runs/issue-49/run-001-developer/launch-brief.md",
+                            )
+
+        self.assertTrue(transitioned)
+        self.assertEqual(mock_git.call_args_list[0], unittest.mock.call("C:/target/repo", ["status", "--porcelain"]))
+        self.assertEqual(mock_git.call_args_list[3], unittest.mock.call("C:/target/repo", ["push", "-u", "origin", "circus/issue-49-fallback"]))
+
     def test_build_codex_architect_task_text_includes_handoff_and_comment_requirements(self):
         task_text = handler.build_codex_architect_task_text("C:/abs/Watchtower/runs/issue-9/run-001-architect/launch-brief.md")
 

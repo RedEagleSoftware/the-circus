@@ -119,18 +119,20 @@ def finalize_developer_success_with_pull_request_v2(
     get_item_run_root_fn,
     **kwargs,
 ):
-    repo_path = target_repo_path
-    if not repo_path:
-        print("[Dispatch] Cannot finalize developer success: CIRCUS_TARGET_REPO_PATH is not configured.")
+    finalization_repo_path = item.get("workspace_path") or target_repo_path
+    if not finalization_repo_path:
+        print("[Dispatch] Cannot finalize developer success: no finalization repository path is configured.")
         add_developer_pr_failure_comment(
             item,
-            "target repository path is not configured",
+            "finalization repository path is not configured",
             lock_label=lock_label,
             add_comment_fn=add_comment_fn,
         )
         return False
 
-    developer_branch = item.get("working_branch") or get_current_git_branch_fn(repo_path)
+    print(f"[Dispatch] Developer post-run git cwd: {finalization_repo_path}")
+
+    developer_branch = item.get("working_branch") or get_current_git_branch_fn(finalization_repo_path)
     if not developer_branch:
         print("[Dispatch] Cannot determine developer branch after successful run.")
         add_developer_pr_failure_comment(
@@ -143,7 +145,8 @@ def finalize_developer_success_with_pull_request_v2(
 
     print(f"[Dispatch] Developer branch detected for post-run PR flow: {developer_branch}")
 
-    status_result = run_git_command_in_repo_fn(repo_path, ["status", "--porcelain"])
+    print(f"[Dispatch] Collecting developer git status from: {finalization_repo_path}")
+    status_result = run_git_command_in_repo_fn(finalization_repo_path, ["status", "--porcelain"])
     if status_result is None or status_result.returncode != 0:
         stderr = status_result.stderr.strip() if status_result and status_result.stderr else "unknown error"
         print(f"[Dispatch] Unable to collect git status for PR flow: {stderr}")
@@ -166,13 +169,15 @@ def finalize_developer_success_with_pull_request_v2(
         item["comment"] = (
             f"Handler detected no changes after successful developer execution for {item['type']} "
             f"#{item['number']} on branch `{developer_branch}`. No pull request was created. "
+            f"Inspected path: `{finalization_repo_path}`. "
             f"The lock label `{lock_label}` remains for human inspection."
         )
         add_comment_fn(item)
         print("[Dispatch] No local changes detected after developer success; PR creation skipped.")
         return False
 
-    stage_result = run_git_command_in_repo_fn(repo_path, ["add", "-A"])
+    print(f"[Dispatch] Staging developer changes from: {finalization_repo_path}")
+    stage_result = run_git_command_in_repo_fn(finalization_repo_path, ["add", "-A"])
     if stage_result is None or stage_result.returncode != 0:
         stderr = stage_result.stderr.strip() if stage_result and stage_result.stderr else "unknown error"
         print(f"[Dispatch] Failed to stage developer changes: {stderr}")
@@ -186,7 +191,7 @@ def finalize_developer_success_with_pull_request_v2(
 
     commit_message = build_developer_commit_message(item)
     print(f"[Dispatch] Developer commit message: {commit_message}")
-    commit_result = run_git_command_in_repo_fn(repo_path, ["commit", "-m", commit_message])
+    commit_result = run_git_command_in_repo_fn(finalization_repo_path, ["commit", "-m", commit_message])
     if commit_result is None or commit_result.returncode != 0:
         stderr = commit_result.stderr.strip() if commit_result and commit_result.stderr else "unknown error"
         print(f"[Dispatch] Failed to create developer commit: {stderr}")
@@ -200,7 +205,7 @@ def finalize_developer_success_with_pull_request_v2(
 
     print(f"[Dispatch] Commit created on branch '{developer_branch}'.")
 
-    push_result = run_git_command_in_repo_fn(repo_path, ["push", "-u", "origin", developer_branch])
+    push_result = run_git_command_in_repo_fn(finalization_repo_path, ["push", "-u", "origin", developer_branch])
     if push_result is None or push_result.returncode != 0:
         stderr = push_result.stderr.strip() if push_result and push_result.stderr else "unknown error"
         print(f"[Dispatch] Failed to push developer branch '{developer_branch}': {stderr}")
