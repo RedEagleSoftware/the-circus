@@ -12,6 +12,7 @@ The role bridges accepted strategy and dispatchable implementation work. It shou
 
 - **Plan after roadmap synchronization**: durable strategy should be recorded in roadmap and capability docs before implementation issues are generated.
 - **GitHub is the review surface**: generated issues and plan comments are reviewed in GitHub.
+- **Durable plan artifact is required**: `implementation-plan.md` must be written for Handler advancement.
 - **Non-dispatch by default**: generated implementation issues must not become immediately executable.
 - **Traceability first**: every generated issue should cite the source recommendation and roadmap update.
 - **Conservative dependencies**: declare dependencies only when ordering materially affects correctness.
@@ -42,7 +43,8 @@ The role bridges accepted strategy and dispatchable implementation work. It shou
 
 ### Implementation Plan Artifact
 
-- Leave a structured GitHub comment or durable artifact on the source planning issue.
+- Write `implementation-plan.md` as the durable implementation plan artifact for the run.
+- Leave a structured GitHub comment on the source planning issue.
 - List generated issues, proposed order, dependencies, dispatch readiness, and human review options.
 - Identify stale-plan risk by citing source recommendation and roadmap references.
 
@@ -50,7 +52,7 @@ The role bridges accepted strategy and dispatchable implementation work. It shou
 
 ## Workflow Output Contract
 
-When launched through `state:ready-for-implementation-planning`, the Implementation Planner should produce exactly one GitHub issue comment artifact with this stable heading structure:
+When launched through `state:ready-for-implementation-planning`, the Implementation Planner must produce a durable `implementation-plan.md` artifact and a GitHub issue comment. The durable artifact should use this stable heading structure:
 
 ```md
 ## Implementation Plan
@@ -69,7 +71,7 @@ When launched through `state:ready-for-implementation-planning`, the Implementat
 ### Required Sections
 
 - `## Implementation Plan`
-  - Present exactly once and used only for the planner output artifact.
+  - Present exactly once and used only for the planner durable artifact.
 - `### Source`
   - Cite parent planning issue, approved Systems Architect recommendation URL/comment, merged roadmap or documentation reference, and planner run context when available.
 - `### Planning Summary`
@@ -103,7 +105,7 @@ When launched through `state:ready-for-implementation-planning`, the Implementat
 
 ### Blocker Output Contract
 
-If a valid plan cannot be produced, the planner should leave a blocker comment instead of a partial implementation plan. The blocker comment should identify the blocking condition, such as:
+If a valid plan cannot be produced, the planner should still write `implementation-plan.md` with blocker context and leave a blocker comment instead of a partial implementation plan. The blocker comment should identify the blocking condition, such as:
 
 - missing approved source recommendation
 - missing merged roadmap reference
