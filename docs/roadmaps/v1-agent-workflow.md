@@ -287,6 +287,7 @@ Detailed architecture: [Worktree Isolation](../worktree-isolation.md).
 ## Accepted Worktree and Branch Lifecycle Direction
 
 Issue #51 approved Worktree and Branch Lifecycle Management as the next Self Hosting reliability capability.
+Issue #54 approved the workspace inventory and lifecycle classification service as the first implementation slice for that capability.
 
 The accepted direction is:
 
@@ -296,13 +297,16 @@ The accepted direction is:
 - keep Watchtower observational, recording lifecycle classifications, diagnostics, run history, and recommendation traceability without becoming the cleanup authority
 - classify workspaces as `planned`, `ready`, `active`, `suspended`, `recoverable`, `stale-clean`, `retired`, `cleanup-eligible`, or `blocked-unsafe`
 - start recovery with an inventory that correlates worktree metadata, branch/upstream state, cleanliness, open PRs, workflow labels, and recent Watchtower run status
-- allow only narrow non-destructive automatic repairs, such as unambiguous upstream tracking repair
+- split inventory collection from classification policy so raw Git, GitHub, and Watchtower facts are gathered before lifecycle decisions are made
+- return structured classification results with explicit facts, reasons, and confidence or ambiguity signals
+- treat uncertainty, inaccessible metadata, and ambiguous relationships as `blocked-unsafe`
+- keep the issue #54 service read-only and classification-only; diagnostics are in scope, but repair and cleanup actions are follow-on work
 - require human approval before cleanup or any action that deletes, resets, force-pushes, rebases, removes branches, or removes worktrees
 
 The roadmap sequence for this capability is:
 
 1. Document the lifecycle state model and safety rules.
-2. Add a workspace inventory and classification service.
+2. Add a read-only workspace inventory and classification service.
 3. Add an operator-facing lifecycle diagnostic command or report with no mutations.
 4. Add non-destructive recovery helpers for missing upstream tracking and interrupted-run diagnostics.
 5. Integrate lifecycle classification into stale-lock and run recovery before relaunch.

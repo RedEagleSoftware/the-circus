@@ -1,6 +1,7 @@
 # Worktree and Branch Lifecycle Management
 
 Issue #51 accepted Worktree and Branch Lifecycle Management as the next Self Hosting reliability capability.
+Issue #54 accepted the first implementation slice for this capability: a read-only workspace inventory and lifecycle classification service.
 
 This document records the approved Systems Architect recommendation for roadmap synchronization and follow-on implementation planning. It defines the lifecycle vocabulary and safety boundaries that future Handler, Watchtower, and operator tooling should use when inspecting or recovering Circus workspaces.
 
@@ -14,7 +15,7 @@ one GitHub item -> one deterministic workspace -> one expected Circus branch -> 
 
 GitHub remains the source of truth for workflow state and human decisions. Git remains the source of truth for repository, worktree, and branch facts. Watchtower records run history, workspace metadata, lifecycle classifications, and recovery diagnostics, but it must not become the authority for lifecycle state or cleanup decisions.
 
-The first implementation should prioritize detection, classification, reporting, and narrow non-destructive repair. It should not automate destructive cleanup.
+The issue #54 implementation slice should prioritize detection, classification, and diagnostics only. It should not automate cleanup, deletion, reset, rebase, force-push, branch removal, worktree removal, recreation, or repair.
 
 ## Lifecycle States
 
@@ -59,7 +60,9 @@ Recovery should start by building a workspace inventory from:
 
 Every workspace should be classified using the lifecycle states before any repair or cleanup decision is made.
 
-The diagnostic output should be human-readable and should identify the facts that led to each classification. Automatic repair is allowed only for narrow, non-destructive cases such as missing upstream tracking where branch identity and history are unambiguous.
+Inventory collection and classification policy should remain separate layers. Inventory gathers raw facts from Git, GitHub, and Watchtower. Classification consumes those facts and returns structured results with explicit facts, reasons, and confidence or ambiguity signals.
+
+The diagnostic output should be human-readable and should identify the facts that led to each classification. For the issue #54 service, automatic repair is out of scope. Later non-destructive recovery helpers may repair narrow cases such as missing upstream tracking only when branch identity and history are unambiguous.
 
 Human approval is required for any action that deletes, resets, force-pushes, rebases, removes a branch, removes a worktree, or otherwise risks losing work.
 
@@ -73,13 +76,13 @@ The lifecycle model should cover these scenarios:
 - Handler restart: rebuild inventory from Git, GitHub, and Watchtower facts before relaunching work.
 - Existing uncommitted changes: classify as `recoverable` or `blocked-unsafe`; do not reset automatically.
 - Existing committed-but-unpushed changes: classify as `recoverable`; do not treat as stale.
-- Missing upstream tracking: allow narrow repair only when expected branch identity and compatible history are unambiguous.
+- Missing upstream tracking: detect and explain the condition without repairing it in the issue #54 service; later recovery helpers may repair it only when expected branch identity and compatible history are unambiguous.
 - Existing open PR: protect the branch and worktree from cleanup until the PR relationship is resolved.
 - Unregistered or unexpected directory: classify as `blocked-unsafe`; require human inspection.
 
 ## Cleanup Safety Boundary
 
-V1 may automate lifecycle detection, diagnostics, and reporting. V1 should not automate destructive cleanup.
+The issue #54 service may automate lifecycle detection, classification, and service-level diagnostics. It must not automate repair or destructive cleanup.
 
 Cleanup should begin as:
 
@@ -112,7 +115,7 @@ Roadmap Updater records accepted strategic decisions in documentation only. It m
 ## Follow-On Implementation Sequence
 
 1. Document the lifecycle state model and safety rules in this dedicated lifecycle document.
-2. Add a workspace inventory and classification service that combines Git worktree metadata, branch and upstream state, open PR state, workflow labels, and Watchtower run status.
+2. Add a workspace inventory and classification service that combines Git worktree metadata, branch and upstream state, open PR state, workflow labels, and Watchtower run status. This is the accepted issue #54 implementation slice and should be read-only and classification-only.
 3. Add an operator-facing lifecycle diagnostic command or report with no mutations.
 4. Add non-destructive recovery helpers for missing upstream tracking and clear interrupted-run diagnostics.
 5. Add stale-lock and run recovery integration that classifies `suspended` and `recoverable` workspaces before relaunch.
