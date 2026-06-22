@@ -14,6 +14,7 @@ SHARED_ARTIFACT_PLACEHOLDERS = {
 
 REVIEW_RESULT_FILENAME = "review-result.md"
 ARCHITECT_REVIEW_RESULT_FILENAME = "architect-review-result.md"
+IMPLEMENTATION_PLAN_FILENAME = "implementation-plan.md"
 RUN_STATUS_FILENAME = "status.json"
 RUN_RESULT_FILENAME = "result.md"
 
@@ -129,6 +130,16 @@ def build_architect_review_result_path(
     architect_review_result_filename=ARCHITECT_REVIEW_RESULT_FILENAME,
 ):
     absolute_path = os.path.abspath(os.path.join(os.path.dirname(launch_brief_path), architect_review_result_filename))
+    return normalize_path_for_display_fn(absolute_path)
+
+
+def build_implementation_plan_path(
+    launch_brief_path,
+    *,
+    normalize_path_for_display_fn,
+    implementation_plan_filename=IMPLEMENTATION_PLAN_FILENAME,
+):
+    absolute_path = os.path.abspath(os.path.join(os.path.dirname(launch_brief_path), implementation_plan_filename))
     return normalize_path_for_display_fn(absolute_path)
 
 
@@ -412,6 +423,7 @@ def build_launch_brief_markdown(
     get_circus_runtime_root_fn,
     shared_context_paths=None,
     review_result_path=None,
+    implementation_plan_path=None,
     workspace_metadata=None,
 ):
     profile_source = resolve_profile_source_fn(role_prompt_path)
@@ -535,6 +547,17 @@ def build_launch_brief_markdown(
             ]
         )
 
+    if config.get("mode") == "implementation-planner":
+        lines.extend(
+            [
+                "",
+                "## Implementation Plan Artifact Contract",
+                f"- implementation plan artifact absolute path: `{implementation_plan_path or '<not available>'}`",
+                "- You must write `implementation-plan.md` to this exact absolute path before exiting.",
+                "- This markdown file is mandatory in addition to your issue comment output.",
+            ]
+        )
+
     return "\n".join(lines)
 
 
@@ -551,6 +574,7 @@ def write_launch_brief(
     build_launch_brief_path_fn,
     build_reviewer_result_path_fn,
     build_architect_review_result_path_fn,
+    build_implementation_plan_path_fn,
     initialize_run_status_fn,
     update_run_status_fn,
     resolve_workspace_metadata_fn,
@@ -565,10 +589,13 @@ def write_launch_brief(
     workspace_metadata = resolve_workspace_metadata_fn(item)
     brief_path = build_launch_brief_path_fn(item, config["mode"])
     review_result_path = None
+    implementation_plan_path = None
     if config.get("mode") == "reviewer":
         review_result_path = build_reviewer_result_path_fn(brief_path)
     if config.get("mode") == "architect-review":
         review_result_path = build_architect_review_result_path_fn(brief_path)
+    if config.get("mode") == "implementation-planner":
+        implementation_plan_path = build_implementation_plan_path_fn(brief_path)
 
     brief_content = build_launch_brief_markdown_fn(
         item,
@@ -579,6 +606,7 @@ def write_launch_brief(
         target_repo_path or "<not configured>",
         shared_context_paths,
         review_result_path,
+        implementation_plan_path,
         workspace_metadata,
     )
     os.makedirs(os.path.dirname(brief_path), exist_ok=True)
@@ -595,6 +623,9 @@ def write_launch_brief(
 
     if review_result_path:
         artifact_updates["result_contract"] = normalize_path_for_display_fn(review_result_path)
+
+    if implementation_plan_path:
+        artifact_updates["implementation_plan"] = normalize_path_for_display_fn(implementation_plan_path)
 
     if workspace_metadata.get("workspace_path"):
         artifact_updates["workspace"] = workspace_metadata.get("workspace_path")

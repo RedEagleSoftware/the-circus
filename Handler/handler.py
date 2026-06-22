@@ -43,6 +43,7 @@ SHARED_ARTIFACT_PLACEHOLDERS = watchtower.SHARED_ARTIFACT_PLACEHOLDERS
 
 REVIEW_RESULT_FILENAME = watchtower.REVIEW_RESULT_FILENAME
 ARCHITECT_REVIEW_RESULT_FILENAME = watchtower.ARCHITECT_REVIEW_RESULT_FILENAME
+IMPLEMENTATION_PLAN_FILENAME = watchtower.IMPLEMENTATION_PLAN_FILENAME
 REVIEW_OUTCOMES = workflow.REVIEW_OUTCOMES
 REVIEW_OUTCOME_MARKERS = workflow.REVIEW_OUTCOME_MARKERS
 
@@ -597,8 +598,11 @@ def build_codex_roadmap_updater_task_text(absolute_launch_brief_path):
     return agents.build_codex_roadmap_updater_task_text(absolute_launch_brief_path)
 
 
-def build_codex_implementation_planner_task_text(absolute_launch_brief_path):
-    return agents.build_codex_implementation_planner_task_text(absolute_launch_brief_path)
+def build_codex_implementation_planner_task_text(absolute_launch_brief_path, implementation_plan_path):
+    return agents.build_codex_implementation_planner_task_text(
+        absolute_launch_brief_path,
+        implementation_plan_path,
+    )
 
 
 def build_codex_reviewer_task_text(absolute_launch_brief_path, review_pr_url, review_result_path):
@@ -641,7 +645,15 @@ def resolve_profile_source(role_prompt_path):
     return normalize_path_for_display(resolve_circus_runtime_path(role_prompt_path))
 
 
-def build_thin_prompt(item, state_label, mode, role_prompt_path, launch_brief_path=None, review_result_path=None):
+def build_thin_prompt(
+    item,
+    state_label,
+    mode,
+    role_prompt_path,
+    launch_brief_path=None,
+    review_result_path=None,
+    implementation_plan_path=None,
+):
     profile_source = resolve_profile_source(role_prompt_path)
     discovered_target_instruction_paths = target_instructions.discover_target_instruction_paths(TARGET_REPO_PATH, mode)
 
@@ -701,6 +713,14 @@ def build_thin_prompt(item, state_label, mode, role_prompt_path, launch_brief_pa
             ]
         )
 
+    if mode == "implementation-planner":
+        prompt_lines.extend(
+            [
+                "- implementation planner artifact contract: You must write `implementation-plan.md` before exiting.",
+                f"- implementation plan artifact absolute path: {implementation_plan_path or '<not available>'}",
+            ]
+        )
+
     return "\n".join(prompt_lines)
 
 
@@ -742,6 +762,14 @@ def build_architect_review_result_path(launch_brief_path):
         launch_brief_path,
         normalize_path_for_display_fn=normalize_path_for_display,
         architect_review_result_filename=ARCHITECT_REVIEW_RESULT_FILENAME,
+    )
+
+
+def build_implementation_plan_path(launch_brief_path):
+    return watchtower.build_implementation_plan_path(
+        launch_brief_path,
+        normalize_path_for_display_fn=normalize_path_for_display,
+        implementation_plan_filename=IMPLEMENTATION_PLAN_FILENAME,
     )
 
 
@@ -1053,6 +1081,7 @@ def build_launch_brief_markdown(
     target_repo_path,
     shared_context_paths=None,
     review_result_path=None,
+    implementation_plan_path=None,
     workspace_metadata=None,
 ):
     return watchtower.build_launch_brief_markdown(
@@ -1068,6 +1097,7 @@ def build_launch_brief_markdown(
         get_circus_runtime_root_fn=get_circus_runtime_root,
         shared_context_paths=shared_context_paths,
         review_result_path=review_result_path,
+        implementation_plan_path=implementation_plan_path,
         workspace_metadata=workspace_metadata,
     )
 
@@ -1085,6 +1115,7 @@ def write_launch_brief(item, state_label, config, role_prompt_path):
         build_launch_brief_path_fn=build_launch_brief_path,
         build_reviewer_result_path_fn=build_reviewer_result_path,
         build_architect_review_result_path_fn=build_architect_review_result_path,
+        build_implementation_plan_path_fn=build_implementation_plan_path,
         initialize_run_status_fn=initialize_run_status,
         update_run_status_fn=update_run_status,
         resolve_workspace_metadata_fn=resolve_item_workspace_metadata,
@@ -1101,10 +1132,13 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
     effort = config["effort"]
     number = item["number"]
     reviewer_result_path_for_prompt = None
+    implementation_plan_path_for_prompt = None
     if mode == "reviewer":
         reviewer_result_path_for_prompt = build_reviewer_result_path(launch_brief_path)
     if mode == "architect-review":
         reviewer_result_path_for_prompt = build_architect_review_result_path(launch_brief_path)
+    if mode == "implementation-planner":
+        implementation_plan_path_for_prompt = build_implementation_plan_path(launch_brief_path)
     thin_prompt = build_thin_prompt(
         item,
         state_label,
@@ -1112,6 +1146,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         role_prompt_path,
         launch_brief_path,
         review_result_path=reviewer_result_path_for_prompt,
+        implementation_plan_path=implementation_plan_path_for_prompt,
     )
 
     print(f"[Dispatch] Launching {agent} in {mode} mode with model={model}, effort={effort}")
@@ -1511,7 +1546,10 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
         if mode == "systems-architect" and state_label in systems_architect_state_labels:
             codex_task_text = build_codex_systems_architect_task_text(absolute_launch_brief_path)
         elif mode == "implementation-planner" and state_label in implementation_planner_state_labels:
-            codex_task_text = build_codex_implementation_planner_task_text(absolute_launch_brief_path)
+            codex_task_text = build_codex_implementation_planner_task_text(
+                absolute_launch_brief_path,
+                implementation_plan_path_for_prompt or "<not available>",
+            )
         elif mode == "roadmap-updater":
             codex_task_text = build_codex_roadmap_updater_task_text(absolute_launch_brief_path)
         else:
@@ -1626,6 +1664,31 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 write_run_result(item)
                 return advanced
             elif mode == "implementation-planner" and state_label in implementation_planner_state_labels:
+                implementation_plan_path = build_implementation_plan_path(launch_brief_path)
+                if not os.path.isfile(implementation_plan_path):
+                    normalized_implementation_plan_path = normalize_path_for_display(implementation_plan_path)
+                    print(
+                        f"[Dispatch] Codex exited 0 but missing required implementation plan artifact at "
+                        f"{normalized_implementation_plan_path}."
+                    )
+                    item["comment"] = (
+                        "⚠️ Implementation planner run completed but the required artifact was not produced.\n\n"
+                        f"Expected file: `{normalized_implementation_plan_path}`\n\n"
+                        "Please rerun implementation planning and ensure `implementation-plan.md` is written "
+                        "before advancing the workflow."
+                    )
+                    add_comment(item)
+                    update_run_status(
+                        item,
+                        completed_at=utc_timestamp_now(),
+                        exit_code=0,
+                        success=False,
+                        outcome="implementation plan artifact missing",
+                        stop_reason=f"missing implementation plan artifact at {normalized_implementation_plan_path}",
+                    )
+                    write_run_result(item)
+                    return False
+
                 advanced = advance_implementation_planning_workflow_on_success(item, from_state_label=state_label)
                 update_run_status(
                     item,

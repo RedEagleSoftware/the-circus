@@ -191,7 +191,10 @@ class HandlerObservabilityTests(unittest.TestCase):
         with patch.dict(os.environ, {"CIRCUS_WORKTREE_ROOT": "C:/repos/worktrees"}, clear=False):
             worktree_root, source = handler.resolve_worktree_root("C:/repos/target", "owner-repo")
 
-        self.assertEqual(worktree_root, "C:/repos/worktrees")
+        self.assertEqual(
+            handler.normalize_path_for_display(worktree_root),
+            "C:/repos/worktrees",
+        )
         self.assertEqual(source, "env:CIRCUS_WORKTREE_ROOT")
 
     def test_resolve_worktree_root_derives_default_from_target_repo_name_when_unset(self):
@@ -1250,7 +1253,8 @@ class HandlerObservabilityTests(unittest.TestCase):
 
     def test_build_codex_implementation_planner_task_text_mentions_plan_contract(self):
         task_text = handler.build_codex_implementation_planner_task_text(
-            "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/launch-brief.md"
+            "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/launch-brief.md",
+            "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/implementation-plan.md",
         )
 
         self.assertIn(
@@ -1260,6 +1264,11 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("execute the implementation planner workflow", task_text)
         self.assertIn("Review the architecture handoff", task_text)
         self.assertIn("Publish a structured implementation plan as a GitHub issue comment", task_text)
+        self.assertIn(
+            "Write implementation-plan.md to this exact absolute path: "
+            "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/implementation-plan.md",
+            task_text,
+        )
         self.assertIn("Do not modify runtime code", task_text)
         self.assertIn("Do not modify workflow labels directly", task_text)
 
@@ -1689,22 +1698,29 @@ class HandlerObservabilityTests(unittest.TestCase):
         }
         launch_brief_path = "Watchtower/runs/issue-43/run-001-implementation-planner/launch-brief.md"
         absolute_launch_brief_path = "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/launch-brief.md"
+        implementation_plan_path = "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/implementation-plan.md"
 
         with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
             with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
                 with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
                     with patch.object(
                         handler,
+                        "build_implementation_plan_path",
+                        return_value=implementation_plan_path,
+                    ):
+                        with patch.object(handler.os.path, "isfile", return_value=True):
+                            with patch.object(
+                        handler,
                         "advance_implementation_planning_workflow_on_success",
                         return_value=True,
                     ) as mock_advance_transition:
-                        launched = handler.launch_agent(
-                            item,
-                            "state:ready-for-implementation-planning",
-                            config,
-                            os.path.normpath(os.path.join("TheFarm", "roles", "implementation-planner.md")),
-                            launch_brief_path,
-                        )
+                                launched = handler.launch_agent(
+                                    item,
+                                    "state:ready-for-implementation-planning",
+                                    config,
+                                    os.path.normpath(os.path.join("TheFarm", "roles", "implementation-planner.md")),
+                                    launch_brief_path,
+                                )
 
         self.assertTrue(launched)
         mock_subprocess_run.assert_called_once()
@@ -1715,11 +1731,61 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(command[4:6], ["--cd", "C:/target/repo"])
         self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", command[-1])
         self.assertIn("execute the implementation planner workflow", command[-1])
+        self.assertIn(
+            f"Write implementation-plan.md to this exact absolute path: {implementation_plan_path}",
+            command[-1],
+        )
 
         mock_advance_transition.assert_called_once_with(
             item,
             from_state_label="state:ready-for-implementation-planning",
         )
+
+    def test_launch_agent_codex_implementation_planner_missing_plan_artifact_fails_without_transition(self):
+        item = {
+            "type": "issue",
+            "number": 43,
+            "title": "Draft implementation plan",
+            "url": "https://github.com/owner/repo/issues/43",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "implementation-planner",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-43/run-001-implementation-planner/launch-brief.md"
+        absolute_launch_brief_path = "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/launch-brief.md"
+        implementation_plan_path = "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/implementation-plan.md"
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
+                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
+                    with patch.object(
+                        handler,
+                        "build_implementation_plan_path",
+                        return_value=implementation_plan_path,
+                    ):
+                        with patch.object(handler.os.path, "isfile", return_value=False):
+                            with patch.object(handler, "add_comment") as mock_add_comment:
+                                with patch.object(
+                                    handler,
+                                    "advance_implementation_planning_workflow_on_success",
+                                ) as mock_advance_transition:
+                                    launched = handler.launch_agent(
+                                        item,
+                                        "state:ready-for-implementation-planning",
+                                        config,
+                                        os.path.normpath(os.path.join("TheFarm", "roles", "implementation-planner.md")),
+                                        launch_brief_path,
+                                    )
+
+        self.assertFalse(launched)
+        mock_subprocess_run.assert_called_once()
+        mock_advance_transition.assert_not_called()
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("required artifact was not produced", item["comment"])
+        self.assertIn(implementation_plan_path, item["comment"])
 
     def test_launch_agent_codex_systems_architect_changes_requested_advances_to_human_review(self):
         item = {
@@ -3083,6 +3149,35 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("  - `Outcome: APPROVED`", markdown)
         self.assertIn("  - `Outcome: CHANGES_REQUESTED`", markdown)
         self.assertIn("  - `Outcome: BLOCKED`", markdown)
+
+    def test_build_launch_brief_markdown_for_implementation_planner_includes_artifact_contract(self):
+        item = {
+            "type": "issue",
+            "number": 43,
+            "title": "Draft implementation plan",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "implementation-planner",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        implementation_plan_path = "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/implementation-plan.md"
+
+        with patch.object(handler, "REPO", "owner/repo"):
+            markdown = handler.build_launch_brief_markdown(
+                item,
+                "state:ready-for-implementation-planning",
+                config,
+                os.path.normpath(os.path.join("TheFarm", "roles", "implementation-planner.md")),
+                "2026-05-25T10:00:00",
+                "C:/target/repo",
+                implementation_plan_path=implementation_plan_path,
+            )
+
+        self.assertIn("## Implementation Plan Artifact Contract", markdown)
+        self.assertIn(f"- implementation plan artifact absolute path: `{implementation_plan_path}`", markdown)
+        self.assertIn("- You must write `implementation-plan.md` to this exact absolute path before exiting.", markdown)
 
     def test_build_launch_brief_markdown_includes_working_branch_when_present(self):
         item = {

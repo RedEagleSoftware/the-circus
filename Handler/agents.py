@@ -65,11 +65,12 @@ def build_codex_roadmap_updater_task_text(absolute_launch_brief_path):
     )
 
 
-def build_codex_implementation_planner_task_text(absolute_launch_brief_path):
+def build_codex_implementation_planner_task_text(absolute_launch_brief_path, implementation_plan_path):
     return (
         f"Read the launch brief at {absolute_launch_brief_path} and execute the implementation planner workflow. "
         "Review the architecture handoff and systems architecture recommendation artifacts referenced by the brief. "
         "Publish a structured implementation plan as a GitHub issue comment with scope, phases, risks, and review checklist. "
+        f"Write implementation-plan.md to this exact absolute path: {implementation_plan_path}. "
         "Do not modify runtime code. "
         "Do not modify workflow labels directly."
     )
