@@ -4,6 +4,8 @@ Issue #30 accepted Git worktrees as the primary isolation mechanism for normal m
 
 This document records the approved Systems Architect recommendation for roadmap and implementation planning. It is not an implementation specification for every future workflow mode.
 
+Issue #51 later accepted a dedicated worktree and branch lifecycle model for classifying, recovering, retiring, and cleaning up these deterministic workspaces. See [Worktree and Branch Lifecycle Management](worktree-lifecycle.md).
+
 ## Decision
 
 The Circus should stop treating `CIRCUS_TARGET_REPO_PATH` as the shared execution workspace for developer-style runs.
@@ -47,6 +49,8 @@ Worktree lifecycle should be explicit and inspectable:
 - Block: dirty or unregistered directories should require human inspection.
 - Record: Watchtower status and launch briefs should record workspace path, workspace branch, item identity, run directory, and lifecycle outcome.
 
+The accepted lifecycle vocabulary for follow-on work is `planned`, `ready`, `active`, `suspended`, `recoverable`, `stale-clean`, `retired`, `cleanup-eligible`, and `blocked-unsafe`. Cleanup decisions should be inventory-first and should remain non-destructive until a human approves a dry-run cleanup path for clean registered worktrees.
+
 ## Initial Workflow Scope
 
 The first implementation should cover Developer and Roadmap Updater launches.
@@ -80,6 +84,6 @@ The first implementation is expected to touch these areas:
 
 ## Deferred Work
 
-Cleanup automation is intentionally deferred until stale-lock and run recovery are designed.
+Cleanup automation is intentionally deferred until lifecycle inventory, stale-lock, and run recovery are designed.
 
-Later work should add stale worktree detection/reporting by comparing Watchtower metadata with `git worktree list --porcelain`, GitHub workflow lock state, and run outcomes.
+Later work should add stale worktree detection/reporting by comparing Watchtower metadata with `git worktree list --porcelain`, branch/upstream state, GitHub workflow lock state, open PR relationships, and run outcomes.

@@ -13,6 +13,11 @@ This changelog tracks notable completed work by GitHub issue.
 - [concise user-visible or workflow-significant change]
 - [optional second concise change]
 
+### Issue #51 - Design Worktree and Branch Lifecycle Management
+
+- Documented the accepted worktree and branch lifecycle state model, recovery workflow, and cleanup safety boundary.
+- Updated roadmap, capability tree, operations status, and worktree isolation references to align follow-on implementation planning with the approved lifecycle design.
+
 ### Issue #39 - Document Implementation Planner Role and Workflow States
 
 - Documented Implementation Planner workflow states in doctrine guidance, including ownership and review transition expectations.
