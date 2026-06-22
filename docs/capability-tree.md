@@ -7,6 +7,7 @@ Approved issue #30 direction: use Git worktrees as the primary isolation mechani
 Approved issue #34 direction: add explicit dependency blocking as a Handler-owned scheduling capability before broad parallel execution.
 Approved issue #37 direction: add Implementation Planning as a distinct review-gated bridge from accepted strategy to generated implementation issues.
 Approved issue #51 direction: formalize worktree and branch lifecycle management around conservative inventory, recovery, and cleanup safety rules.
+Approved issue #54 direction: implement the first lifecycle slice as a read-only workspace inventory and lifecycle classification service.
 The next capability frontier is **self-hosting reliability and strategic memory**.
 
 ## Current Frontier
@@ -105,7 +106,8 @@ The accepted architecture is:
 - Watchtower records run history, workspace metadata, lifecycle classifications, diagnostics, and recommendation traceability, but does not become the authority for lifecycle state.
 - Workspaces should be classified as `planned`, `ready`, `active`, `suspended`, `recoverable`, `stale-clean`, `retired`, `cleanup-eligible`, or `blocked-unsafe`.
 - Recovery is inventory-first, combining Git worktree data, branch/upstream state, open PRs, workflow labels, and recent Watchtower run status before any repair or cleanup action.
-- V1 may automate detection, diagnostics, reporting, and narrow non-destructive repair. It must not automate destructive cleanup.
+- The issue #54 implementation slice separates inventory collection from classification policy and returns structured results with facts, reasons, and confidence or ambiguity signals.
+- The issue #54 service is read-only and classification-only. It may produce diagnostics, but must not automate cleanup, deletion, reset, rebase, force-push, branch removal, worktree removal, recreation, or repair.
 - Human approval is required before any action that deletes, resets, force-pushes, rebases, removes a branch, or removes a worktree.
 
 Detailed architecture: [Worktree and Branch Lifecycle Management](worktree-lifecycle.md).
