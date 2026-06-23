@@ -15,6 +15,8 @@ WORKSPACE_LIFECYCLE_STATES = {
     "blocked-unsafe",
 }
 
+DEFAULT_BRANCH_SLUG_LENGTH = 60
+
 
 def parse_git_worktree_porcelain(output):
     entries = []
@@ -86,6 +88,17 @@ def _extract_label_names(labels):
     return names
 
 
+def _derive_expected_branch(item, build_expected_branch_name):
+    try:
+        return build_expected_branch_name(item)
+    except TypeError:
+        return build_expected_branch_name(
+            item,
+            max_branch_slug_length=DEFAULT_BRANCH_SLUG_LENGTH,
+            slugify=git_workspace.slugify_branch_title,
+        )
+
+
 def collect_workspace_inventory(
     repo_path,
     workspace_path,
@@ -106,11 +119,7 @@ def collect_workspace_inventory(
     if expected_branch is None and isinstance(item, dict):
         item_type = str(item.get("type") or "").lower()
         if item_type == "issue" and item.get("number") is not None:
-            expected_branch = build_expected_branch_name(
-                item,
-                max_branch_slug_length=40,
-                slugify=git_workspace.slugify_branch_title,
-            )
+            expected_branch = _derive_expected_branch(item, build_expected_branch_name)
 
     worktree_result = _run_git(repo_path, ["worktree", "list", "--porcelain"], run_git_command, log)
     if worktree_result is None or worktree_result.returncode != 0:

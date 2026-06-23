@@ -141,6 +141,45 @@ class ClassifyWorkspaceTests(unittest.TestCase):
 
 
 class CollectWorkspaceInventoryTests(unittest.TestCase):
+    def test_collect_inventory_uses_handler_branch_slug_length_convention(self):
+        expected_branch = "circus/issue-53-add-workspace-inventory-and-lifecycle-classification-service"
+
+        def fake_run(_, args):
+            if args == ["worktree", "list", "--porcelain"]:
+                return _result(
+                    stdout=(
+                        "worktree C:/repo-worktrees/issue-53\n"
+                        "HEAD bbbbbbb\n"
+                        f"branch refs/heads/{expected_branch}\n"
+                        "\n"
+                    )
+                )
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return _result(stdout=f"{expected_branch}\n")
+            if args == ["status", "--porcelain"]:
+                return _result(stdout="")
+            if args == ["branch", "--list", expected_branch]:
+                return _result(stdout=f"  {expected_branch}\n")
+            if args == ["ls-remote", "--heads", "origin", expected_branch]:
+                return _result(stdout=f"abc\trefs/heads/{expected_branch}\n")
+            if args == ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]:
+                return _result(stdout=f"origin/{expected_branch}\n")
+            raise AssertionError(f"Unexpected git command: {args}")
+
+        facts = workspace_inventory.collect_workspace_inventory(
+            repo_path="C:/repo",
+            workspace_path="C:/repo-worktrees/issue-53",
+            item={
+                "type": "issue",
+                "number": 53,
+                "title": "Add Workspace Inventory and Lifecycle Classification Service",
+            },
+            run_git_command=fake_run,
+        )
+
+        self.assertEqual(facts["expected_branch"], expected_branch)
+        self.assertEqual(facts["current_branch"], expected_branch)
+
     def test_collect_inventory_gathers_git_facts_with_no_destructive_commands(self):
         calls = []
 
