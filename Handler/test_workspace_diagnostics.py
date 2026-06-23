@@ -25,13 +25,27 @@ class WorkspaceDiagnosticsTests(unittest.TestCase):
         diagnostic = workspace_diagnostics.build_workspace_lifecycle_diagnostic(self._classification())
 
         self.assertEqual(diagnostic["state"], "recoverable")
+        self.assertEqual(diagnostic["lifecycle_classification"], "recoverable")
         self.assertEqual(diagnostic["workspace"], "C:/repo-worktrees/owner-repo/issue-62")
+        self.assertEqual(diagnostic["workspace_path"], "C:/repo-worktrees/owner-repo/issue-62")
         self.assertEqual(diagnostic["branch"], "circus/issue-62-workspace-diagnostics")
+        self.assertEqual(diagnostic["branch_name"], "circus/issue-62-workspace-diagnostics")
+        self.assertEqual(diagnostic["expected_branch"], "circus/issue-62-workspace-diagnostics")
+        self.assertEqual(diagnostic["current_branch"], "circus/issue-62-workspace-diagnostics")
         self.assertEqual(diagnostic["issue"], "issue #62")
+        self.assertEqual(diagnostic["issue_association"], {"type": "issue", "number": 62, "state": "open"})
         self.assertEqual(diagnostic["pr"], "PR #71 (open) https://github.com/owner/repo/pull/71")
+        self.assertEqual(
+            diagnostic["pr_association"],
+            {"number": 71, "url": "https://github.com/owner/repo/pull/71", "state": "open"},
+        )
         self.assertEqual(diagnostic["reasons"], ["dirty_worktree", "open_pr_exists"])
+        self.assertEqual(diagnostic["classification_reasons"], ["dirty_worktree", "open_pr_exists"])
+        self.assertFalse(diagnostic["ambiguous"])
         self.assertEqual(diagnostic["ambiguity_indicators"], [])
         self.assertEqual(diagnostic["recommended_action"], "Recover workspace before reassignment or cleanup.")
+        self.assertEqual(diagnostic["recommended_operator_action"], "Recover workspace before reassignment or cleanup.")
+        self.assertEqual(diagnostic["source"], "workspace_inventory.classify_workspace")
 
     def test_build_workspace_lifecycle_diagnostic_surfaces_ambiguous_blockers(self):
         diagnostic = workspace_diagnostics.build_workspace_lifecycle_diagnostic(
@@ -44,6 +58,8 @@ class WorkspaceDiagnosticsTests(unittest.TestCase):
         )
 
         self.assertEqual(diagnostic["state"], "blocked-unsafe")
+        self.assertEqual(diagnostic["lifecycle_classification"], "blocked-unsafe")
+        self.assertTrue(diagnostic["ambiguous"])
         self.assertEqual(diagnostic["branch"], "circus/issue-62")
         self.assertEqual(
             diagnostic["ambiguity_indicators"],
@@ -52,6 +68,20 @@ class WorkspaceDiagnosticsTests(unittest.TestCase):
         self.assertEqual(
             diagnostic["recommended_action"],
             "Inspect workspace manually before automation continues; do not clean up automatically.",
+        )
+
+    def test_retired_recommendation_preserves_workspace_until_cleanup_review(self):
+        diagnostic = workspace_diagnostics.build_workspace_lifecycle_diagnostic(
+            self._classification(lifecycle_state="retired", reasons=[])
+        )
+
+        self.assertEqual(
+            diagnostic["recommended_action"],
+            "Preserve until an explicit cleanup dry run and human review.",
+        )
+        self.assertEqual(
+            diagnostic["recommended_operator_action"],
+            "Preserve until an explicit cleanup dry run and human review.",
         )
 
     def test_render_workspace_lifecycle_report_outputs_human_readable_section(self):

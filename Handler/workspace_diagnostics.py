@@ -16,7 +16,7 @@ RECOMMENDED_ACTIONS = {
     "planned": "Create or assign the workspace before launch.",
     "ready": "Workspace is ready for assignment.",
     "recoverable": "Recover workspace before reassignment or cleanup.",
-    "retired": "Archive or remove the workspace after confirming no follow-up is needed.",
+    "retired": "Preserve until an explicit cleanup dry run and human review.",
     "stale-clean": "Review whether the clean workspace can be reassigned or retired.",
     "suspended": "Review the interrupted Watchtower run before relaunching.",
 }
@@ -67,6 +67,19 @@ def _format_pr_identity(facts):
     return "present"
 
 
+def _association_from_facts(facts, *keys):
+    for key in keys:
+        value = facts.get(key)
+        if isinstance(value, dict):
+            association = {field: field_value for field, field_value in value.items() if field_value not in (None, "")}
+            if association:
+                return association
+        elif value not in (None, ""):
+            return value
+
+    return None
+
+
 def _format_reasons(reasons):
     return [str(reason) for reason in (reasons or [])]
 
@@ -98,16 +111,29 @@ def build_workspace_lifecycle_diagnostic(classification_result):
     facts = classification_result.get("facts") or {}
     state = classification_result.get("lifecycle_state") or "blocked-unsafe"
     branch = facts.get("current_branch") or facts.get("expected_branch")
+    reasons = _format_reasons(classification_result.get("reasons"))
+    recommended_action = _recommended_action(classification_result)
 
     return {
+        "workspace_path": facts.get("workspace_path"),
+        "issue_association": _association_from_facts(facts, "item_identity", "item", "github_item"),
+        "pr_association": _association_from_facts(facts, "open_pr"),
+        "branch_name": branch,
+        "expected_branch": facts.get("expected_branch"),
+        "current_branch": facts.get("current_branch"),
+        "lifecycle_classification": state,
+        "classification_reasons": reasons,
+        "ambiguous": bool(classification_result.get("ambiguous")),
+        "ambiguity_indicators": _ambiguity_indicators(classification_result),
+        "recommended_operator_action": recommended_action,
+        "source": "workspace_inventory.classify_workspace",
         "workspace": _unknown_if_missing(facts.get("workspace_path")),
         "state": state,
         "branch": _unknown_if_missing(branch),
         "issue": _format_item_identity(facts),
         "pr": _format_pr_identity(facts),
-        "reasons": _format_reasons(classification_result.get("reasons")),
-        "ambiguity_indicators": _ambiguity_indicators(classification_result),
-        "recommended_action": _recommended_action(classification_result),
+        "reasons": reasons,
+        "recommended_action": recommended_action,
     }
 
 
