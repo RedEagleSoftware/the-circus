@@ -42,6 +42,7 @@ class ClassifyWorkspaceTests(unittest.TestCase):
             "workspace_path_exists": True,
             "expected_branch": "circus/issue-53-inventory",
             "current_branch": "circus/issue-53-inventory",
+            "detached_head": False,
             "registered_workspace_entry": {"worktree": "C:/repo-worktrees/issue-53"},
             "missing_upstream_tracking": False,
             "ambiguous_upstream": False,
@@ -114,6 +115,17 @@ class ClassifyWorkspaceTests(unittest.TestCase):
             dry_run=True,
         )
         self.assertEqual(result["lifecycle_state"], "cleanup-eligible")
+
+    def test_classifies_detached_head_workspace_as_blocked_unsafe(self):
+        result = workspace_inventory.classify_workspace(
+            self._facts(current_branch=None, detached_head=True, workspace_clean=True),
+            allow_cleanup=True,
+            dry_run=True,
+        )
+
+        self.assertEqual(result["lifecycle_state"], "blocked-unsafe")
+        self.assertIn("detached_head", result["reasons"])
+        self.assertTrue(result["ambiguous"])
 
     def test_classifies_blocked_unsafe_for_ambiguous_or_conflicting_facts(self):
         result = workspace_inventory.classify_workspace(
@@ -277,6 +289,45 @@ class CollectWorkspaceInventoryTests(unittest.TestCase):
 
         self.assertTrue(facts["missing_upstream_tracking"])
         self.assertFalse(facts["ambiguous_upstream"])
+
+    def test_collect_inventory_detached_head_is_blocked_unsafe_and_not_cleanup_eligible(self):
+        expected_branch = "circus/issue-53-inventory"
+
+        def fake_run(_, args):
+            if args == ["worktree", "list", "--porcelain"]:
+                return _result(
+                    stdout=(
+                        "worktree C:/repo-worktrees/issue-53\n"
+                        "HEAD bbbbbbb\n"
+                        "detached\n"
+                        "\n"
+                    )
+                )
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return _result(stdout="HEAD\n")
+            if args == ["status", "--porcelain"]:
+                return _result(stdout="")
+            if args == ["branch", "--list", expected_branch]:
+                return _result(stdout=f"  {expected_branch}\n")
+            if args == ["ls-remote", "--heads", "origin", expected_branch]:
+                return _result(stdout=f"abc\trefs/heads/{expected_branch}\n")
+            if args == ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]:
+                return _result(stdout=f"origin/{expected_branch}\n")
+            raise AssertionError(f"Unexpected git command: {args}")
+
+        facts = workspace_inventory.collect_workspace_inventory(
+            repo_path="C:/repo",
+            workspace_path="C:/repo-worktrees/issue-53",
+            expected_branch=expected_branch,
+            run_git_command=fake_run,
+        )
+
+        self.assertTrue(facts["detached_head"])
+        self.assertIsNone(facts["current_branch"])
+
+        result = workspace_inventory.classify_workspace(facts, allow_cleanup=True, dry_run=True)
+        self.assertEqual(result["lifecycle_state"], "blocked-unsafe")
+        self.assertIn("detached_head", result["reasons"])
 
     def test_collect_inventory_skips_workspace_git_probes_for_absent_unregistered_workspace(self):
         calls = []

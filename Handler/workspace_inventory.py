@@ -267,6 +267,7 @@ def classify_workspace(facts, *, allow_cleanup=False, dry_run=False):
     workspace_clean = facts.get("workspace_clean")
     expected_branch = facts.get("expected_branch")
     current_branch = facts.get("current_branch")
+    detached_head = facts.get("detached_head")
     registered_workspace_entry = facts.get("registered_workspace_entry")
     workspace_path_exists = facts.get("workspace_path_exists")
     missing_upstream_tracking = facts.get("missing_upstream_tracking")
@@ -277,6 +278,10 @@ def classify_workspace(facts, *, allow_cleanup=False, dry_run=False):
 
     if expected_branch and current_branch and expected_branch != current_branch:
         reasons.append("unexpected_branch")
+        ambiguous = True
+
+    if detached_head:
+        reasons.append("detached_head")
         ambiguous = True
 
     if ambiguous_upstream:
@@ -308,6 +313,7 @@ def classify_workspace(facts, *, allow_cleanup=False, dry_run=False):
     if (
         "metadata_unavailable" in reasons
         or "unexpected_branch" in reasons
+        or "detached_head" in reasons
         or "ambiguous_upstream" in reasons
         or "unregistered_workspace" in reasons
         or (registered_workspace_entry is None and workspace_clean is False)
