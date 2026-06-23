@@ -99,6 +99,29 @@ def _derive_expected_branch(item, build_expected_branch_name):
         )
 
 
+def _has_open_pr_relationship(open_pr):
+    if not open_pr:
+        return False
+
+    if not isinstance(open_pr, dict):
+        return True
+
+    state = str(open_pr.get("state") or "").lower()
+    if state in {"merged", "closed"}:
+        return False
+    if state in {"open", "draft"}:
+        return True
+
+    if open_pr.get("url"):
+        return True
+
+    for key in ("number", "id", "node_id"):
+        if open_pr.get(key) is not None:
+            return True
+
+    return True
+
+
 def collect_workspace_inventory(
     repo_path,
     workspace_path,
@@ -261,7 +284,7 @@ def classify_workspace(facts, *, allow_cleanup=False, dry_run=False):
     metadata_available = facts.get("metadata_available")
     labels = {str(label).lower() for label in (facts.get("workflow_labels") or [])}
     open_pr = facts.get("open_pr")
-    open_pr_exists = bool(open_pr and open_pr.get("url"))
+    open_pr_exists = _has_open_pr_relationship(open_pr)
     watchtower_run = facts.get("watchtower_run") or {}
     watchtower_state = str(watchtower_run.get("status") or "").lower()
     workspace_clean = facts.get("workspace_clean")
@@ -323,10 +346,10 @@ def classify_workspace(facts, *, allow_cleanup=False, dry_run=False):
         lifecycle_state = "active"
     elif "watchtower_run_incomplete" in reasons:
         lifecycle_state = "suspended"
-    elif (github_item_state == "closed" or open_pr_state == "merged") and workspace_clean is True:
-        lifecycle_state = "retired"
     elif "dirty_worktree" in reasons or "missing_upstream_tracking" in reasons or "open_pr_exists" in reasons:
         lifecycle_state = "recoverable"
+    elif (github_item_state == "closed" or open_pr_state == "merged") and workspace_clean is True:
+        lifecycle_state = "retired"
     elif registered_workspace_entry is None and workspace_path_exists is False:
         lifecycle_state = "planned"
     elif workspace_clean is True and expected_branch and current_branch == expected_branch:

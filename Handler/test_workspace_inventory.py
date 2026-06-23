@@ -116,6 +116,34 @@ class ClassifyWorkspaceTests(unittest.TestCase):
         )
         self.assertEqual(result["lifecycle_state"], "cleanup-eligible")
 
+    def test_open_pr_prevents_retired_or_cleanup_eligible_even_for_closed_item(self):
+        result = workspace_inventory.classify_workspace(
+            self._facts(
+                github_item={"state": "closed"},
+                open_pr={"url": "https://example/pr/1", "state": "open", "number": 1},
+                workspace_clean=True,
+            ),
+            allow_cleanup=True,
+            dry_run=True,
+        )
+
+        self.assertEqual(result["lifecycle_state"], "recoverable")
+        self.assertIn("open_pr_exists", result["reasons"])
+
+    def test_open_pr_without_url_still_blocks_cleanup_states(self):
+        result = workspace_inventory.classify_workspace(
+            self._facts(
+                github_item={"state": "closed"},
+                open_pr={"state": "open", "number": 7},
+                workspace_clean=True,
+            ),
+            allow_cleanup=True,
+            dry_run=True,
+        )
+
+        self.assertEqual(result["lifecycle_state"], "recoverable")
+        self.assertIn("open_pr_exists", result["reasons"])
+
     def test_classifies_detached_head_workspace_as_blocked_unsafe(self):
         result = workspace_inventory.classify_workspace(
             self._facts(current_branch=None, detached_head=True, workspace_clean=True),
