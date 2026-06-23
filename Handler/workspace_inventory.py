@@ -122,6 +122,19 @@ def _has_open_pr_relationship(open_pr):
     return True
 
 
+def _is_merged_pr_relationship(open_pr):
+    if not isinstance(open_pr, dict):
+        return False
+
+    state = str(open_pr.get("state") or "").lower()
+    if state in {"open", "draft"}:
+        return False
+    if state == "merged":
+        return True
+
+    return open_pr.get("merged") is True
+
+
 def collect_workspace_inventory(
     repo_path,
     workspace_path,
@@ -285,6 +298,7 @@ def classify_workspace(facts, *, allow_cleanup=False, dry_run=False):
     labels = {str(label).lower() for label in (facts.get("workflow_labels") or [])}
     open_pr = facts.get("open_pr")
     open_pr_exists = _has_open_pr_relationship(open_pr)
+    merged_pr_relationship = _is_merged_pr_relationship(open_pr)
     watchtower_run = facts.get("watchtower_run") or {}
     watchtower_state = str(watchtower_run.get("status") or "").lower()
     workspace_clean = facts.get("workspace_clean")
@@ -331,7 +345,6 @@ def classify_workspace(facts, *, allow_cleanup=False, dry_run=False):
 
     github_item = facts.get("github_item") or {}
     github_item_state = str(github_item.get("state") or "").lower()
-    open_pr_state = str((open_pr or {}).get("state") or "").lower()
 
     if (
         "metadata_unavailable" in reasons
@@ -348,7 +361,7 @@ def classify_workspace(facts, *, allow_cleanup=False, dry_run=False):
         lifecycle_state = "suspended"
     elif "dirty_worktree" in reasons or "missing_upstream_tracking" in reasons or "open_pr_exists" in reasons:
         lifecycle_state = "recoverable"
-    elif (github_item_state == "closed" or open_pr_state == "merged") and workspace_clean is True:
+    elif (github_item_state == "closed" or merged_pr_relationship) and workspace_clean is True:
         lifecycle_state = "retired"
     elif registered_workspace_entry is None and workspace_path_exists is False:
         lifecycle_state = "planned"
