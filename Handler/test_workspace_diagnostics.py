@@ -70,8 +70,8 @@ class WorkspaceDiagnosticsTests(unittest.TestCase):
     def test_collect_workspace_lifecycle_diagnostic_uses_inventory_and_classifier(self):
         calls = []
 
-        def collect_workspace_inventory(repo_path, workspace_path, *, item):
-            calls.append((repo_path, workspace_path, item))
+        def collect_workspace_inventory(repo_path, workspace_path, *, item, github_item):
+            calls.append((repo_path, workspace_path, item, github_item))
             return {"workspace_path": workspace_path, "item_identity": item, "workspace_clean": True}
 
         def classify_workspace(facts, *, allow_cleanup, dry_run):
@@ -90,9 +90,61 @@ class WorkspaceDiagnosticsTests(unittest.TestCase):
             classify_workspace_fn=classify_workspace,
         )
 
-        self.assertEqual(calls, [("C:/repo", "C:/worktree", {"type": "issue", "number": 62})])
+        self.assertEqual(
+            calls,
+            [("C:/repo", "C:/worktree", {"type": "issue", "number": 62}, {"type": "issue", "number": 62})],
+        )
         self.assertEqual(diagnostic["state"], "cleanup-eligible")
         self.assertEqual(diagnostic["issue"], "issue #62")
+
+    def test_collect_workspace_lifecycle_diagnostic_forwards_review_context_to_classifier(self):
+        item = {
+            "type": "issue",
+            "number": 62,
+            "state": "open",
+            "labels": ["state:changes-requested"],
+            "review_pr": {"number": 63, "url": "https://github.com/owner/repo/pull/63", "state": "open"},
+        }
+
+        def collect_workspace_inventory(
+            repo_path,
+            workspace_path,
+            *,
+            item,
+            workflow_labels,
+            github_item,
+            open_pr,
+        ):
+            return {
+                "repo_path": repo_path,
+                "workspace_path": workspace_path,
+                "item": item,
+                "item_identity": {"type": item["type"], "number": item["number"]},
+                "expected_branch": "circus/issue-62-workspace-diagnostics",
+                "registered_workspace_entry": {"worktree": workspace_path},
+                "workspace_path_exists": True,
+                "current_branch": "circus/issue-62-workspace-diagnostics",
+                "detached_head": False,
+                "workspace_clean": True,
+                "missing_upstream_tracking": False,
+                "ambiguous_upstream": False,
+                "open_pr": open_pr,
+                "workflow_labels": workflow_labels,
+                "github_item": github_item,
+                "metadata_available": True,
+            }
+
+        diagnostic = workspace_diagnostics.collect_workspace_lifecycle_diagnostic(
+            repo_path="C:/repo",
+            workspace_path="C:/worktree",
+            item=item,
+            collect_workspace_inventory_fn=collect_workspace_inventory,
+            classify_workspace_fn=workspace_diagnostics.workspace_inventory.classify_workspace,
+        )
+
+        self.assertEqual(diagnostic["pr"], "PR #63 (open) https://github.com/owner/repo/pull/63")
+        self.assertIn("open_pr_exists", diagnostic["reasons"])
+        self.assertEqual(diagnostic["state"], "recoverable")
 
 
 if __name__ == "__main__":

@@ -111,6 +111,21 @@ def build_workspace_lifecycle_diagnostic(classification_result):
     }
 
 
+def _inventory_context_from_item(item):
+    if not isinstance(item, dict):
+        return {}
+
+    context = {"github_item": item}
+    if item.get("labels") is not None:
+        context["workflow_labels"] = item.get("labels")
+    if item.get("review_pr") is not None:
+        context["open_pr"] = item.get("review_pr")
+    elif item.get("open_pr") is not None:
+        context["open_pr"] = item.get("open_pr")
+
+    return context
+
+
 def collect_workspace_lifecycle_diagnostic(
     *,
     repo_path,
@@ -121,7 +136,12 @@ def collect_workspace_lifecycle_diagnostic(
     collect_workspace_inventory_fn=workspace_inventory.collect_workspace_inventory,
     classify_workspace_fn=workspace_inventory.classify_workspace,
 ):
-    facts = collect_workspace_inventory_fn(repo_path, workspace_path, item=item)
+    facts = collect_workspace_inventory_fn(
+        repo_path,
+        workspace_path,
+        item=item,
+        **_inventory_context_from_item(item),
+    )
     classification_result = classify_workspace_fn(facts, allow_cleanup=allow_cleanup, dry_run=dry_run)
     return build_workspace_lifecycle_diagnostic(classification_result)
 
