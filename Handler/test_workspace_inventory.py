@@ -39,6 +39,7 @@ class ClassifyWorkspaceTests(unittest.TestCase):
             "open_pr": None,
             "watchtower_run": None,
             "workspace_clean": True,
+            "workspace_path_exists": True,
             "expected_branch": "circus/issue-53-inventory",
             "current_branch": "circus/issue-53-inventory",
             "registered_workspace_entry": {"worktree": "C:/repo-worktrees/issue-53"},
@@ -52,9 +53,16 @@ class ClassifyWorkspaceTests(unittest.TestCase):
 
     def test_classifies_planned(self):
         result = workspace_inventory.classify_workspace(
-            self._facts(registered_workspace_entry=None, workspace_clean=True)
+            self._facts(registered_workspace_entry=None, workspace_clean=None, workspace_path_exists=False)
         )
         self.assertEqual(result["lifecycle_state"], "planned")
+
+    def test_classifies_unregistered_existing_workspace_as_blocked_unsafe(self):
+        result = workspace_inventory.classify_workspace(
+            self._facts(registered_workspace_entry=None, workspace_clean=True, workspace_path_exists=True)
+        )
+        self.assertEqual(result["lifecycle_state"], "blocked-unsafe")
+        self.assertIn("unregistered_workspace", result["reasons"])
 
     def test_classifies_ready(self):
         result = workspace_inventory.classify_workspace(self._facts())
@@ -230,6 +238,66 @@ class CollectWorkspaceInventoryTests(unittest.TestCase):
 
         self.assertTrue(facts["missing_upstream_tracking"])
         self.assertFalse(facts["ambiguous_upstream"])
+
+    def test_collect_inventory_skips_workspace_git_probes_for_absent_unregistered_workspace(self):
+        calls = []
+
+        def fake_run(_, args):
+            calls.append(args)
+            if args == ["worktree", "list", "--porcelain"]:
+                return _result(stdout="worktree C:/repo\n\n")
+            if args == ["branch", "--list", "circus/issue-53-inventory"]:
+                return _result(stdout="")
+            if args == ["ls-remote", "--heads", "origin", "circus/issue-53-inventory"]:
+                return _result(stdout="")
+            raise AssertionError(f"Unexpected git command: {args}")
+
+        facts = workspace_inventory.collect_workspace_inventory(
+            repo_path="C:/repo",
+            workspace_path="C:/repo-worktrees/issue-53",
+            expected_branch="circus/issue-53-inventory",
+            run_git_command=fake_run,
+            path_exists=lambda _: False,
+        )
+
+        self.assertIsNone(facts["current_branch"])
+        self.assertIsNone(facts["workspace_clean"])
+        self.assertIsNone(facts["upstream_branch"])
+        self.assertFalse(facts["workspace_path_exists"])
+
+        workspace_git_commands = {
+            ("rev-parse", "--abbrev-ref", "HEAD"),
+            ("status", "--porcelain"),
+            ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"),
+        }
+        call_tuples = {tuple(call) for call in calls}
+        for command in workspace_git_commands:
+            self.assertNotIn(command, call_tuples)
+
+        result = workspace_inventory.classify_workspace(facts)
+        self.assertEqual(result["lifecycle_state"], "planned")
+
+    def test_collect_inventory_classifies_unregistered_existing_workspace_as_blocked_unsafe(self):
+        def fake_run(_, args):
+            if args == ["worktree", "list", "--porcelain"]:
+                return _result(stdout="worktree C:/repo\n\n")
+            if args == ["branch", "--list", "circus/issue-53-inventory"]:
+                return _result(stdout="")
+            if args == ["ls-remote", "--heads", "origin", "circus/issue-53-inventory"]:
+                return _result(stdout="")
+            raise AssertionError(f"Unexpected git command: {args}")
+
+        facts = workspace_inventory.collect_workspace_inventory(
+            repo_path="C:/repo",
+            workspace_path="C:/repo-worktrees/issue-53",
+            expected_branch="circus/issue-53-inventory",
+            run_git_command=fake_run,
+            path_exists=lambda _: True,
+        )
+
+        result = workspace_inventory.classify_workspace(facts)
+        self.assertEqual(result["lifecycle_state"], "blocked-unsafe")
+        self.assertIn("unregistered_workspace", result["reasons"])
 
 
 if __name__ == "__main__":

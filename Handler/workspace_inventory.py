@@ -98,6 +98,7 @@ def collect_workspace_inventory(
     watchtower_run=None,
     run_git_command=git_workspace.run_git_command_in_repo,
     build_expected_branch_name=git_workspace.build_developer_branch_name,
+    path_exists=os.path.exists,
     log=print,
 ):
     metadata_available = True
@@ -125,22 +126,46 @@ def collect_workspace_inventory(
             registered_entry = entry
             break
 
-    branch_result = _run_git(workspace_path, ["rev-parse", "--abbrev-ref", "HEAD"], run_git_command, log)
-    if branch_result is None or branch_result.returncode != 0:
+    workspace_path_exists = None
+    if workspace_path:
+        try:
+            workspace_path_exists = bool(path_exists(workspace_path))
+        except OSError:
+            metadata_available = False
+
+    should_probe_workspace_git = registered_entry is not None
+
+    branch_result = None
+    if should_probe_workspace_git:
+        branch_result = _run_git(workspace_path, ["rev-parse", "--abbrev-ref", "HEAD"], run_git_command, log)
+    if branch_result is None and should_probe_workspace_git:
+        current_branch = None
+        detached_head = None
+        metadata_available = False
+    elif should_probe_workspace_git and branch_result.returncode != 0:
         current_branch = None
         detached_head = None
         metadata_available = False
     else:
-        branch_name = (branch_result.stdout or "").strip() or None
-        current_branch = None if branch_name == "HEAD" else branch_name
-        detached_head = branch_name == "HEAD"
+        if should_probe_workspace_git:
+            branch_name = (branch_result.stdout or "").strip() or None
+            current_branch = None if branch_name == "HEAD" else branch_name
+            detached_head = branch_name == "HEAD"
+        else:
+            current_branch = None
+            detached_head = None
 
-    status_result = _run_git(workspace_path, ["status", "--porcelain"], run_git_command, log)
-    if status_result is None or status_result.returncode != 0:
+    status_result = None
+    if should_probe_workspace_git:
+        status_result = _run_git(workspace_path, ["status", "--porcelain"], run_git_command, log)
+    if status_result is None and should_probe_workspace_git:
+        workspace_clean = None
+        metadata_available = False
+    elif should_probe_workspace_git and status_result.returncode != 0:
         workspace_clean = None
         metadata_available = False
     else:
-        workspace_clean = (status_result.stdout or "").strip() == ""
+        workspace_clean = (status_result.stdout or "").strip() == "" if should_probe_workspace_git else None
 
     local_branch_exists = None
     if expected_branch:
@@ -166,23 +191,24 @@ def collect_workspace_inventory(
     upstream_branch = None
     missing_upstream_tracking = None
     ambiguous_upstream = False
-    upstream_result = _run_git(
-        workspace_path,
-        ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-        run_git_command,
-        log,
-    )
-    if upstream_result is None:
-        metadata_available = False
-    elif upstream_result.returncode != 0:
-        stderr = (upstream_result.stderr or "").lower()
-        missing_upstream_tracking = "no upstream" in stderr or "upstream" in stderr
-        ambiguous_upstream = "ambiguous" in stderr
-        if not missing_upstream_tracking and not ambiguous_upstream:
+    if should_probe_workspace_git:
+        upstream_result = _run_git(
+            workspace_path,
+            ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+            run_git_command,
+            log,
+        )
+        if upstream_result is None:
             metadata_available = False
-    else:
-        upstream_branch = (upstream_result.stdout or "").strip() or None
-        missing_upstream_tracking = False
+        elif upstream_result.returncode != 0:
+            stderr = (upstream_result.stderr or "").lower()
+            missing_upstream_tracking = "no upstream" in stderr or "upstream" in stderr
+            ambiguous_upstream = "ambiguous" in stderr
+            if not missing_upstream_tracking and not ambiguous_upstream:
+                metadata_available = False
+        else:
+            upstream_branch = (upstream_result.stdout or "").strip() or None
+            missing_upstream_tracking = False
 
     labels = workflow_labels
     if labels is None and isinstance(github_item, dict):
@@ -200,6 +226,7 @@ def collect_workspace_inventory(
         "expected_branch": expected_branch,
         "registered_worktrees": registered_worktrees,
         "registered_workspace_entry": registered_entry,
+        "workspace_path_exists": workspace_path_exists,
         "current_branch": current_branch,
         "detached_head": detached_head,
         "workspace_clean": workspace_clean,
@@ -232,6 +259,7 @@ def classify_workspace(facts, *, allow_cleanup=False, dry_run=False):
     expected_branch = facts.get("expected_branch")
     current_branch = facts.get("current_branch")
     registered_workspace_entry = facts.get("registered_workspace_entry")
+    workspace_path_exists = facts.get("workspace_path_exists")
     missing_upstream_tracking = facts.get("missing_upstream_tracking")
     ambiguous_upstream = bool(facts.get("ambiguous_upstream"))
 
@@ -261,6 +289,9 @@ def classify_workspace(facts, *, allow_cleanup=False, dry_run=False):
     if watchtower_state in {"failed", "interrupted", "incomplete", "launch-failed", "crashed", "cancelled"}:
         reasons.append("watchtower_run_incomplete")
 
+    if registered_workspace_entry is None and workspace_path_exists:
+        reasons.append("unregistered_workspace")
+
     github_item = facts.get("github_item") or {}
     github_item_state = str(github_item.get("state") or "").lower()
     open_pr_state = str((open_pr or {}).get("state") or "").lower()
@@ -269,6 +300,7 @@ def classify_workspace(facts, *, allow_cleanup=False, dry_run=False):
         "metadata_unavailable" in reasons
         or "unexpected_branch" in reasons
         or "ambiguous_upstream" in reasons
+        or "unregistered_workspace" in reasons
         or (registered_workspace_entry is None and workspace_clean is False)
     ):
         lifecycle_state = "blocked-unsafe"
@@ -280,7 +312,7 @@ def classify_workspace(facts, *, allow_cleanup=False, dry_run=False):
         lifecycle_state = "retired"
     elif "dirty_worktree" in reasons or "missing_upstream_tracking" in reasons or "open_pr_exists" in reasons:
         lifecycle_state = "recoverable"
-    elif registered_workspace_entry is None:
+    elif registered_workspace_entry is None and workspace_path_exists is False:
         lifecycle_state = "planned"
     elif workspace_clean is True and expected_branch and current_branch == expected_branch:
         lifecycle_state = "ready"
