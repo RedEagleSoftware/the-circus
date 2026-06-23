@@ -116,6 +116,36 @@ class ClassifyWorkspaceTests(unittest.TestCase):
         )
         self.assertEqual(result["lifecycle_state"], "cleanup-eligible")
 
+    def test_classifies_merged_pr_relationship_as_retired(self):
+        result = workspace_inventory.classify_workspace(
+            self._facts(open_pr={"state": "closed", "merged": True, "number": 58}, workspace_clean=True)
+        )
+
+        self.assertEqual(result["lifecycle_state"], "retired")
+
+    def test_classifies_legacy_merged_pr_state_as_retired(self):
+        result = workspace_inventory.classify_workspace(
+            self._facts(open_pr={"state": "merged", "number": 58}, workspace_clean=True)
+        )
+
+        self.assertEqual(result["lifecycle_state"], "retired")
+
+    def test_closed_unmerged_pr_relationship_does_not_retire_open_item(self):
+        result = workspace_inventory.classify_workspace(
+            self._facts(open_pr={"state": "closed", "merged": False, "number": 58}, workspace_clean=True)
+        )
+
+        self.assertEqual(result["lifecycle_state"], "ready")
+
+    def test_merged_pr_relationship_cleanup_requires_allow_cleanup_and_dry_run(self):
+        facts = self._facts(open_pr={"state": "closed", "merged": True, "number": 58}, workspace_clean=True)
+
+        result = workspace_inventory.classify_workspace(facts, allow_cleanup=True, dry_run=True)
+        without_dry_run = workspace_inventory.classify_workspace(facts, allow_cleanup=True, dry_run=False)
+
+        self.assertEqual(result["lifecycle_state"], "cleanup-eligible")
+        self.assertEqual(without_dry_run["lifecycle_state"], "retired")
+
     def test_open_pr_prevents_retired_or_cleanup_eligible_even_for_closed_item(self):
         result = workspace_inventory.classify_workspace(
             self._facts(
