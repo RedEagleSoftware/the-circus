@@ -4,6 +4,7 @@ import re
 from datetime import datetime
 
 from Handler import target_instructions
+from Handler import workspace_diagnostics
 
 
 SHARED_ARTIFACT_PLACEHOLDERS = {
@@ -35,6 +36,7 @@ RUN_STATUS_FIELDS = [
     "workspace_path",
     "workspace_branch",
     "workspace_lifecycle",
+    "lifecycle_diagnostics",
     "workspace_item_identity",
     "run_dir",
     "launch_brief_path",
@@ -183,6 +185,7 @@ def initialize_run_status(
         "workspace_path": workspace_metadata.get("workspace_path"),
         "workspace_branch": workspace_metadata.get("workspace_branch"),
         "workspace_lifecycle": workspace_metadata.get("workspace_lifecycle"),
+        "lifecycle_diagnostics": None,
         "workspace_item_identity": workspace_metadata.get("workspace_item_identity"),
         "run_dir": normalized_run_dir,
         "launch_brief_path": normalized_brief_path,
@@ -276,6 +279,7 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
     status_payload = read_run_status_fn(run_state)
     artifacts = status_payload.get("artifacts") or {}
     label_transition = status_payload.get("label_transition")
+    lifecycle_diagnostics = status_payload.get("lifecycle_diagnostics")
 
     lines = [
         "# Run Result",
@@ -307,12 +311,20 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
         f"- workspace item identity: `{status_payload.get('workspace_item_identity')}`",
         f"- run dir: `{status_payload.get('run_dir')}`",
         "",
-        "## Outcome",
-        f"- linked PR: `{status_payload.get('linked_pr')}`",
-        f"- working branch: `{status_payload.get('working_branch')}`",
-        "",
-        "## Artifacts",
+        "## Lifecycle Diagnostics",
     ]
+
+    lines.extend(workspace_diagnostics.render_workspace_lifecycle_report(lifecycle_diagnostics).splitlines())
+    lines.extend(
+        [
+            "",
+            "## Outcome",
+            f"- linked PR: `{status_payload.get('linked_pr')}`",
+            f"- working branch: `{status_payload.get('working_branch')}`",
+            "",
+            "## Artifacts",
+        ]
+    )
 
     for key in sorted(artifacts.keys()):
         lines.append(f"- {key}: `{artifacts.get(key)}`")
@@ -580,10 +592,14 @@ def write_launch_brief(
     update_run_status_fn,
     resolve_workspace_metadata_fn,
     normalize_path_for_display_fn,
+    collect_workspace_lifecycle_diagnostic_fn=None,
     timestamp_now_fn=None,
     log=print,
 ):
     timestamp_now = timestamp_now_fn or (lambda: datetime.now().isoformat(timespec="seconds"))
+    collect_workspace_lifecycle_diagnostic_fn = (
+        collect_workspace_lifecycle_diagnostic_fn or workspace_diagnostics.collect_workspace_lifecycle_diagnostic
+    )
     timestamp = timestamp_now()
     item_run_root = get_item_run_root_fn(item)
     shared_context_paths = ensure_shared_artifacts_fn(item_run_root)
@@ -631,7 +647,22 @@ def write_launch_brief(
     if workspace_metadata.get("workspace_path"):
         artifact_updates["workspace"] = workspace_metadata.get("workspace_path")
 
-    update_run_status_fn(item, launch_brief_path=normalize_path_for_display_fn(brief_path), artifacts=artifact_updates)
+    lifecycle_diagnostics = None
+    if workspace_metadata.get("workspace_path"):
+        lifecycle_diagnostics = [
+            collect_workspace_lifecycle_diagnostic_fn(
+                repo_path=target_repo_path,
+                workspace_path=workspace_metadata.get("workspace_path"),
+                item=item,
+            )
+        ]
+
+    update_run_status_fn(
+        item,
+        launch_brief_path=normalize_path_for_display_fn(brief_path),
+        artifacts=artifact_updates,
+        lifecycle_diagnostics=lifecycle_diagnostics,
+    )
 
     log(f"[Dispatch] Shared artifact path (architecture handoff): {shared_context_paths['architecture_handoff']}")
     log(f"[Dispatch] Shared artifact path (running notes): {shared_context_paths['running_notes']}")

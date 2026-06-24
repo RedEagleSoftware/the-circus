@@ -4017,12 +4017,26 @@ class HandlerObservabilityTests(unittest.TestCase):
                     with patch.object(handler, "TARGET_REPO_PATH", "C:\\target\\repo"):
                         with patch.dict(os.environ, {}, clear=False):
                             os.environ.pop("CIRCUS_WORKTREE_ROOT", None)
-                            brief_path = handler.write_launch_brief(
-                                item,
-                                "state:ready-for-dev",
-                                config,
-                                os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
-                            )
+                            with patch.object(
+                                handler.watchtower.workspace_diagnostics,
+                                "collect_workspace_lifecycle_diagnostic",
+                                return_value={
+                                    "workspace": "C:/target/repo-worktrees/owner-repo/issue-3",
+                                    "state": "planned",
+                                    "branch": "circus/issue-3-implement-launch-brief",
+                                    "issue": "issue #3",
+                                    "pr": "none",
+                                    "reasons": [],
+                                    "ambiguity_indicators": [],
+                                    "recommended_action": "Create or assign the workspace before launch.",
+                                },
+                            ) as mock_lifecycle_diagnostic:
+                                brief_path = handler.write_launch_brief(
+                                    item,
+                                    "state:ready-for-dev",
+                                    config,
+                                    os.path.normpath(os.path.join("TheFarm", "roles", "developer.md")),
+                                )
 
             self.assertTrue(os.path.isfile(brief_path))
             with open(brief_path, "r", encoding="utf-8") as generated_file:
@@ -4108,9 +4122,29 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(status_payload["workspace_path"], "C:/target/repo-worktrees/owner-repo/issue-3")
         self.assertIsNone(status_payload["workspace_branch"])
         self.assertEqual(status_payload["workspace_lifecycle"], "planned")
+        self.assertEqual(
+            status_payload["lifecycle_diagnostics"],
+            [
+                {
+                    "workspace": "C:/target/repo-worktrees/owner-repo/issue-3",
+                    "state": "planned",
+                    "branch": "circus/issue-3-implement-launch-brief",
+                    "issue": "issue #3",
+                    "pr": "none",
+                    "reasons": [],
+                    "ambiguity_indicators": [],
+                    "recommended_action": "Create or assign the workspace before launch.",
+                }
+            ],
+        )
         self.assertEqual(status_payload["workspace_item_identity"], "issue-3")
         self.assertEqual(status_payload["artifacts"]["workspace"], "C:/target/repo-worktrees/owner-repo/issue-3")
         self.assertEqual(status_payload["artifacts"]["launch_brief"], brief_path.replace("\\", "/"))
+        mock_lifecycle_diagnostic.assert_called_once_with(
+            repo_path="C:\\target\\repo",
+            workspace_path="C:/target/repo-worktrees/owner-repo/issue-3",
+            item=item,
+        )
 
         self.assertEqual(
             architecture_handoff_content,
@@ -4184,6 +4218,81 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("- workspace lifecycle: `isolated`", result_content)
         self.assertIn("- workspace item identity: `issue-32`", result_content)
         self.assertIn("- worktree root source: `env:CIRCUS_WORKTREE_ROOT`", result_content)
+
+    def test_write_run_result_includes_workspace_lifecycle_diagnostics(self):
+        item = {
+            "type": "issue",
+            "number": 62,
+            "title": "Workspace diagnostics in run result",
+            "working_branch": "circus/issue-62-workspace-diagnostics",
+        }
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        workspace_metadata = {
+            "workspace_path": "C:/target/repo-worktrees/owner-repo/issue-62",
+            "workspace_branch": "circus/issue-62-workspace-diagnostics",
+            "workspace_lifecycle": "recoverable",
+            "workspace_item_identity": "issue-62",
+        }
+        lifecycle_diagnostics = [
+            {
+                "workspace": "C:/target/repo-worktrees/owner-repo/issue-62",
+                "state": "recoverable",
+                "branch": "circus/issue-62-workspace-diagnostics",
+                "issue": "issue #62",
+                "pr": "PR #71 (open) https://github.com/owner/repo/pull/71",
+                "reasons": ["dirty_worktree", "open_pr_exists"],
+                "ambiguity_indicators": [],
+                "recommended_action": "Recover workspace before reassignment or cleanup.",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            launch_brief_path = os.path.join(temp_dir, "owner-repo", "issue-62", "run-001-developer", "launch-brief.md")
+            os.makedirs(os.path.dirname(launch_brief_path), exist_ok=True)
+            with open(launch_brief_path, "w", encoding="utf-8") as launch_brief_file:
+                launch_brief_file.write("# Launch Brief\n")
+
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                    handler.initialize_run_status(
+                        item,
+                        "state:ready-for-dev",
+                        config,
+                        launch_brief_path,
+                        workspace_metadata,
+                    )
+                    handler.update_run_status(
+                        item,
+                        started_at="2026-06-23T08:00:00Z",
+                        completed_at="2026-06-23T08:05:00Z",
+                        exit_code=0,
+                        success=True,
+                        outcome="success",
+                        stop_reason=None,
+                        lifecycle_diagnostics=lifecycle_diagnostics,
+                    )
+                    handler.write_run_result(item)
+
+            result_path = os.path.join(os.path.dirname(launch_brief_path), "result.md")
+            status_path = os.path.join(os.path.dirname(launch_brief_path), "status.json")
+            with open(result_path, "r", encoding="utf-8") as result_file:
+                result_content = result_file.read()
+            with open(status_path, "r", encoding="utf-8") as status_file:
+                status_payload = json.load(status_file)
+
+        self.assertEqual(status_payload["lifecycle_diagnostics"], lifecycle_diagnostics)
+        self.assertIn("## Lifecycle Diagnostics", result_content)
+        self.assertIn("- workspace: `C:/target/repo-worktrees/owner-repo/issue-62`", result_content)
+        self.assertIn("  - state: `recoverable`", result_content)
+        self.assertIn("  - branch: `circus/issue-62-workspace-diagnostics`", result_content)
+        self.assertIn("  - issue: `issue #62`", result_content)
+        self.assertIn("  - PR: `PR #71 (open) https://github.com/owner/repo/pull/71`", result_content)
+        self.assertIn("  - recommended action: Recover workspace before reassignment or cleanup.", result_content)
 
     def test_ensure_shared_artifacts_does_not_overwrite_existing_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
