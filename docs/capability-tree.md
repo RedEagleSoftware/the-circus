@@ -6,6 +6,7 @@ Approved issue #19 direction: keep The Circus focused on the `Self Hosting` fron
 Approved issue #30 direction: use Git worktrees as the primary isolation mechanism for normal mutation-capable agent execution.
 Approved issue #34 direction: add explicit dependency blocking as a Handler-owned scheduling capability before broad parallel execution.
 Approved issue #37 direction: add Implementation Planning as a distinct review-gated bridge from accepted strategy to generated implementation issues.
+Approved issue #64 direction: add a formal Planner Outcome Model with `READY`, `BLOCKED`, and `ESCALATION_REQUIRED` outcomes.
 Approved issue #51 direction: formalize worktree and branch lifecycle management around conservative inventory, recovery, and cleanup safety rules.
 Approved issue #54 direction: implement the first lifecycle slice as a read-only workspace inventory and lifecycle classification service.
 The next capability frontier is **self-hosting reliability and strategic memory**.
@@ -41,7 +42,7 @@ flowchart LR
 ## Self Hosting
 
 Self Hosting now means reliable repeated execution across fresh sessions without hidden context drift.
-The approved sequence is repository onboarding, workspace isolation, durable polling, dependency blocking, worktree/branch lifecycle management, stale-lock/run recovery, persistent Watchtower visibility, strategic memory, and implementation planning.
+The approved sequence is repository onboarding, workspace isolation, durable polling, dependency blocking, worktree/branch lifecycle management, stale-lock/run recovery, persistent Watchtower visibility, strategic memory, and implementation planning with explicit outcome handling.
 
 ```mermaid
 flowchart LR
@@ -131,15 +132,21 @@ Detailed architecture: [Issue Dependency Blocking](dependency-blocking.md).
 
 ## Implementation Planning
 
-Implementation Planning is now an accepted Self Hosting / Strategic Memory capability direction, based on the approved Systems Architect recommendation in issue #37.
+Implementation Planning is now an accepted Self Hosting / Strategic Memory capability direction, based on the approved Systems Architect recommendations in issues #37 and #64.
 
 The accepted architecture is:
 
 - Implementation Planning is a distinct workflow role, not an extension of Systems Architect, Roadmap Updater, Feature Architect, or Handler.
 - Implementation Planning happens after roadmap updates, so accepted strategic intent is recorded in durable documentation before issue trees are generated.
-- The Implementation Planner owns issue decomposition, initial sequencing, dependency declaration, generated GitHub issue creation, and the implementation plan review artifact.
-- Generated issues should be created directly in GitHub, but in a non-dispatch state such as `state:planned` or another plan-review state.
+- The Implementation Planner owns planner outcome declaration, issue decomposition for successful plans, initial sequencing, dependency declaration, generated GitHub issue creation for `READY`, and the plan/blocker/escalation review artifact.
+- Every planner result declares exactly one outcome: `READY`, `BLOCKED`, or `ESCALATION_REQUIRED`.
+- `READY` means implementation planning succeeded and the output is reviewable as executable backlog.
+- `BLOCKED` means planning cannot safely complete because required planning inputs or operations are unavailable, stale, inaccessible, unsafe, or contradictory, but no new systems architecture decision is required.
+- `ESCALATION_REQUIRED` means implementation planning would force systems-level decisions that belong to Systems Architect.
+- Generated issues should be created directly in GitHub only for `READY`, and in a non-dispatch state such as `state:planned` or another plan-review state.
 - Generated issues should include source traceability, implementation scope, acceptance criteria, suggested next workflow state, and optional `## Circus Dependencies` metadata where ordering matters.
+- Blocked and escalation results should not create generated issues by default.
+- The v1 outcome model reuses existing workflow states instead of adding outcome labels.
 - Human approval is required before generated issues become dispatchable.
 - Handler remains responsible for workflow label transitions, dispatch eligibility, dependency blocking, and automatic unblocking.
 - Watchtower records planning artifacts and generated issue links for observability only.

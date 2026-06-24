@@ -121,6 +121,7 @@ The `state:ready-for-implementation-planning` state routes accepted and document
 The `state:ready-for-implementation-plan-review` state holds generated implementation plans for human approval before generated issues become dispatchable.
 The `state:implementation-planning-changes-requested` state routes implementation plans back for revision.
 The `state:planned` state marks generated issues that are not yet dispatchable.
+Planner outcomes are declared in artifacts and comments, not as new `state:*` labels.
 The `state:dependency-blocked` state is a scheduler-managed waiting state for issues with declared unsatisfied prerequisites. It is not dispatchable.
 
 ---
@@ -219,19 +220,24 @@ The Implementation Planner then:
 
 - reads the approved Systems Architect recommendation
 - reads the updated roadmap and capability-tree documentation
-- decomposes the accepted strategy into generated GitHub issues
-- proposes initial issue ordering
-- declares conservative `## Circus Dependencies` metadata where ordering matters
-- creates generated issues in a non-dispatch state such as `state:planned`
-- leaves a structured implementation plan comment listing generated issues, dependencies, dispatch readiness, and human review options
+- declares exactly one outcome: `READY`, `BLOCKED`, or `ESCALATION_REQUIRED`
+- for `READY`, decomposes the accepted strategy into generated GitHub issues
+- for `READY`, proposes initial issue ordering
+- for `READY`, declares conservative `## Circus Dependencies` metadata where ordering matters
+- for `READY`, creates generated issues in a non-dispatch state such as `state:planned`
+- leaves a structured implementation plan, blocker, or escalation comment with human review options
 
-Generated implementation issues do not become dispatchable automatically.
+Generated implementation issues do not become dispatchable automatically, and they are created only for `READY`.
 
-Human reviewers approve the plan before Handler or a dedicated approved transition moves eligible generated issues into dispatchable states such as `state:ready-for-architecture` or `state:ready-for-dev`.
+If the outcome is `BLOCKED`, the planner leaves a blocker comment, creates no generated issues by default, and identifies whether planning should resume from `state:ready-for-implementation-planning` or `state:implementation-planning-changes-requested` after the blocker is resolved.
+
+If the outcome is `ESCALATION_REQUIRED`, the planner leaves an architecture escalation request, creates no generated issues, explains why issue generation would be unsafe, and recommends human routing to `state:systems-architecture-changes-requested`.
+
+For `READY`, human reviewers approve the plan before Handler or a dedicated approved transition moves eligible generated issues into dispatchable states such as `state:ready-for-architecture` or `state:ready-for-dev`.
 
 Workflow ownership contract for implementation planning:
 
-- Implementation Planner owns issue decomposition, generated issue content, proposed ordering, dependency declarations, and the plan review artifact.
+- Implementation Planner owns outcome declaration, issue decomposition for `READY`, generated issue content, proposed ordering, dependency declarations, and the plan/blocker/escalation artifact.
 - Handler owns planner dispatch, workflow label transitions, dependency enforcement, automatic unblocking, and transitions from plan review into dispatchable states.
 - Roadmap Updater owns strategic documentation before implementation planning begins.
 - Watchtower records generated issue numbers and planning artifacts for run history only.
@@ -256,7 +262,7 @@ Within that frontier, the intended sequence is:
 6. Stale-lock and run recovery.
 7. Persistent Watchtower visibility.
 8. Strategic memory that records accepted recommendations without making Watchtower the primary review surface.
-9. Implementation planning that converts accepted strategy into review-gated generated implementation issues.
+9. Implementation planning that converts accepted strategy into review-gated generated implementation issues, or explicitly blocks/escalates when safe planning cannot continue.
 
 Provider Routing and Skills remain valid future work, but both should stay behind self-hosting reliability so provider complexity and role specialization are added only after the runtime can observe, recover, and preserve context across repeated runs.
 
@@ -347,13 +353,18 @@ Detailed architecture: [Issue Dependency Blocking](../dependency-blocking.md).
 ## Accepted Implementation Planning Direction
 
 Issue #37 approved Implementation Planning as a distinct role and capability.
+Issue #64 approved the Planner Outcome Model and architecture escalation workflow.
 
 The accepted direction is:
 
 - add Implementation Planner as a separate role after Roadmap Updater
 - keep roadmap and capability-tree docs as the durable strategic anchor before planning starts
+- require every planner result to declare exactly one outcome: `READY`, `BLOCKED`, or `ESCALATION_REQUIRED`
+- reuse existing workflow states instead of adding outcome labels for v1
 - let the planner own issue decomposition, proposed sequencing, dependency declaration, generated issue creation, and plan review artifacts
-- create generated issues directly in GitHub, but in a non-dispatch review state
+- create generated issues directly in GitHub only for `READY`, and in a non-dispatch review state
+- use `BLOCKED` for missing, stale, inaccessible, unsafe, or contradictory planning prerequisites that do not require a new Systems Architect decision
+- use `ESCALATION_REQUIRED` when implementation planning would force systems-level decisions that belong to Systems Architect
 - require source traceability from generated issues back to the recommendation and roadmap update
 - require human approval before generated issues become dispatchable
 - keep Handler responsible for label transitions, dispatch eligibility, dependency enforcement, and automatic unblocking
@@ -365,9 +376,11 @@ The roadmap sequence for this capability is:
 2. Add canonical label support for `state:ready-for-implementation-planning`, `state:ready-for-implementation-plan-review`, `state:implementation-planning-changes-requested`, and `state:planned`.
 3. Add Handler dispatch support for `state:ready-for-implementation-planning`.
 4. Implement the planner workflow that reads one approved recommendation and merged roadmap docs.
-5. Add generated GitHub issue creation in a non-dispatch review state.
-6. Add structured plan comments and Watchtower generated-issue observability.
-7. Add the human-approved transition from plan review into existing dispatchable workflow states.
+5. Add planner outcome validation with a required `### Outcome` section.
+6. Add generated GitHub issue creation in a non-dispatch review state for `READY` only.
+7. Add structured plan, blocker, and escalation comments with Watchtower outcome observability.
+8. Add the human-approved transition from plan review into existing dispatchable workflow states.
+9. Add safeguards that prevent advancement on `BLOCKED` or `ESCALATION_REQUIRED`, with optional escalation routing only after human-approved automation exists.
 
 Detailed architecture: [Implementation Planning](../implementation-planning.md).
 

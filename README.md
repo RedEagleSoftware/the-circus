@@ -86,6 +86,8 @@ The Circus uses GitHub `state:*` labels as a workflow state machine.
 - `state:planned` marks generated implementation issues that are not yet dispatchable.
 - `state:dependency-blocked` pauses an issue with declared unsatisfied prerequisites until Handler can safely restore the declared resume state.
 
+Planner outcomes are declared in artifacts and comments, not as separate workflow labels.
+
 Systems Architect routing remains strategic and non-implementation:
 
 - The Systems Architect publishes a structured recommendation in a GitHub issue comment for human review.
@@ -95,8 +97,11 @@ Systems Architect routing remains strategic and non-implementation:
 
 Implementation Planning turns accepted strategy into executable backlog only after roadmap synchronization:
 
-- The Implementation Planner owns issue decomposition, initial sequencing, dependency declaration, generated issue creation, and the implementation plan review artifact.
-- Generated issues are created directly in GitHub but start in a non-dispatch state such as `state:planned`.
+- The Implementation Planner declares exactly one outcome: `READY`, `BLOCKED`, or `ESCALATION_REQUIRED`.
+- For `READY`, the Implementation Planner owns issue decomposition, initial sequencing, dependency declaration, generated issue creation, and the implementation plan review artifact.
+- Generated issues are created directly in GitHub only for `READY`, and start in a non-dispatch state such as `state:planned`.
+- `BLOCKED` leaves a blocker result when planning prerequisites are missing, stale, inaccessible, unsafe, or contradictory, but no new systems architecture decision is required.
+- `ESCALATION_REQUIRED` leaves an architecture escalation request when planning would force systems-level decisions that belong to Systems Architect.
 - Humans approve generated plans before Handler moves eligible issues into dispatchable workflow states.
 - Handler remains responsible for workflow label transitions, dispatch eligibility, dependency blocking, and automatic unblocking.
 
@@ -151,7 +156,7 @@ Some files may eventually become protected or agent read-only to prevent uninten
 - Human approval checkpoints
 - Git worktree-based session isolation and replayability
 - Explicit issue dependency blocking and automatic unblocking
-- Implementation planning that generates review-gated implementation issues from accepted strategic recommendations
+- Implementation planning that generates review-gated implementation issues from accepted strategic recommendations when ready, and explicitly blocks or escalates when safe planning cannot continue
 
 The accepted workspace isolation architecture is documented in [docs/worktree-isolation.md](docs/worktree-isolation.md).
 The accepted worktree and branch lifecycle architecture is documented in [docs/worktree-lifecycle.md](docs/worktree-lifecycle.md).

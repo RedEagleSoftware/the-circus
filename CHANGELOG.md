@@ -13,6 +13,11 @@ This changelog tracks notable completed work by GitHub issue.
 - [concise user-visible or workflow-significant change]
 - [optional second concise change]
 
+### Issue #64 - Planner Outcome Model and Architecture Escalation Workflow
+
+- Documented the `READY`, `BLOCKED`, and `ESCALATION_REQUIRED` Implementation Planner outcome model.
+- Updated roadmap, capability tree, README, and role guidance so planner escalation is distinct from blocked planning and generated issues are created only for `READY`.
+
 ### Issue #51 - Design Worktree and Branch Lifecycle Management
 
 - Documented the accepted worktree and branch lifecycle state model, recovery workflow, and cleanup safety boundary.
