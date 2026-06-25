@@ -18,6 +18,13 @@ ARCHITECT_REVIEW_RESULT_FILENAME = "architect-review-result.md"
 IMPLEMENTATION_PLAN_FILENAME = "implementation-plan.md"
 RUN_STATUS_FILENAME = "status.json"
 RUN_RESULT_FILENAME = "result.md"
+ISSUE_URL_PATTERN = re.compile(r"https://github\.com/[^\s)]+/issues/(\d+)(?:#[^\s)]+)?", re.IGNORECASE)
+ISSUE_REFERENCE_PATTERN = re.compile(r"(?<![A-Za-z0-9_])#(\d+)\b")
+ISSUE_COMMENT_URL_PATTERN = re.compile(
+    r"https://github\.com/[^\s)]+/issues/\d+#issuecomment-(\d+)",
+    re.IGNORECASE,
+)
+PULL_REQUEST_URL_PATTERN = re.compile(r"https://github\.com/[^\s)]+/pull/\d+", re.IGNORECASE)
 
 RUN_STATUS_FIELDS = [
     "repository",
@@ -50,7 +57,135 @@ RUN_STATUS_FIELDS = [
     "working_branch",
     "label_transition",
     "artifacts",
+    "implementation_planner",
 ]
+
+
+def _trim_trailing_markdown_punctuation(value):
+    return value.rstrip(")].,;:!?")
+
+
+def _extract_markdown_section_lines(markdown_text, section_heading):
+    lines = markdown_text.splitlines()
+    in_target_section = False
+    heading_prefix = "### "
+    normalized_target_heading = f"{heading_prefix}{section_heading}".strip().lower()
+    collected_lines = []
+
+    for raw_line in lines:
+        stripped_line = raw_line.strip()
+        normalized_line = stripped_line.lower()
+
+        if normalized_line == normalized_target_heading:
+            in_target_section = True
+            continue
+
+        if in_target_section and (stripped_line.startswith("### ") or stripped_line.startswith("## ")):
+            break
+
+        if in_target_section:
+            collected_lines.append(raw_line)
+
+    return collected_lines
+
+
+def _parse_generated_issue_references(generated_issue_section_lines):
+    ordered_issue_numbers = []
+    generated_issues_by_number = {}
+
+    for section_line in generated_issue_section_lines:
+        normalized_line = _trim_trailing_markdown_punctuation(section_line.strip())
+        if not normalized_line:
+            continue
+
+        for match in ISSUE_URL_PATTERN.finditer(normalized_line):
+            issue_number = int(match.group(1))
+            issue_url = _trim_trailing_markdown_punctuation(match.group(0))
+            existing_issue = generated_issues_by_number.get(issue_number)
+            if existing_issue is None:
+                generated_issues_by_number[issue_number] = {"number": issue_number, "url": issue_url}
+                ordered_issue_numbers.append(issue_number)
+            elif not existing_issue.get("url"):
+                existing_issue["url"] = issue_url
+
+        for match in ISSUE_REFERENCE_PATTERN.finditer(normalized_line):
+            issue_number = int(match.group(1))
+            if issue_number not in generated_issues_by_number:
+                generated_issues_by_number[issue_number] = {"number": issue_number}
+                ordered_issue_numbers.append(issue_number)
+
+    return [generated_issues_by_number[number] for number in ordered_issue_numbers]
+
+
+def _extract_source_traceability_fields(source_section_lines):
+    source_recommendation_url = None
+    source_recommendation_comment_id = None
+    roadmap_reference = None
+
+    for source_line in source_section_lines:
+        normalized_line = _trim_trailing_markdown_punctuation(source_line.strip())
+        if not normalized_line:
+            continue
+
+        if source_recommendation_url is None:
+            issue_comment_match = ISSUE_COMMENT_URL_PATTERN.search(normalized_line)
+            if issue_comment_match:
+                source_recommendation_url = _trim_trailing_markdown_punctuation(issue_comment_match.group(0))
+                source_recommendation_comment_id = int(issue_comment_match.group(1))
+
+        if roadmap_reference is None:
+            pull_request_match = PULL_REQUEST_URL_PATTERN.search(normalized_line)
+            if pull_request_match:
+                roadmap_reference = _trim_trailing_markdown_punctuation(pull_request_match.group(0))
+
+        if source_recommendation_url and roadmap_reference:
+            break
+
+    return {
+        "source_recommendation_url": source_recommendation_url,
+        "source_recommendation_comment_id": source_recommendation_comment_id,
+        "roadmap_reference": roadmap_reference,
+    }
+
+
+def build_implementation_planner_snapshot(
+    implementation_plan_path,
+    *,
+    outcome,
+    outcome_valid,
+    diagnostic=None,
+    recommended_route=None,
+):
+    generated_issues = []
+    source_recommendation_url = None
+    source_recommendation_comment_id = None
+    roadmap_reference = None
+
+    if implementation_plan_path and os.path.exists(implementation_plan_path):
+        try:
+            with open(implementation_plan_path, "r", encoding="utf-8") as implementation_plan_file:
+                implementation_plan_markdown = implementation_plan_file.read()
+            generated_issue_section_lines = _extract_markdown_section_lines(implementation_plan_markdown, "generated issues")
+            generated_issues = _parse_generated_issue_references(generated_issue_section_lines)
+            source_section_lines = _extract_markdown_section_lines(implementation_plan_markdown, "source")
+            source_traceability_fields = _extract_source_traceability_fields(source_section_lines)
+            source_recommendation_url = source_traceability_fields["source_recommendation_url"]
+            source_recommendation_comment_id = source_traceability_fields["source_recommendation_comment_id"]
+            roadmap_reference = source_traceability_fields["roadmap_reference"]
+        except OSError:
+            pass
+
+    return {
+        "outcome": outcome,
+        "outcome_valid": bool(outcome_valid),
+        "diagnostic": diagnostic,
+        "implementation_plan": implementation_plan_path,
+        "generated_issues": generated_issues,
+        "source_recommendation_url": source_recommendation_url,
+        "source_recommendation_comment_id": source_recommendation_comment_id,
+        "roadmap_reference": roadmap_reference,
+        "recommended_route": recommended_route,
+    }
 
 
 def append_reviewer_feedback_note(
@@ -278,6 +413,7 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
 
     status_payload = read_run_status_fn(run_state)
     artifacts = status_payload.get("artifacts") or {}
+    implementation_planner = status_payload.get("implementation_planner") or {}
     label_transition = status_payload.get("label_transition")
     lifecycle_diagnostics = status_payload.get("lifecycle_diagnostics")
 
@@ -322,9 +458,34 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
             f"- linked PR: `{status_payload.get('linked_pr')}`",
             f"- working branch: `{status_payload.get('working_branch')}`",
             "",
+            "## Implementation Planner",
+            f"- outcome: `{implementation_planner.get('outcome')}`",
+            f"- outcome valid: `{implementation_planner.get('outcome_valid')}`",
+            f"- diagnostic: `{implementation_planner.get('diagnostic')}`",
+            f"- implementation plan: `{implementation_planner.get('implementation_plan')}`",
+            f"- recommended route: `{implementation_planner.get('recommended_route')}`",
+            f"- source recommendation URL: `{implementation_planner.get('source_recommendation_url')}`",
+            f"- source recommendation comment ID: `{implementation_planner.get('source_recommendation_comment_id')}`",
+            f"- roadmap reference: `{implementation_planner.get('roadmap_reference')}`",
+            "- generated issues:",
+            "",
             "## Artifacts",
         ]
     )
+
+    generated_issues = implementation_planner.get("generated_issues")
+    if isinstance(generated_issues, list) and generated_issues:
+        for generated_issue in generated_issues:
+            issue_number = generated_issue.get("number") if isinstance(generated_issue, dict) else None
+            issue_url = generated_issue.get("url") if isinstance(generated_issue, dict) else None
+            if issue_number is None:
+                continue
+            if issue_url:
+                lines.append(f"  - #{issue_number}: `{issue_url}`")
+            else:
+                lines.append(f"  - #{issue_number}")
+    else:
+        lines.append("  - none")
 
     for key in sorted(artifacts.keys()):
         lines.append(f"- {key}: `{artifacts.get(key)}`")

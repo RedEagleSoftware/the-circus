@@ -1740,6 +1740,14 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         outcome="missing result artifact",
                         stop_reason=f"missing implementation plan artifact at {normalized_implementation_plan_path}",
                         artifacts={"implementation_plan": normalized_implementation_plan_path},
+                        implementation_planner=watchtower.build_implementation_planner_snapshot(
+                            normalized_implementation_plan_path,
+                            outcome=None,
+                            outcome_valid=False,
+                            diagnostic=(
+                                f"missing implementation plan artifact at {normalized_implementation_plan_path}"
+                            ),
+                        ),
                     )
                     write_run_result(item)
                     return False
@@ -1755,6 +1763,8 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         "implementation_plan": normalized_implementation_plan_path,
                         "implementation_plan_outcome": implementation_plan_outcome,
                     }
+                    implementation_planner_diagnostic = None
+                    recommended_route = None
 
                     if implementation_plan_outcome is None:
                         outcome_name = "invalid result artifact"
@@ -1762,6 +1772,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                             "implementation plan outcome missing or invalid; expected exactly one "
                             "`### Outcome` marker with READY, BLOCKED, or ESCALATION_REQUIRED"
                         )
+                        implementation_planner_diagnostic = stop_reason
                         print(
                             "[Dispatch] Implementation planner outcome was missing or invalid; "
                             "workflow will not advance."
@@ -1796,6 +1807,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                             "recommended route: state:systems-architecture-changes-requested"
                         )
                         artifacts["recommended_route"] = "state:systems-architecture-changes-requested"
+                        recommended_route = "state:systems-architecture-changes-requested"
                         print(
                             "[Dispatch] Implementation planner reported ESCALATION_REQUIRED outcome; "
                             "recommended human route: state:systems-architecture-changes-requested."
@@ -1832,6 +1844,13 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         outcome=outcome_name,
                         stop_reason=stop_reason,
                         artifacts=artifacts,
+                        implementation_planner=watchtower.build_implementation_planner_snapshot(
+                            normalized_implementation_plan_path,
+                            outcome=implementation_plan_outcome,
+                            outcome_valid=implementation_plan_outcome is not None,
+                            diagnostic=implementation_planner_diagnostic,
+                            recommended_route=recommended_route,
+                        ),
                     )
                     write_run_result(item)
                     return False
@@ -1839,6 +1858,16 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 item.pop("missing_implementation_plan_artifact", None)
                 item.pop("invalid_implementation_plan_outcome", None)
                 advanced = advance_implementation_planning_workflow_on_success(item, from_state_label=state_label)
+                normalized_implementation_plan_path = normalize_path_for_display(implementation_plan_path)
+                ready_snapshot = watchtower.build_implementation_planner_snapshot(
+                    normalized_implementation_plan_path,
+                    outcome=implementation_plan_outcome,
+                    outcome_valid=True,
+                )
+                if not ready_snapshot.get("generated_issues"):
+                    ready_snapshot["diagnostic"] = (
+                        "implementation plan outcome READY but generated issues section did not include issue links"
+                    )
                 update_run_status(
                     item,
                     completed_at=utc_timestamp_now(),
@@ -1847,9 +1876,10 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     outcome="implementation plan generated",
                     stop_reason=None if advanced else "label transition failed",
                     artifacts={
-                        "implementation_plan": normalize_path_for_display(implementation_plan_path),
+                        "implementation_plan": normalized_implementation_plan_path,
                         "implementation_plan_outcome": implementation_plan_outcome,
                     },
+                    implementation_planner=ready_snapshot,
                 )
                 write_run_result(item)
                 return advanced

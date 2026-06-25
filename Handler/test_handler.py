@@ -1924,13 +1924,16 @@ class HandlerObservabilityTests(unittest.TestCase):
                                     handler,
                                     "advance_implementation_planning_workflow_on_success",
                                 ) as mock_advance_transition:
-                                    launched = handler.launch_agent(
-                                        item,
-                                        "state:ready-for-implementation-planning",
-                                        config,
-                                        os.path.normpath(os.path.join("TheFarm", "roles", "implementation-planner.md")),
-                                        launch_brief_path,
-                                    )
+                                    with patch.object(handler, "update_run_status") as mock_update_status:
+                                        launched = handler.launch_agent(
+                                            item,
+                                            "state:ready-for-implementation-planning",
+                                            config,
+                                            os.path.normpath(
+                                                os.path.join("TheFarm", "roles", "implementation-planner.md")
+                                            ),
+                                            launch_brief_path,
+                                        )
 
         self.assertFalse(launched)
         mock_subprocess_run.assert_called_once()
@@ -1939,6 +1942,14 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertTrue(item.get("missing_implementation_plan_artifact"))
         self.assertIn("required artifact was not produced", item["comment"])
         self.assertIn(implementation_plan_path, item["comment"])
+        implementation_planner = mock_update_status.call_args.kwargs["implementation_planner"]
+        self.assertIsNone(implementation_planner["outcome"])
+        self.assertFalse(implementation_planner["outcome_valid"])
+        self.assertEqual(
+            implementation_planner["diagnostic"],
+            f"missing implementation plan artifact at {implementation_plan_path}",
+        )
+        self.assertEqual(implementation_planner["implementation_plan"], implementation_plan_path)
 
     def test_launch_agent_codex_implementation_planner_blocked_outcome_stops_without_transition(self):
         item = {
@@ -1973,15 +1984,16 @@ class HandlerObservabilityTests(unittest.TestCase):
                                         "advance_implementation_planning_workflow_on_success",
                                     ) as mock_advance_transition:
                                         with patch("builtins.print") as mock_print:
-                                            launched = handler.launch_agent(
-                                                item,
-                                                "state:ready-for-implementation-planning",
-                                                config,
-                                                os.path.normpath(
-                                                    os.path.join("TheFarm", "roles", "implementation-planner.md")
-                                                ),
-                                                launch_brief_path,
-                                            )
+                                            with patch.object(handler, "update_run_status") as mock_update_status:
+                                                launched = handler.launch_agent(
+                                                    item,
+                                                    "state:ready-for-implementation-planning",
+                                                    config,
+                                                    os.path.normpath(
+                                                        os.path.join("TheFarm", "roles", "implementation-planner.md")
+                                                    ),
+                                                    launch_brief_path,
+                                                )
 
         self.assertFalse(launched)
         mock_subprocess_run.assert_called_once()
@@ -1989,6 +2001,10 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_add_comment.assert_called_once_with(item)
         self.assertIn("blocked outcome", item["comment"])
         self.assertIn("`BLOCKED`", item["comment"])
+        implementation_planner = mock_update_status.call_args.kwargs["implementation_planner"]
+        self.assertEqual(implementation_planner["outcome"], "BLOCKED")
+        self.assertTrue(implementation_planner["outcome_valid"])
+        self.assertIsNone(implementation_planner["recommended_route"])
         mock_print.assert_any_call(
             "[Dispatch] Implementation planner reported BLOCKED outcome; "
             "workflow remains in implementation planning."
@@ -2056,6 +2072,12 @@ class HandlerObservabilityTests(unittest.TestCase):
             mock_update_status.call_args.kwargs["artifacts"]["recommended_route"],
             "state:systems-architecture-changes-requested",
         )
+        implementation_planner = mock_update_status.call_args.kwargs["implementation_planner"]
+        self.assertEqual(implementation_planner["outcome"], "ESCALATION_REQUIRED")
+        self.assertEqual(
+            implementation_planner["recommended_route"],
+            "state:systems-architecture-changes-requested",
+        )
         mock_print.assert_any_call(
             "[Dispatch] Implementation planner reported ESCALATION_REQUIRED outcome; "
             "recommended human route: state:systems-architecture-changes-requested."
@@ -2094,15 +2116,16 @@ class HandlerObservabilityTests(unittest.TestCase):
                                         "advance_implementation_planning_workflow_on_success",
                                     ) as mock_advance_transition:
                                         with patch("builtins.print") as mock_print:
-                                            launched = handler.launch_agent(
-                                                item,
-                                                "state:ready-for-implementation-planning",
-                                                config,
-                                                os.path.normpath(
-                                                    os.path.join("TheFarm", "roles", "implementation-planner.md")
-                                                ),
-                                                launch_brief_path,
-                                            )
+                                            with patch.object(handler, "update_run_status") as mock_update_status:
+                                                launched = handler.launch_agent(
+                                                    item,
+                                                    "state:ready-for-implementation-planning",
+                                                    config,
+                                                    os.path.normpath(
+                                                        os.path.join("TheFarm", "roles", "implementation-planner.md")
+                                                    ),
+                                                    launch_brief_path,
+                                                )
 
         self.assertFalse(launched)
         mock_subprocess_run.assert_called_once()
@@ -2110,6 +2133,10 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_add_comment.assert_called_once_with(item)
         self.assertTrue(item.get("invalid_implementation_plan_outcome"))
         self.assertIn("did not include a valid outcome declaration", item["comment"])
+        implementation_planner = mock_update_status.call_args.kwargs["implementation_planner"]
+        self.assertIsNone(implementation_planner["outcome"])
+        self.assertFalse(implementation_planner["outcome_valid"])
+        self.assertIn("missing or invalid", implementation_planner["diagnostic"])
         mock_print.assert_any_call(
             "[Dispatch] Implementation planner outcome was missing or invalid; "
             "workflow will not advance."
