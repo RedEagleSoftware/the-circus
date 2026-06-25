@@ -101,6 +101,14 @@ def add_label(item, label, repo, run_command_fn):
     return run_command_fn(cmd) is not None
 
 
+def replace_label(item, remove_label_value, add_label_value, repo, run_command_fn):
+    cmd = (
+        f"gh {item['type']} edit {item['number']} --repo {repo} "
+        f"--remove-label \"{remove_label_value}\" --add-label \"{add_label_value}\""
+    )
+    return run_command_fn(cmd) is not None
+
+
 def find_existing_open_pr_for_branch(branch_name, repo, run_command_fn):
     cmd = (
         f"gh pr list --repo {repo} --head {json.dumps(branch_name)} "

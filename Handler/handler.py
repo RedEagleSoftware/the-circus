@@ -52,6 +52,7 @@ REVIEW_OUTCOMES = workflow.REVIEW_OUTCOMES
 REVIEW_OUTCOME_MARKERS = workflow.REVIEW_OUTCOME_MARKERS
 IMPLEMENTATION_PLAN_OUTCOMES = {"READY", "BLOCKED", "ESCALATION_REQUIRED"}
 PLANNER_RESULT_V1_JSON_BLOCK_PATTERN = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
+PLANNER_RESULT_V1_FENCED_BLOCK_PATTERN = re.compile(r"```(?:yaml|yml|json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 
 AGENT_EXECUTABLE_ENV_OVERRIDES = {
     "junie": "CIRCUS_JUNIE_EXECUTABLE",
@@ -886,90 +887,476 @@ def parse_planner_result_v1(body):
             "generated_issues": normalized_generated_issues,
         }
 
+    for match in PLANNER_RESULT_V1_FENCED_BLOCK_PATTERN.finditer(body):
+        planner_result = parse_planner_result_v1_yaml_block(match.group(1))
+        if planner_result is not None:
+            return planner_result
+
     return None
 
 
-def approve_implementation_plan_review(source_issue_number):
+def _parse_yaml_scalar_value(raw_value):
+    if raw_value is None:
+        return None
+
+    stripped_value = raw_value.strip()
+    if not stripped_value:
+        return ""
+
+    if (
+        len(stripped_value) >= 2
+        and stripped_value[0] == stripped_value[-1]
+        and stripped_value[0] in {'"', "'"}
+    ):
+        stripped_value = stripped_value[1:-1]
+
+    if re.fullmatch(r"-?\d+", stripped_value):
+        return int(stripped_value)
+
+    return stripped_value
+
+
+def parse_planner_result_v1_yaml_block(block_text):
+    if not isinstance(block_text, str) or not block_text:
+        return None
+
+    lines = block_text.splitlines()
+    root_index = None
+    root_indent = 0
+    for index, line in enumerate(lines):
+        stripped_line = line.strip()
+        if not stripped_line:
+            continue
+
+        if stripped_line == "planner_result_v1:":
+            root_index = index
+            root_indent = len(line) - len(line.lstrip(" "))
+            break
+
+    if root_index is None:
+        return None
+
+    planner_fields = {}
+    generated_issues = []
+    index = root_index + 1
+    while index < len(lines):
+        line = lines[index]
+        stripped_line = line.strip()
+        if not stripped_line:
+            index += 1
+            continue
+
+        indent = len(line) - len(line.lstrip(" "))
+        if indent <= root_indent:
+            break
+
+        if stripped_line == "generated_issues:":
+            index += 1
+            while index < len(lines):
+                issue_line = lines[index]
+                issue_stripped_line = issue_line.strip()
+                if not issue_stripped_line:
+                    index += 1
+                    continue
+
+                issue_indent = len(issue_line) - len(issue_line.lstrip(" "))
+                if issue_indent <= indent:
+                    break
+
+                if not issue_stripped_line.startswith("- "):
+                    return None
+
+                issue_entry = {}
+                issue_payload = issue_stripped_line[2:].strip()
+                if issue_payload:
+                    if ":" not in issue_payload:
+                        return None
+                    first_key, first_value = issue_payload.split(":", 1)
+                    issue_entry[first_key.strip()] = _parse_yaml_scalar_value(first_value)
+
+                index += 1
+                while index < len(lines):
+                    issue_field_line = lines[index]
+                    issue_field_stripped_line = issue_field_line.strip()
+                    if not issue_field_stripped_line:
+                        index += 1
+                        continue
+
+                    issue_field_indent = len(issue_field_line) - len(issue_field_line.lstrip(" "))
+                    if issue_field_indent <= issue_indent:
+                        break
+
+                    if ":" not in issue_field_stripped_line:
+                        return None
+
+                    issue_key, issue_value = issue_field_stripped_line.split(":", 1)
+                    issue_entry[issue_key.strip()] = _parse_yaml_scalar_value(issue_value)
+                    index += 1
+
+                generated_issues.append(issue_entry)
+
+            continue
+
+        if ":" not in stripped_line:
+            return None
+
+        field_key, field_value = stripped_line.split(":", 1)
+        planner_fields[field_key.strip()] = _parse_yaml_scalar_value(field_value)
+        index += 1
+
+    if not generated_issues:
+        return None
+
+    normalized_generated_issues = []
+    for generated_issue in generated_issues:
+        if not isinstance(generated_issue, dict):
+            return None
+
+        issue_number = generated_issue.get("issue_number")
+        if issue_number is None:
+            issue_number = generated_issue.get("number")
+
+        initial_state = generated_issue.get("initial_state")
+        next_state_after_approval = generated_issue.get("next_state_after_approval")
+
+        if not isinstance(issue_number, int) or issue_number <= 0:
+            return None
+
+        if not isinstance(next_state_after_approval, str) or not next_state_after_approval.startswith("state:"):
+            return None
+
+        if next_state_after_approval not in LABEL_MAP:
+            return None
+
+        normalized_generated_issues.append(
+            {
+                "issue_number": issue_number,
+                "initial_state": initial_state,
+                "next_state_after_approval": next_state_after_approval,
+            }
+        )
+
+    return {
+        "outcome": planner_fields.get("outcome"),
+        "parent_issue": planner_fields.get("parent_issue"),
+        "recommendation_comment_id": planner_fields.get("recommendation_comment_id"),
+        "roadmap_pr": planner_fields.get("roadmap_pr"),
+        "generated_issues": normalized_generated_issues,
+    }
+
+
+def _extract_comment_id(comment):
+    if not isinstance(comment, dict):
+        return None
+
+    for candidate_key in ("id", "databaseId"):
+        candidate_value = comment.get(candidate_key)
+        if isinstance(candidate_value, int):
+            return candidate_value
+        if isinstance(candidate_value, str) and candidate_value.strip().isdigit():
+            return int(candidate_value.strip())
+
+    return None
+
+
+def _label_names(item):
+    return [label.get("name") for label in item.get("labels", []) if isinstance(label, dict)]
+
+
+def _validate_single_primary_state(item, expected_state, item_kind):
+    label_names = _label_names(item)
+    state_labels = workflow.get_state_labels(label_names)
+    if len(state_labels) != 1:
+        print(
+            f"[Approval] {item_kind} #{item['number']} must have exactly one primary workflow state label; "
+            f"found {len(state_labels)}."
+        )
+        return False
+
+    if state_labels[0] != expected_state:
+        print(
+            f"[Approval] {item_kind} #{item['number']} must be in '{expected_state}' before approval "
+            f"(found '{state_labels[0]}')."
+        )
+        return False
+
+    return True
+
+
+def _is_open_unlocked(item):
+    if item.get("closed") is True:
+        return False
+
+    state_value = item.get("state")
+    if isinstance(state_value, str) and state_value.lower() != "open":
+        return False
+
+    if item.get("locked") is True:
+        return False
+
+    return True
+
+
+def _contains_traceability(body_text, source_issue_number, recommendation_comment_id, roadmap_pr, next_state):
+    if not isinstance(body_text, str) or not body_text:
+        return False
+
+    if f"#{source_issue_number}" not in body_text:
+        return False
+
+    if str(recommendation_comment_id) not in body_text:
+        return False
+
+    if f"#{roadmap_pr}" not in body_text:
+        return False
+
+    if next_state not in body_text:
+        return False
+
+    return True
+
+
+def approve_implementation_plan_review(source_issue_number, plan_comment_id=None, dry_run=False):
+    if plan_comment_id is not None and (not isinstance(plan_comment_id, int) or plan_comment_id <= 0):
+        print("[Approval] The --approve-implementation-plan-comment-id value must be a positive integer.")
+        return False
+
     source_item, source_ok = github_client.get_item(
         "issue",
         source_issue_number,
         repo=REPO,
         run_command_fn=run_command,
-        fields="number,labels,title,url,comments",
+        fields="number,labels,title,url,comments,state,closed,locked",
     )
     if not source_ok or source_item is None:
         print(f"[Approval] Failed to load source issue #{source_issue_number}.")
         return False
 
     source_item["type"] = "issue"
-    source_labels = [label.get("name") for label in source_item.get("labels", []) if isinstance(label, dict)]
-    if IMPLEMENTATION_PLAN_REVIEW_LABEL not in source_labels:
+    if not _is_open_unlocked(source_item):
+        print(f"[Approval] Source issue #{source_issue_number} must be open and unlocked before approval.")
+        return False
+
+    if not _validate_single_primary_state(source_item, IMPLEMENTATION_PLAN_REVIEW_LABEL, "Source issue"):
+        return False
+
+    candidate_results = []
+    for comment in source_item.get("comments", []):
+        if not isinstance(comment, dict):
+            continue
+
+        comment_identifier = _extract_comment_id(comment)
+        if plan_comment_id is not None and comment_identifier != plan_comment_id:
+            continue
+
+        comment_body = comment.get("body")
+        planner_result = parse_planner_result_v1(comment_body)
+        if planner_result is None:
+            continue
+
+        candidate_results.append((comment_identifier, planner_result))
+
+    if not candidate_results:
+        if plan_comment_id is None:
+            print(f"[Approval] Issue #{source_issue_number} is missing a valid planner_result_v1 payload.")
+        else:
+            print(
+                f"[Approval] Issue #{source_issue_number} is missing a valid planner_result_v1 payload in "
+                f"comment id {plan_comment_id}."
+            )
+        return False
+
+    if plan_comment_id is None and len(candidate_results) > 1:
         print(
-            f"[Approval] Issue #{source_issue_number} must be in '{IMPLEMENTATION_PLAN_REVIEW_LABEL}' before approval."
+            f"[Approval] Issue #{source_issue_number} has multiple planner_result_v1 payload candidates; "
+            "specify --approve-implementation-plan-comment-id explicitly."
         )
         return False
 
-    planner_result = None
-    for comment in reversed(source_item.get("comments", [])):
-        comment_body = comment.get("body") if isinstance(comment, dict) else None
-        planner_result = parse_planner_result_v1(comment_body)
-        if planner_result is not None:
-            break
+    selected_comment_id, planner_result = candidate_results[-1]
+    outcome = planner_result.get("outcome")
+    parent_issue = planner_result.get("parent_issue")
+    recommendation_comment_id = planner_result.get("recommendation_comment_id")
+    roadmap_pr = planner_result.get("roadmap_pr")
 
-    if planner_result is None:
-        print(f"[Approval] Issue #{source_issue_number} is missing a valid planner_result_v1 payload.")
+    if outcome != "READY":
+        print(f"[Approval] planner_result_v1 outcome must be READY before approval (found: {outcome!r}).")
         return False
 
-    if not execute_label_transition(
-        source_item,
-        "Implementation Plan Source Approval",
-        [
-            ("remove", IMPLEMENTATION_PLAN_REVIEW_LABEL),
-            ("add", IMPLEMENTATION_PLAN_REVIEWED_LABEL),
-        ],
-        success_message=(
-            f"[Approval] Source issue #{source_issue_number} transitioned to "
-            f"'{IMPLEMENTATION_PLAN_REVIEWED_LABEL}'."
-        ),
-        failure_message=f"[Approval] Failed to transition source issue #{source_issue_number}.",
-    ):
+    if parent_issue != source_issue_number:
+        print(
+            f"[Approval] planner_result_v1 parent_issue must equal source issue #{source_issue_number} "
+            f"(found: {parent_issue!r})."
+        )
         return False
 
+    if not isinstance(recommendation_comment_id, int) or recommendation_comment_id <= 0:
+        print("[Approval] planner_result_v1 recommendation_comment_id must be a positive integer.")
+        return False
+
+    if not isinstance(roadmap_pr, int) or roadmap_pr <= 0:
+        print("[Approval] planner_result_v1 roadmap_pr must be a positive integer.")
+        return False
+
+    recommendation_comment_found = any(
+        _extract_comment_id(comment) == recommendation_comment_id
+        for comment in source_item.get("comments", [])
+        if isinstance(comment, dict)
+    )
+    if not recommendation_comment_found:
+        print(
+            f"[Approval] recommendation_comment_id {recommendation_comment_id} was not found on source issue "
+            f"#{source_issue_number}."
+        )
+        return False
+
+    roadmap_item, roadmap_ok = github_client.get_item(
+        "pr",
+        roadmap_pr,
+        repo=REPO,
+        run_command_fn=run_command,
+        fields="number,state,mergedAt,title,url",
+    )
+    if not roadmap_ok or roadmap_item is None:
+        print(f"[Approval] Failed to load roadmap PR #{roadmap_pr}.")
+        return False
+
+    if not roadmap_item.get("mergedAt"):
+        print(f"[Approval] Roadmap PR #{roadmap_pr} must be merged before approval.")
+        return False
+
+    generated_issues = []
     for generated_issue in planner_result["generated_issues"]:
         generated_issue_number = generated_issue["issue_number"]
+        initial_state = generated_issue.get("initial_state")
         target_state = generated_issue["next_state_after_approval"]
+
+        if initial_state is not None and initial_state != PLANNED_LABEL:
+            print(
+                f"[Approval] Generated issue #{generated_issue_number} has unsupported initial_state "
+                f"{initial_state!r}; expected '{PLANNED_LABEL}'."
+            )
+            return False
+
+        if workflow.is_human_owned_state_label(target_state):
+            print(
+                f"[Approval] Generated issue #{generated_issue_number} target state '{target_state}' is human-owned "
+                "and not dispatchable."
+            )
+            return False
+
         generated_item, generated_ok = github_client.get_item(
             "issue",
             generated_issue_number,
             repo=REPO,
             run_command_fn=run_command,
+            fields="number,labels,title,url,state,closed,locked,body",
         )
         if not generated_ok or generated_item is None:
             print(f"[Approval] Failed to load generated issue #{generated_issue_number}.")
             return False
 
         generated_item["type"] = "issue"
-        generated_labels = [label.get("name") for label in generated_item.get("labels", []) if isinstance(label, dict)]
-        if PLANNED_LABEL not in generated_labels:
+        if not _is_open_unlocked(generated_item):
             print(
-                f"[Approval] Generated issue #{generated_issue_number} must be in '{PLANNED_LABEL}' before approval."
+                f"[Approval] Generated issue #{generated_issue_number} must be open and unlocked before approval."
             )
             return False
 
-        if not execute_label_transition(
-            generated_item,
-            "Implementation Plan Generated Issue Approval",
-            [
-                ("remove", PLANNED_LABEL),
-                ("add", target_state),
-            ],
-            success_message=(
-                f"[Approval] Generated issue #{generated_issue_number} transitioned to '{target_state}'."
-            ),
-            failure_message=f"[Approval] Failed to transition generated issue #{generated_issue_number}.",
-        ):
+        if not _validate_single_primary_state(generated_item, PLANNED_LABEL, "Generated issue"):
             return False
 
+        if not _contains_traceability(
+            generated_item.get("body"),
+            source_issue_number,
+            recommendation_comment_id,
+            roadmap_pr,
+            target_state,
+        ):
+            print(
+                f"[Approval] Generated issue #{generated_issue_number} is missing required traceability markers "
+                "(source issue, recommendation comment id, roadmap PR, and next state)."
+            )
+            return False
+
+        generated_issues.append((generated_item, target_state))
+
+    if dry_run:
+        print(f"[Approval] Dry run: validation succeeded for source issue #{source_issue_number}.")
+        return True
+
+    transitioned_issue_numbers = []
+    for generated_item, target_state in generated_issues:
+        generated_issue_number = generated_item["number"]
+        if not github_client.replace_label(
+            generated_item,
+            remove_label_value=PLANNED_LABEL,
+            add_label_value=target_state,
+            repo=REPO,
+            run_command_fn=run_command,
+        ):
+            print(f"[Approval] Failed to transition generated issue #{generated_issue_number} to '{target_state}'.")
+            return False
+
+        refreshed_generated_item, refreshed_generated_ok = github_client.get_item(
+            "issue",
+            generated_issue_number,
+            repo=REPO,
+            run_command_fn=run_command,
+            fields="number,labels,state,closed,locked",
+        )
+        if not refreshed_generated_ok or refreshed_generated_item is None:
+            print(f"[Approval] Failed to reload generated issue #{generated_issue_number} after transition.")
+            return False
+
+        refreshed_generated_item["type"] = "issue"
+        if not _validate_single_primary_state(refreshed_generated_item, target_state, "Generated issue"):
+            return False
+
+        transitioned_issue_numbers.append(generated_issue_number)
+
+    audit_lines = [
+        "Implementation-plan approval executed.",
+        f"- Source issue: #{source_issue_number}",
+        f"- Planner result comment id: {selected_comment_id}",
+        f"- Recommendation comment id: {recommendation_comment_id}",
+        f"- Roadmap PR: #{roadmap_pr}",
+        f"- Transitioned generated issues: {', '.join(f'#{issue_number}' for issue_number in transitioned_issue_numbers)}",
+    ]
+    add_comment(
+        {
+            "type": "issue",
+            "number": source_issue_number,
+            "comment": "\n".join(audit_lines),
+        }
+    )
+
+    if not github_client.replace_label(
+        source_item,
+        remove_label_value=IMPLEMENTATION_PLAN_REVIEW_LABEL,
+        add_label_value=IMPLEMENTATION_PLAN_REVIEWED_LABEL,
+        repo=REPO,
+        run_command_fn=run_command,
+    ):
+        print(f"[Approval] Failed to transition source issue #{source_issue_number}.")
+        return False
+
+    refreshed_source_item, refreshed_source_ok = github_client.get_item(
+        "issue",
+        source_issue_number,
+        repo=REPO,
+        run_command_fn=run_command,
+        fields="number,labels,state,closed,locked",
+    )
+    if not refreshed_source_ok or refreshed_source_item is None:
+        print(f"[Approval] Failed to reload source issue #{source_issue_number} after transition.")
+        return False
+
+    refreshed_source_item["type"] = "issue"
+    if not _validate_single_primary_state(refreshed_source_item, IMPLEMENTATION_PLAN_REVIEWED_LABEL, "Source issue"):
+        return False
+
+    print(f"[Approval] Source issue #{source_issue_number} transitioned to '{IMPLEMENTATION_PLAN_REVIEWED_LABEL}'.")
     return True
 
 

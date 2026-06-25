@@ -92,7 +92,34 @@ class MainStartupTests(unittest.TestCase):
                 with patch.dict(os.environ, {"CIRCUS_REPO": "owner/repo"}, clear=False):
                     main.main(["--approve-implementation-plan", "143"])
 
-        mock_approve.assert_called_once_with("owner/repo", 143)
+        mock_approve.assert_called_once_with(
+            "owner/repo",
+            143,
+            plan_comment_id=None,
+            dry_run=False,
+        )
+        mock_poll.assert_not_called()
+
+    def test_main_approve_implementation_plan_supports_comment_id_and_dry_run(self):
+        with patch.object(main, "run_implementation_plan_approval", return_value=True) as mock_approve:
+            with patch.object(main, "launch_handler_polling") as mock_poll:
+                with patch.dict(os.environ, {"CIRCUS_REPO": "owner/repo"}, clear=False):
+                    main.main(
+                        [
+                            "--approve-implementation-plan",
+                            "143",
+                            "--approve-implementation-plan-comment-id",
+                            "98765",
+                            "--dry-run",
+                        ]
+                    )
+
+        mock_approve.assert_called_once_with(
+            "owner/repo",
+            143,
+            plan_comment_id=98765,
+            dry_run=True,
+        )
         mock_poll.assert_not_called()
 
     def test_main_approve_implementation_plan_requires_circus_repo(self):

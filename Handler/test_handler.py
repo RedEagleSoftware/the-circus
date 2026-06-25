@@ -2893,15 +2893,19 @@ class HandlerObservabilityTests(unittest.TestCase):
     def test_parse_planner_result_v1_returns_generated_issues_with_next_state(self):
         body = (
             "Implementation plan ready for approval.\n\n"
-            "```json\n"
-            "{\n"
-            '  "planner_result_v1": {\n'
-            '    "generated_issues": [\n'
-            '      {"issue_number": 201, "next_state_after_approval": "state:ready-for-dev"},\n'
-            '      {"issue_number": 202, "next_state_after_approval": "state:ready-for-architecture"}\n'
-            "    ]\n"
-            "  }\n"
-            "}\n"
+            "```yaml\n"
+            "planner_result_v1:\n"
+            "  outcome: READY\n"
+            "  parent_issue: 143\n"
+            "  recommendation_comment_id: 50001\n"
+            "  roadmap_pr: 90\n"
+            "  generated_issues:\n"
+            "    - number: 201\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-dev\n"
+            "    - number: 202\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-architecture\n"
             "```\n"
         )
 
@@ -2910,15 +2914,27 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(
             planner_result,
             {
+                "outcome": "READY",
+                "parent_issue": 143,
+                "recommendation_comment_id": 50001,
+                "roadmap_pr": 90,
                 "generated_issues": [
-                    {"issue_number": 201, "next_state_after_approval": "state:ready-for-dev"},
-                    {"issue_number": 202, "next_state_after_approval": "state:ready-for-architecture"},
-                ]
+                    {
+                        "issue_number": 201,
+                        "initial_state": "state:planned",
+                        "next_state_after_approval": "state:ready-for-dev",
+                    },
+                    {
+                        "issue_number": 202,
+                        "initial_state": "state:planned",
+                        "next_state_after_approval": "state:ready-for-architecture",
+                    },
+                ],
             },
         )
 
     def test_parse_planner_result_v1_rejects_missing_generated_issues(self):
-        body = "```json\n{\"planner_result_v1\": {}}\n```"
+        body = "```yaml\nplanner_result_v1:\n  outcome: READY\n```"
 
         planner_result = handler.parse_planner_result_v1(body)
 
@@ -2926,70 +2942,202 @@ class HandlerObservabilityTests(unittest.TestCase):
 
     def test_approve_implementation_plan_review_transitions_source_and_generated_issues(self):
         source_issue_number = 143
+        planner_comment_id = 9001
+        recommendation_comment_id = 4001
+        roadmap_pr_number = 88
+        plan_body = (
+            "```yaml\n"
+            "planner_result_v1:\n"
+            "  outcome: READY\n"
+            "  parent_issue: 143\n"
+            "  recommendation_comment_id: 4001\n"
+            "  roadmap_pr: 88\n"
+            "  generated_issues:\n"
+            "    - number: 201\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-dev\n"
+            "    - number: 202\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-architecture\n"
+            "```"
+        )
         source_item = {
             "type": "issue",
             "number": source_issue_number,
             "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
             "labels": [
                 {"name": "state:ready-for-implementation-plan-review"},
                 {"name": "status:triage"},
             ],
             "comments": [
+                {"id": recommendation_comment_id, "body": "Recommendation details"},
                 {
-                    "body": (
-                        "```json\n"
-                        "{\n"
-                        '  "planner_result_v1": {\n'
-                        '    "generated_issues": [\n'
-                        '      {"issue_number": 201, "next_state_after_approval": "state:ready-for-dev"},\n'
-                        '      {"issue_number": 202, "next_state_after_approval": "state:ready-for-architecture"}\n'
-                        "    ]\n"
-                        "  }\n"
-                        "}\n"
-                        "```"
-                    )
+                    "id": planner_comment_id,
+                    "body": plan_body,
                 }
             ],
+        }
+        roadmap_pr_item = {
+            "number": roadmap_pr_number,
+            "state": "MERGED",
+            "mergedAt": "2026-06-23T10:11:12Z",
+            "title": "Roadmap update",
+            "url": "https://github.com/owner/repo/pull/88",
         }
         generated_issue_201 = {
             "type": "issue",
             "number": 201,
             "title": "Generated issue A",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
             "labels": [{"name": "state:planned"}],
+            "body": "Parent #143\nRecommendation 4001\nRoadmap #88\nNext state: state:ready-for-dev",
         }
         generated_issue_202 = {
             "type": "issue",
             "number": 202,
             "title": "Generated issue B",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
             "labels": [{"name": "state:planned"}],
+            "body": "Parent #143\nRecommendation 4001\nRoadmap #88\nNext state: state:ready-for-architecture",
+        }
+        generated_issue_201_after = {
+            "type": "issue",
+            "number": 201,
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-dev"}],
+        }
+        generated_issue_202_after = {
+            "type": "issue",
+            "number": 202,
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-architecture"}],
+        }
+        source_item_after = {
+            "type": "issue",
+            "number": source_issue_number,
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:implementation-plan-reviewed"}],
         }
 
         with patch.object(handler.github_client, "get_item") as mock_get_item:
             mock_get_item.side_effect = [
                 (source_item, True),
+                (roadmap_pr_item, True),
                 (generated_issue_201, True),
                 (generated_issue_202, True),
+                (generated_issue_201_after, True),
+                (generated_issue_202_after, True),
+                (source_item_after, True),
             ]
-            with patch.object(handler.github_client, "remove_label", return_value=True) as mock_remove_label:
-                with patch.object(handler.github_client, "add_label", return_value=True) as mock_add_label:
-                    approved = handler.approve_implementation_plan_review(source_issue_number)
+            with patch.object(handler.github_client, "replace_label", return_value=True) as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(
+                        source_issue_number,
+                        plan_comment_id=planner_comment_id,
+                    )
 
         self.assertTrue(approved)
-        self.assertEqual(mock_get_item.call_count, 3)
-        mock_remove_label.assert_has_calls(
+        self.assertEqual(mock_get_item.call_count, 7)
+        mock_replace_label.assert_has_calls(
             [
-                unittest.mock.call("issue", source_issue_number, "state:ready-for-implementation-plan-review", repo="owner/repo"),
-                unittest.mock.call("issue", 201, "state:planned", repo="owner/repo"),
-                unittest.mock.call("issue", 202, "state:planned", repo="owner/repo"),
+                unittest.mock.call(
+                    generated_issue_201,
+                    remove_label_value="state:planned",
+                    add_label_value="state:ready-for-dev",
+                    repo=unittest.mock.ANY,
+                    run_command_fn=unittest.mock.ANY,
+                ),
+                unittest.mock.call(
+                    generated_issue_202,
+                    remove_label_value="state:planned",
+                    add_label_value="state:ready-for-architecture",
+                    repo=unittest.mock.ANY,
+                    run_command_fn=unittest.mock.ANY,
+                ),
+                unittest.mock.call(
+                    source_item,
+                    remove_label_value="state:ready-for-implementation-plan-review",
+                    add_label_value="state:implementation-plan-reviewed",
+                    repo=unittest.mock.ANY,
+                    run_command_fn=unittest.mock.ANY,
+                ),
             ]
         )
-        mock_add_label.assert_has_calls(
-            [
-                unittest.mock.call("issue", source_issue_number, "state:implementation-plan-reviewed", repo="owner/repo"),
-                unittest.mock.call("issue", 201, "state:ready-for-dev", repo="owner/repo"),
-                unittest.mock.call("issue", 202, "state:ready-for-architecture", repo="owner/repo"),
+        mock_add_comment.assert_called_once()
+
+    def test_approve_implementation_plan_review_dry_run_skips_mutations(self):
+        source_item = {
+            "type": "issue",
+            "number": 143,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+            "comments": [
+                {"id": 4001, "body": "Recommendation details"},
+                {
+                    "id": 9001,
+                    "body": (
+                        "```yaml\n"
+                        "planner_result_v1:\n"
+                        "  outcome: READY\n"
+                        "  parent_issue: 143\n"
+                        "  recommendation_comment_id: 4001\n"
+                        "  roadmap_pr: 88\n"
+                        "  generated_issues:\n"
+                        "    - number: 201\n"
+                        "      initial_state: state:planned\n"
+                        "      next_state_after_approval: state:ready-for-dev\n"
+                        "```"
+                    ),
+                },
+            ],
+        }
+        roadmap_pr_item = {
+            "number": 88,
+            "state": "MERGED",
+            "mergedAt": "2026-06-23T10:11:12Z",
+            "title": "Roadmap update",
+            "url": "https://github.com/owner/repo/pull/88",
+        }
+        generated_issue_201 = {
+            "type": "issue",
+            "number": 201,
+            "title": "Generated issue A",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:planned"}],
+            "body": "Parent #143\nRecommendation 4001\nRoadmap #88\nNext state: state:ready-for-dev",
+        }
+
+        with patch.object(handler.github_client, "get_item") as mock_get_item:
+            mock_get_item.side_effect = [
+                (source_item, True),
+                (roadmap_pr_item, True),
+                (generated_issue_201, True),
             ]
-        )
+            with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(143, plan_comment_id=9001, dry_run=True)
+
+        self.assertTrue(approved)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
 
     def test_approve_implementation_plan_review_rejects_missing_review_state_label(self):
         source_item = {
