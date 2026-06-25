@@ -4,7 +4,6 @@ ROADMAP_UPDATE_LABEL = "state:ready-for-roadmap-update"
 IMPLEMENTATION_PLANNING_LABEL = "state:ready-for-implementation-planning"
 IMPLEMENTATION_PLANNING_CHANGES_REQUESTED_LABEL = "state:implementation-planning-changes-requested"
 IMPLEMENTATION_PLAN_REVIEW_LABEL = "state:ready-for-implementation-plan-review"
-IMPLEMENTATION_PLAN_REVIEWED_LABEL = "state:implementation-plan-reviewed"
 PLANNED_LABEL = "state:planned"
 ARCHITECTURE_LABEL = "state:ready-for-architecture"
 DEVELOPER_LABEL = "state:ready-for-dev"
@@ -69,12 +68,6 @@ WORKFLOW_STATES = {
     IMPLEMENTATION_PLAN_REVIEW_LABEL: {
         "description": "Implementation plan ready for human review and approval before coding dispatch.",
         "color": "FBCA04",
-        "human_owned": True,
-        "terminal": True,
-    },
-    IMPLEMENTATION_PLAN_REVIEWED_LABEL: {
-        "description": "Implementation plan review completed and approved by a human.",
-        "color": "0E8A16",
         "human_owned": True,
         "terminal": True,
     },

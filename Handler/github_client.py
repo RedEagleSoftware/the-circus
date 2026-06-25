@@ -20,7 +20,7 @@ def add_comment(item, repo, run_command_fn):
     body = item["comment"]
 
     cmd = f"gh {target} comment {number} --repo {repo} --body {json.dumps(body)}"
-    run_command_fn(cmd)
+    return run_command_fn(cmd) is not None
 
 
 def verify_github_repo_access(repo, run_command_fn, log=print):

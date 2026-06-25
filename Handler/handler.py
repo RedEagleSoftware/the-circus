@@ -19,7 +19,7 @@ from Handler import target_instructions
 from Handler import watchtower
 from Handler import workflow
 from Handler.workflow_states import (
-    IMPLEMENTATION_PLAN_REVIEWED_LABEL,
+    HUMAN_REVIEW_LABEL,
     IMPLEMENTATION_PLAN_REVIEW_LABEL,
     IMPLEMENTATION_PLANNING_CHANGES_REQUESTED_LABEL,
     IMPLEMENTATION_PLANNING_LABEL,
@@ -87,7 +87,7 @@ def run_command(cmd):
 
 
 def add_comment(item):
-    github_client.add_comment(item, repo=REPO, run_command_fn=run_command)
+    return github_client.add_comment(item, repo=REPO, run_command_fn=run_command)
 
 
 def verify_github_repo_access():
@@ -1091,7 +1091,8 @@ def _is_open_unlocked(item):
     if isinstance(state_value, str) and state_value.lower() != "open":
         return False
 
-    if item.get("locked") is True:
+    label_names = _label_names(item)
+    if workflow.is_locked(label_names):
         return False
 
     return True
@@ -1116,6 +1117,33 @@ def _contains_traceability(body_text, source_issue_number, recommendation_commen
     return True
 
 
+def _add_source_audit_comment(source_issue_number, audit_lines):
+    return add_comment(
+        {
+            "type": "issue",
+            "number": source_issue_number,
+            "comment": "\n".join(audit_lines),
+        }
+    )
+
+
+def _report_approval_failure(source_issue_number, reason, transitioned_issue_numbers):
+    audit_lines = [
+        "Implementation-plan approval failed.",
+        f"- Source issue: #{source_issue_number}",
+        f"- Reason: {reason}",
+    ]
+
+    if transitioned_issue_numbers:
+        audit_lines.append(
+            "- Generated issues transitioned before failure: "
+            + ", ".join(f"#{issue_number}" for issue_number in transitioned_issue_numbers)
+        )
+
+    if not _add_source_audit_comment(source_issue_number, audit_lines):
+        print(f"[Approval] Failed to record failure audit comment on source issue #{source_issue_number}.")
+
+
 def approve_implementation_plan_review(source_issue_number, plan_comment_id=None, dry_run=False):
     if plan_comment_id is not None and (not isinstance(plan_comment_id, int) or plan_comment_id <= 0):
         print("[Approval] The --approve-implementation-plan-comment-id value must be a positive integer.")
@@ -1126,7 +1154,7 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
         source_issue_number,
         repo=REPO,
         run_command_fn=run_command,
-        fields="number,labels,title,url,comments,state,closed,locked",
+        fields="number,labels,title,url,comments,state,closed",
     )
     if not source_ok or source_item is None:
         print(f"[Approval] Failed to load source issue #{source_issue_number}.")
@@ -1225,6 +1253,14 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
         print(f"[Approval] Roadmap PR #{roadmap_pr} must be merged before approval.")
         return False
 
+    transitioned_issue_numbers = []
+
+    def _fail(reason):
+        print(reason)
+        if not dry_run:
+            _report_approval_failure(source_issue_number, reason, transitioned_issue_numbers)
+        return False
+
     generated_issues = []
     for generated_issue in planner_result["generated_issues"]:
         generated_issue_number = generated_issue["issue_number"]
@@ -1250,21 +1286,22 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
             generated_issue_number,
             repo=REPO,
             run_command_fn=run_command,
-            fields="number,labels,title,url,state,closed,locked,body",
+            fields="number,labels,title,url,state,closed,body",
         )
         if not generated_ok or generated_item is None:
-            print(f"[Approval] Failed to load generated issue #{generated_issue_number}.")
-            return False
+            return _fail(f"[Approval] Failed to load generated issue #{generated_issue_number}.")
 
         generated_item["type"] = "issue"
         if not _is_open_unlocked(generated_item):
-            print(
+            return _fail(
                 f"[Approval] Generated issue #{generated_issue_number} must be open and unlocked before approval."
             )
-            return False
 
         if not _validate_single_primary_state(generated_item, PLANNED_LABEL, "Generated issue"):
-            return False
+            return _fail(
+                f"[Approval] Generated issue #{generated_issue_number} must be in '{PLANNED_LABEL}' with exactly "
+                "one primary state label before approval."
+            )
 
         if not _contains_traceability(
             generated_item.get("body"),
@@ -1273,11 +1310,10 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
             roadmap_pr,
             target_state,
         ):
-            print(
+            return _fail(
                 f"[Approval] Generated issue #{generated_issue_number} is missing required traceability markers "
                 "(source issue, recommendation comment id, roadmap PR, and next state)."
             )
-            return False
 
         generated_issues.append((generated_item, target_state))
 
@@ -1285,7 +1321,6 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
         print(f"[Approval] Dry run: validation succeeded for source issue #{source_issue_number}.")
         return True
 
-    transitioned_issue_numbers = []
     for generated_item, target_state in generated_issues:
         generated_issue_number = generated_item["number"]
         if not github_client.replace_label(
@@ -1295,23 +1330,28 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
             repo=REPO,
             run_command_fn=run_command,
         ):
-            print(f"[Approval] Failed to transition generated issue #{generated_issue_number} to '{target_state}'.")
-            return False
+            return _fail(
+                f"[Approval] Failed to transition generated issue #{generated_issue_number} to '{target_state}'."
+            )
 
         refreshed_generated_item, refreshed_generated_ok = github_client.get_item(
             "issue",
             generated_issue_number,
             repo=REPO,
             run_command_fn=run_command,
-            fields="number,labels,state,closed,locked",
+            fields="number,labels,state,closed",
         )
         if not refreshed_generated_ok or refreshed_generated_item is None:
-            print(f"[Approval] Failed to reload generated issue #{generated_issue_number} after transition.")
-            return False
+            return _fail(
+                f"[Approval] Failed to reload generated issue #{generated_issue_number} after transition."
+            )
 
         refreshed_generated_item["type"] = "issue"
         if not _validate_single_primary_state(refreshed_generated_item, target_state, "Generated issue"):
-            return False
+            return _fail(
+                f"[Approval] Generated issue #{generated_issue_number} did not keep exactly one primary state "
+                f"'{target_state}' after transition."
+            )
 
         transitioned_issue_numbers.append(generated_issue_number)
 
@@ -1323,40 +1363,39 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
         f"- Roadmap PR: #{roadmap_pr}",
         f"- Transitioned generated issues: {', '.join(f'#{issue_number}' for issue_number in transitioned_issue_numbers)}",
     ]
-    add_comment(
-        {
-            "type": "issue",
-            "number": source_issue_number,
-            "comment": "\n".join(audit_lines),
-        }
-    )
+    if not _add_source_audit_comment(source_issue_number, audit_lines):
+        print(f"[Approval] Failed to record approval audit comment on source issue #{source_issue_number}.")
+        return False
 
     if not github_client.replace_label(
         source_item,
         remove_label_value=IMPLEMENTATION_PLAN_REVIEW_LABEL,
-        add_label_value=IMPLEMENTATION_PLAN_REVIEWED_LABEL,
+        add_label_value=HUMAN_REVIEW_LABEL,
         repo=REPO,
         run_command_fn=run_command,
     ):
-        print(f"[Approval] Failed to transition source issue #{source_issue_number}.")
-        return False
+        return _fail(
+            f"[Approval] Failed to transition source issue #{source_issue_number} to '{HUMAN_REVIEW_LABEL}'."
+        )
 
     refreshed_source_item, refreshed_source_ok = github_client.get_item(
         "issue",
         source_issue_number,
         repo=REPO,
         run_command_fn=run_command,
-        fields="number,labels,state,closed,locked",
+        fields="number,labels,state,closed",
     )
     if not refreshed_source_ok or refreshed_source_item is None:
-        print(f"[Approval] Failed to reload source issue #{source_issue_number} after transition.")
-        return False
+        return _fail(f"[Approval] Failed to reload source issue #{source_issue_number} after transition.")
 
     refreshed_source_item["type"] = "issue"
-    if not _validate_single_primary_state(refreshed_source_item, IMPLEMENTATION_PLAN_REVIEWED_LABEL, "Source issue"):
-        return False
+    if not _validate_single_primary_state(refreshed_source_item, HUMAN_REVIEW_LABEL, "Source issue"):
+        return _fail(
+            f"[Approval] Source issue #{source_issue_number} did not keep exactly one primary state "
+            f"'{HUMAN_REVIEW_LABEL}' after transition."
+        )
 
-    print(f"[Approval] Source issue #{source_issue_number} transitioned to '{IMPLEMENTATION_PLAN_REVIEWED_LABEL}'.")
+    print(f"[Approval] Source issue #{source_issue_number} transitioned to '{HUMAN_REVIEW_LABEL}'.")
     return True
 
 
