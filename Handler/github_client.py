@@ -20,7 +20,7 @@ def add_comment(item, repo, run_command_fn):
     body = item["comment"]
 
     cmd = f"gh {target} comment {number} --repo {repo} --body {json.dumps(body)}"
-    run_command_fn(cmd)
+    return run_command_fn(cmd) is not None
 
 
 def verify_github_repo_access(repo, run_command_fn, log=print):
@@ -63,8 +63,8 @@ def get_candidates(item_type, list_cmd, repo, run_command_fn):
     return items, True
 
 
-def get_item(item_type, number, repo, run_command_fn):
-    cmd = f"gh {item_type} view {number} --repo {repo} --json number,labels,title,url"
+def get_item(item_type, number, repo, run_command_fn, fields="number,labels,title,url"):
+    cmd = f"gh {item_type} view {number} --repo {repo} --json {fields}"
     payload = run_command_fn(cmd)
     if payload is None:
         return None, False
@@ -98,6 +98,14 @@ def remove_label(item, label, repo, run_command_fn):
 
 def add_label(item, label, repo, run_command_fn):
     cmd = f"gh {item['type']} edit {item['number']} --repo {repo} --add-label \"{label}\""
+    return run_command_fn(cmd) is not None
+
+
+def replace_label(item, remove_label_value, add_label_value, repo, run_command_fn):
+    cmd = (
+        f"gh {item['type']} edit {item['number']} --repo {repo} "
+        f"--remove-label \"{remove_label_value}\" --add-label \"{add_label_value}\""
+    )
     return run_command_fn(cmd) is not None
 
 

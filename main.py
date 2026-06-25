@@ -134,6 +134,19 @@ def run_label_sync(repo):
     return label_sync.sync_required_labels(repo)
 
 
+def run_implementation_plan_approval(repo, issue_number, plan_comment_id=None, dry_run=False):
+    import Handler.handler as handler
+
+    print_startup_banner(repo, "<not required for implementation plan approval>")
+    print(f"[Startup] Approving implementation plan review for issue #{issue_number}...")
+    handler.REPO = repo
+    return handler.approve_implementation_plan_review(
+        issue_number,
+        plan_comment_id=plan_comment_id,
+        dry_run=dry_run,
+    )
+
+
 def validate_init_target_path():
     target_repo_path = os.getenv("CIRCUS_TARGET_REPO_PATH")
     if not target_repo_path:
@@ -200,6 +213,26 @@ def main(argv=None):
         action="store_true",
         help="Initialize target repository instruction scaffolding under CIRCUS_TARGET_REPO_PATH and exit.",
     )
+    parser.add_argument(
+        "--approve-implementation-plan",
+        type=int,
+        metavar="ISSUE_NUMBER",
+        help="Approve implementation-plan review and dispatch generated issues according to planner_result_v1.",
+    )
+    parser.add_argument(
+        "--approve-implementation-plan-comment-id",
+        type=int,
+        metavar="COMMENT_ID",
+        help=(
+            "Comment id containing planner_result_v1 to approve. Required when multiple candidate payloads "
+            "exist on the source issue."
+        ),
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate implementation-plan approval inputs without mutating labels or posting audit comments.",
+    )
     args = parser.parse_args(argv)
 
     load_dotenv()
@@ -209,6 +242,18 @@ def main(argv=None):
         if not repo:
             return
         run_label_sync(repo)
+        return
+
+    if args.approve_implementation_plan is not None:
+        repo = validate_repo_config()
+        if not repo:
+            return
+        run_implementation_plan_approval(
+            repo,
+            args.approve_implementation_plan,
+            plan_comment_id=args.approve_implementation_plan_comment_id,
+            dry_run=args.dry_run,
+        )
         return
 
     if args.init:

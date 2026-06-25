@@ -86,6 +86,51 @@ class MainStartupTests(unittest.TestCase):
         mock_sync.assert_called_once_with("owner/repo")
         mock_poll.assert_not_called()
 
+    def test_main_approve_implementation_plan_runs_approval_and_skips_polling(self):
+        with patch.object(main, "run_implementation_plan_approval", return_value=True) as mock_approve:
+            with patch.object(main, "launch_handler_polling") as mock_poll:
+                with patch.dict(os.environ, {"CIRCUS_REPO": "owner/repo"}, clear=False):
+                    main.main(["--approve-implementation-plan", "143"])
+
+        mock_approve.assert_called_once_with(
+            "owner/repo",
+            143,
+            plan_comment_id=None,
+            dry_run=False,
+        )
+        mock_poll.assert_not_called()
+
+    def test_main_approve_implementation_plan_supports_comment_id_and_dry_run(self):
+        with patch.object(main, "run_implementation_plan_approval", return_value=True) as mock_approve:
+            with patch.object(main, "launch_handler_polling") as mock_poll:
+                with patch.dict(os.environ, {"CIRCUS_REPO": "owner/repo"}, clear=False):
+                    main.main(
+                        [
+                            "--approve-implementation-plan",
+                            "143",
+                            "--approve-implementation-plan-comment-id",
+                            "98765",
+                            "--dry-run",
+                        ]
+                    )
+
+        mock_approve.assert_called_once_with(
+            "owner/repo",
+            143,
+            plan_comment_id=98765,
+            dry_run=True,
+        )
+        mock_poll.assert_not_called()
+
+    def test_main_approve_implementation_plan_requires_circus_repo(self):
+        with patch.object(main, "run_implementation_plan_approval") as mock_approve:
+            with patch.object(main, "launch_handler_polling") as mock_poll:
+                with patch.dict(os.environ, {"CIRCUS_REPO": ""}, clear=False):
+                    main.main(["--approve-implementation-plan", "143"])
+
+        mock_approve.assert_not_called()
+        mock_poll.assert_not_called()
+
     def test_main_default_path_does_not_run_label_sync(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(main, "run_label_sync") as mock_sync:
