@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,8 +19,11 @@ from Handler import target_instructions
 from Handler import watchtower
 from Handler import workflow
 from Handler.workflow_states import (
+    DEVELOPER_LABEL,
     IMPLEMENTATION_PLANNING_CHANGES_REQUESTED_LABEL,
     IMPLEMENTATION_PLANNING_LABEL,
+    IMPLEMENTATION_PLAN_REVIEW_LABEL,
+    PLANNED_LABEL,
     ROADMAP_UPDATE_LABEL,
     SYSTEMS_ARCHITECTURE_CHANGES_REQUESTED_LABEL,
     SYSTEMS_ARCHITECTURE_LABEL,
@@ -47,6 +51,7 @@ IMPLEMENTATION_PLAN_FILENAME = watchtower.IMPLEMENTATION_PLAN_FILENAME
 REVIEW_OUTCOMES = workflow.REVIEW_OUTCOMES
 REVIEW_OUTCOME_MARKERS = workflow.REVIEW_OUTCOME_MARKERS
 IMPLEMENTATION_PLAN_OUTCOMES = {"READY", "BLOCKED", "ESCALATION_REQUIRED"}
+IMPLEMENTATION_PLAN_APPROVAL_MARKER = "approve implementation plan"
 
 AGENT_EXECUTABLE_ENV_OVERRIDES = {
     "junie": "CIRCUS_JUNIE_EXECUTABLE",
@@ -206,6 +211,10 @@ def get_candidates(item_type, list_cmd):
 
 def get_current_item(item):
     return github_client.get_item(item["type"], item["number"], repo=REPO, run_command_fn=run_command)
+
+
+def get_issue_comments(issue_number):
+    return github_client.get_issue_comments(issue_number, repo=REPO, run_command_fn=run_command)
 
 
 def get_labeled_items():
@@ -832,6 +841,159 @@ def parse_implementation_plan_outcome(implementation_plan_path):
             return outcome
     except OSError:
         return None
+
+
+def extract_issue_numbers_from_text(text):
+    if not isinstance(text, str):
+        return []
+
+    issue_numbers = []
+    seen = set()
+
+    for match in re.finditer(r"/issues/(\d+)\b", text):
+        issue_number = int(match.group(1))
+        if issue_number in seen:
+            continue
+        issue_numbers.append(issue_number)
+        seen.add(issue_number)
+
+    for match in re.finditer(r"(?<![A-Za-z0-9_/])#(\d+)\b", text):
+        issue_number = int(match.group(1))
+        if issue_number in seen:
+            continue
+        issue_numbers.append(issue_number)
+        seen.add(issue_number)
+
+    return issue_numbers
+
+
+def find_latest_implementation_plan_approval(comments):
+    if not isinstance(comments, list):
+        return None
+
+    for comment in reversed(comments):
+        body = comment.get("body")
+        if not isinstance(body, str):
+            continue
+
+        if IMPLEMENTATION_PLAN_APPROVAL_MARKER not in body.lower():
+            continue
+
+        issue_numbers = extract_issue_numbers_from_text(body)
+        return {
+            "comment": comment,
+            "issue_numbers": issue_numbers,
+        }
+
+    return None
+
+
+def process_implementation_plan_review_approval(item):
+    labels = [label["name"] for label in item.get("labels", [])]
+    if IMPLEMENTATION_PLAN_REVIEW_LABEL not in labels:
+        return False
+
+    comments_result = get_issue_comments(item["number"])
+    if not comments_result.get("ok"):
+        error = comments_result.get("error", "unable to query issue comments")
+        print(
+            f"[PlanApproval] Unable to evaluate implementation plan approval for issue #{item['number']}: {error}."
+        )
+        return False
+
+    approval = find_latest_implementation_plan_approval(comments_result.get("comments", []))
+    if approval is None:
+        return False
+
+    approved_issue_numbers = [
+        issue_number for issue_number in approval.get("issue_numbers", []) if issue_number != item["number"]
+    ]
+    if not approved_issue_numbers:
+        item["comment"] = (
+            "⚠️ Handler detected an implementation-plan approval comment, but it did not reference any generated "
+            "implementation issues. No labels were changed. Please include the approved generated issue links and "
+            "retry with `approve implementation plan`."
+        )
+        add_comment(item)
+        return True
+
+    validated_generated_issues = []
+    validation_errors = []
+    for issue_number in approved_issue_numbers:
+        generated_issue, issue_ok = github_client.get_item("issue", issue_number, repo=REPO, run_command_fn=run_command)
+        if not issue_ok or not generated_issue:
+            validation_errors.append(f"- issue #{issue_number}: not found or inaccessible")
+            continue
+
+        generated_labels = [label["name"] for label in generated_issue.get("labels", [])]
+        state_labels = get_state_labels(generated_labels)
+        if state_labels != [PLANNED_LABEL]:
+            state_display = ", ".join(state_labels) if state_labels else "<none>"
+            validation_errors.append(
+                f"- issue #{issue_number}: expected primary state `{PLANNED_LABEL}`, found `{state_display}`"
+            )
+            continue
+
+        validated_generated_issues.append(generated_issue)
+
+    if validation_errors:
+        item["comment"] = (
+            "⚠️ Handler found an implementation-plan approval comment but validation failed before any label "
+            "transitions were applied. The source issue remains in implementation-plan review.\n\n"
+            "Validation errors:\n"
+            + "\n".join(validation_errors)
+        )
+        add_comment(item)
+        return True
+
+    successful_issue_transitions = []
+    failed_issue_transitions = []
+    for generated_issue in validated_generated_issues:
+        remove_ok = remove_label(generated_issue, PLANNED_LABEL)
+        add_ok = remove_ok and add_label(generated_issue, DEVELOPER_LABEL)
+        if remove_ok and add_ok:
+            successful_issue_transitions.append(generated_issue["number"])
+            continue
+
+        failed_issue_transitions.append(generated_issue["number"])
+
+    if failed_issue_transitions:
+        success_display = ", ".join(f"#{number}" for number in successful_issue_transitions) or "none"
+        failure_display = ", ".join(f"#{number}" for number in failed_issue_transitions)
+        item["comment"] = (
+            "⚠️ Handler processed an implementation-plan approval comment, but not all generated issue label "
+            "transitions succeeded. The source issue remains in implementation-plan review for safety.\n\n"
+            f"Transitioned generated issues: {success_display}\n"
+            f"Failed generated issues: {failure_display}"
+        )
+        add_comment(item)
+        return True
+
+    source_remove_ok = remove_label(item, IMPLEMENTATION_PLAN_REVIEW_LABEL)
+    source_add_ok = source_remove_ok and add_label(item, DEVELOPER_LABEL)
+    if not source_remove_ok or not source_add_ok:
+        transitioned_display = ", ".join(f"#{number}" for number in successful_issue_transitions)
+        item["comment"] = (
+            "⚠️ Handler transitioned all approved generated issues to developer-ready, but could not transition the "
+            "source issue from implementation-plan review to developer-ready.\n\n"
+            f"Transitioned generated issues: {transitioned_display}\n"
+            "Please inspect source issue labels manually."
+        )
+        add_comment(item)
+        return True
+
+    transitioned_display = ", ".join(f"#{number}" for number in successful_issue_transitions)
+    item["comment"] = (
+        "✅ Implementation plan approval processed. Handler transitioned approved generated issues and moved this "
+        "source issue to developer-ready.\n\n"
+        f"Transitioned generated issues: {transitioned_display}"
+    )
+    add_comment(item)
+    print(
+        f"[PlanApproval] Processed implementation-plan approval for issue #{item['number']}; "
+        f"transitioned generated issues: {transitioned_display}."
+    )
+    return True
 
 
 def extract_github_repo_slug(value):
@@ -2334,6 +2496,15 @@ def poll():
             print("[Poll] No candidate items matched workflow labels this cycle.")
             print(f"[Handler] No eligible workflow step found. Sleeping {POLL_INTERVAL} seconds before re-polling.")
             time.sleep(POLL_INTERVAL)
+            continue
+
+        approvals_processed = False
+        for plan_review_item in items:
+            if process_implementation_plan_review_approval(plan_review_item):
+                approvals_processed = True
+
+        if approvals_processed:
+            print("[Poll] Processed implementation-plan review approvals; re-polling for updated state.")
             continue
 
         def record_dispatch_success(item, state_label):

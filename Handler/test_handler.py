@@ -468,8 +468,47 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(mock_get_labeled_items.call_count, 3)
         self.assertEqual(mock_process.call_count, 2)
 
+    def test_poll_repolls_without_dispatch_when_implementation_plan_approval_is_processed(self):
+        plan_review_item = {
+            "type": "issue",
+            "number": 70,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+        }
+
+        with patch.object(handler, "REPO", "owner/repo"):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(
+                    handler,
+                    "validate_required_executables",
+                    return_value={"gh": "gh", "git": "git", "junie": "junie", "codex": "codex"},
+                ):
+                    with patch.object(handler, "validate_target_repo_workspace", return_value=True):
+                        with patch.object(handler, "verify_github_repo_access", return_value=True):
+                            with patch.object(handler, "get_max_steps_per_run", return_value=1):
+                                with patch.object(
+                                    handler,
+                                    "get_labeled_items",
+                                    side_effect=[
+                                        ([], [], [plan_review_item], True),
+                                        ([], [], [], False),
+                                    ],
+                                ):
+                                    with patch.object(
+                                        handler,
+                                        "process_implementation_plan_review_approval",
+                                        side_effect=[True],
+                                    ) as mock_process_approval:
+                                        with patch.object(handler, "process_one_item") as mock_process_one_item:
+                                            with patch("builtins.print") as mock_print:
+                                                handler.poll()
+
+        mock_process_approval.assert_called_once_with(plan_review_item)
+        mock_process_one_item.assert_not_called()
+
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
-        self.assertTrue(any("[Handler] Re-polling for next eligible workflow step." in line for line in printed_lines))
+        self.assertTrue(
+            any("[Poll] Processed implementation-plan review approvals; re-polling for updated state." in line for line in printed_lines)
+        )
         self.assertTrue(any("[GitHub] Failed to retrieve issues/PRs this cycle; stopping current run." in line for line in printed_lines))
 
     def test_poll_stops_when_reviewer_completes_without_result_artifact(self):
@@ -639,6 +678,159 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         self.assertIsNone(item)
         self.assertFalse(ok)
+
+    def test_github_client_get_issue_comments_returns_comments_payload(self):
+        payload = json.dumps(
+            {
+                "comments": [
+                    {"body": "first"},
+                    {"body": "approve implementation plan\n- https://github.com/owner/repo/issues/201"},
+                ]
+            }
+        )
+
+        result = github_client.get_issue_comments(77, "owner/repo", Mock(return_value=payload))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(result["comments"]), 2)
+
+    def test_extract_issue_numbers_from_text_supports_issue_urls_and_shorthand(self):
+        text = (
+            "approve implementation plan\n"
+            "https://github.com/owner/repo/issues/101\n"
+            "- #202\n"
+            "- duplicate #202\n"
+            "- https://github.com/owner/repo/issues/101"
+        )
+
+        self.assertEqual(handler.extract_issue_numbers_from_text(text), [101, 202])
+
+    def test_find_latest_implementation_plan_approval_prefers_latest_matching_comment(self):
+        comments = [
+            {"body": "no-op"},
+            {"body": "approve implementation plan\n- #10"},
+            {"body": "approve implementation plan\n- #20"},
+        ]
+
+        approval = handler.find_latest_implementation_plan_approval(comments)
+
+        self.assertIsNotNone(approval)
+        self.assertEqual(approval["issue_numbers"], [20])
+
+    def test_process_implementation_plan_review_approval_returns_false_when_no_approval_comment(self):
+        item = {
+            "type": "issue",
+            "number": 70,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+        }
+
+        with patch.object(handler, "get_issue_comments", return_value={"ok": True, "comments": [{"body": "looks good"}]}) as mock_comments:
+            with patch.object(handler, "add_comment") as mock_add_comment:
+                processed = handler.process_implementation_plan_review_approval(item)
+
+        self.assertFalse(processed)
+        mock_comments.assert_called_once_with(70)
+        mock_add_comment.assert_not_called()
+
+    def test_process_implementation_plan_review_approval_fails_closed_when_generated_issue_validation_fails(self):
+        item = {
+            "type": "issue",
+            "number": 80,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+        }
+
+        comments = {
+            "ok": True,
+            "comments": [{"body": "approve implementation plan\n- #801\n- #802"}],
+        }
+        generated_issue_wrong_state = {
+            "type": "issue",
+            "number": 801,
+            "labels": [{"name": "state:ready-for-dev"}],
+        }
+
+        with patch.object(handler, "get_issue_comments", return_value=comments):
+            with patch.object(
+                handler.github_client,
+                "get_item",
+                side_effect=[(generated_issue_wrong_state, True), (None, False)],
+            ):
+                with patch.object(handler, "remove_label") as mock_remove_label:
+                    with patch.object(handler, "add_label") as mock_add_label:
+                        with patch.object(handler, "add_comment") as mock_add_comment:
+                            processed = handler.process_implementation_plan_review_approval(item)
+
+        self.assertTrue(processed)
+        mock_remove_label.assert_not_called()
+        mock_add_label.assert_not_called()
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("validation failed before any label transitions were applied", item["comment"])
+        self.assertIn("issue #801", item["comment"])
+        self.assertIn("issue #802", item["comment"])
+
+    def test_process_implementation_plan_review_approval_partial_generated_transition_failure_keeps_source_issue(self):
+        item = {
+            "type": "issue",
+            "number": 81,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+        }
+
+        comments = {
+            "ok": True,
+            "comments": [{"body": "approve implementation plan\n- #811\n- #812"}],
+        }
+        generated_issue_1 = {"type": "issue", "number": 811, "labels": [{"name": "state:planned"}]}
+        generated_issue_2 = {"type": "issue", "number": 812, "labels": [{"name": "state:planned"}]}
+
+        with patch.object(handler, "get_issue_comments", return_value=comments):
+            with patch.object(
+                handler.github_client,
+                "get_item",
+                side_effect=[(generated_issue_1, True), (generated_issue_2, True)],
+            ):
+                with patch.object(handler, "remove_label", side_effect=[True, True]):
+                    with patch.object(handler, "add_label", side_effect=[True, False]):
+                        with patch.object(handler, "add_comment") as mock_add_comment:
+                            processed = handler.process_implementation_plan_review_approval(item)
+
+        self.assertTrue(processed)
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("source issue remains in implementation-plan review", item["comment"])
+        self.assertIn("#811", item["comment"])
+        self.assertIn("#812", item["comment"])
+
+    def test_process_implementation_plan_review_approval_transitions_generated_and_source_on_success(self):
+        item = {
+            "type": "issue",
+            "number": 82,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+        }
+
+        comments = {
+            "ok": True,
+            "comments": [{"body": "approve implementation plan\n- #821\n- #822"}],
+        }
+        generated_issue_1 = {"type": "issue", "number": 821, "labels": [{"name": "state:planned"}]}
+        generated_issue_2 = {"type": "issue", "number": 822, "labels": [{"name": "state:planned"}]}
+
+        with patch.object(handler, "get_issue_comments", return_value=comments):
+            with patch.object(
+                handler.github_client,
+                "get_item",
+                side_effect=[(generated_issue_1, True), (generated_issue_2, True)],
+            ):
+                with patch.object(handler, "remove_label", return_value=True) as mock_remove_label:
+                    with patch.object(handler, "add_label", return_value=True) as mock_add_label:
+                        with patch.object(handler, "add_comment") as mock_add_comment:
+                            processed = handler.process_implementation_plan_review_approval(item)
+
+        self.assertTrue(processed)
+        self.assertEqual(mock_remove_label.call_count, 3)
+        self.assertEqual(mock_add_label.call_count, 3)
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("Implementation plan approval processed", item["comment"])
+        self.assertIn("#821", item["comment"])
+        self.assertIn("#822", item["comment"])
 
     def test_build_thin_prompt_includes_target_repo_and_launch_brief_path(self):
         item = {"type": "issue", "number": 3, "title": "Implement launch brief", "url": "https://github.com/owner/repo/issues/3"}

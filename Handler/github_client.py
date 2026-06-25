@@ -81,6 +81,41 @@ def get_item(item_type, number, repo, run_command_fn):
     return item, True
 
 
+def get_issue_comments(number, repo, run_command_fn):
+    cmd = f"gh issue view {number} --repo {repo} --json comments"
+    payload = run_command_fn(cmd)
+    if payload is None:
+        return {
+            "ok": False,
+            "error": "unable to query issue comments",
+            "comments": [],
+        }
+
+    if not payload:
+        return {
+            "ok": True,
+            "comments": [],
+        }
+
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return {
+            "ok": False,
+            "error": "unable to parse issue comments response",
+            "comments": [],
+        }
+
+    comments = data.get("comments")
+    if not isinstance(comments, list):
+        comments = []
+
+    return {
+        "ok": True,
+        "comments": comments,
+    }
+
+
 def lock_item(item, repo, lock_label, run_command_fn):
     cmd = f"gh {item['type']} edit {item['number']} --repo {repo} --add-label \"{lock_label}\""
     return run_command_fn(cmd) is not None
