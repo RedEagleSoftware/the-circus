@@ -1762,6 +1762,10 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                             "implementation plan outcome missing or invalid; expected exactly one "
                             "`### Outcome` marker with READY, BLOCKED, or ESCALATION_REQUIRED"
                         )
+                        print(
+                            "[Dispatch] Implementation planner outcome was missing or invalid; "
+                            "workflow will not advance."
+                        )
                         item["comment"] = (
                             "⚠️ Implementation planner run completed but `implementation-plan.md` did not include "
                             "a valid outcome declaration.\n\n"
@@ -1773,6 +1777,10 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     elif implementation_plan_outcome == "BLOCKED":
                         outcome_name = "blocked planning outcome"
                         stop_reason = "implementation planner reported BLOCKED outcome"
+                        print(
+                            "[Dispatch] Implementation planner reported BLOCKED outcome; "
+                            "workflow remains in implementation planning."
+                        )
                         item["comment"] = (
                             "⚠️ Implementation planner run completed with a blocked outcome.\n\n"
                             f"Outcome: `{implementation_plan_outcome}`\n"
@@ -1788,6 +1796,10 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                             "recommended route: state:systems-architecture-changes-requested"
                         )
                         artifacts["recommended_route"] = "state:systems-architecture-changes-requested"
+                        print(
+                            "[Dispatch] Implementation planner reported ESCALATION_REQUIRED outcome; "
+                            "recommended human route: state:systems-architecture-changes-requested."
+                        )
                         item["comment"] = (
                             "⚠️ Implementation planner run completed with `ESCALATION_REQUIRED`.\n\n"
                             f"Outcome: `{implementation_plan_outcome}`\n"
@@ -1797,6 +1809,10 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         )
                         item.pop("invalid_implementation_plan_outcome", None)
                     else:
+                        print(
+                            "[Dispatch] Implementation planner reported non-READY outcome "
+                            f"`{implementation_plan_outcome}`; workflow will not advance."
+                        )
                         item["comment"] = (
                             "ℹ️ Implementation planner run completed with a non-ready outcome.\n\n"
                             f"Outcome: `{implementation_plan_outcome}`\n"
