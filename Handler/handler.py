@@ -1056,6 +1056,15 @@ def _extract_comment_id(comment):
         if isinstance(candidate_value, str) and candidate_value.strip().isdigit():
             return int(candidate_value.strip())
 
+    for candidate_key in ("url", "html_url"):
+        candidate_value = comment.get(candidate_key)
+        if not isinstance(candidate_value, str):
+            continue
+
+        match = re.search(r"#issuecomment-(\d+)(?:$|\D)", candidate_value)
+        if match is not None:
+            return int(match.group(1))
+
     return None
 
 

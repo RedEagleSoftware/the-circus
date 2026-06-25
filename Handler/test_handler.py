@@ -2940,6 +2940,135 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         self.assertIsNone(planner_result)
 
+    def test_extract_comment_id_accepts_issuecomment_url_fragment(self):
+        comment = {
+            "id": "IC_kwDOExampleNodeId",
+            "url": "https://github.com/RedEagleSoftware/the-circus/issues/64#issuecomment-4789113319",
+        }
+
+        comment_id = handler._extract_comment_id(comment)
+
+        self.assertEqual(comment_id, 4789113319)
+
+    def test_approve_implementation_plan_review_accepts_url_fragment_comment_id(self):
+        source_issue_number = 143
+        planner_comment_id = 9001
+        recommendation_comment_id = 4001
+        roadmap_pr_number = 88
+        plan_body = (
+            "```yaml\n"
+            "planner_result_v1:\n"
+            "  outcome: READY\n"
+            "  parent_issue: 143\n"
+            "  recommendation_comment_id: 4001\n"
+            "  roadmap_pr: 88\n"
+            "  generated_issues:\n"
+            "    - number: 201\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-dev\n"
+            "```"
+        )
+        source_item = {
+            "type": "issue",
+            "number": source_issue_number,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [
+                {"name": "state:ready-for-implementation-plan-review"},
+                {"name": "status:triage"},
+            ],
+            "comments": [
+                {
+                    "id": "IC_kwDOExampleRecommendationNodeId",
+                    "url": (
+                        "https://github.com/RedEagleSoftware/the-circus/issues/143"
+                        "#issuecomment-4001"
+                    ),
+                    "body": "Recommendation details",
+                },
+                {
+                    "id": "IC_kwDOExamplePlannerNodeId",
+                    "url": (
+                        "https://github.com/RedEagleSoftware/the-circus/issues/143"
+                        "#issuecomment-9001"
+                    ),
+                    "body": plan_body,
+                },
+            ],
+        }
+        roadmap_pr_item = {
+            "number": roadmap_pr_number,
+            "state": "MERGED",
+            "mergedAt": "2026-06-23T10:11:12Z",
+            "title": "Roadmap update",
+            "url": "https://github.com/owner/repo/pull/88",
+        }
+        generated_issue_201 = {
+            "type": "issue",
+            "number": 201,
+            "title": "Generated issue A",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:planned"}],
+            "body": "Parent #143\nRecommendation 4001\nRoadmap #88\nNext state: state:ready-for-dev",
+        }
+        generated_issue_201_after = {
+            "type": "issue",
+            "number": 201,
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-dev"}],
+        }
+        source_item_after = {
+            "type": "issue",
+            "number": source_issue_number,
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-human-review"}],
+        }
+
+        with patch.object(handler.github_client, "get_item") as mock_get_item:
+            mock_get_item.side_effect = [
+                (source_item, True),
+                (roadmap_pr_item, True),
+                (generated_issue_201, True),
+                (generated_issue_201_after, True),
+                (source_item_after, True),
+            ]
+            with patch.object(handler.github_client, "replace_label", return_value=True) as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(
+                        source_issue_number,
+                        plan_comment_id=planner_comment_id,
+                    )
+
+        self.assertTrue(approved)
+        self.assertEqual(mock_get_item.call_count, 5)
+        mock_replace_label.assert_has_calls(
+            [
+                unittest.mock.call(
+                    generated_issue_201,
+                    remove_label_value="state:planned",
+                    add_label_value="state:ready-for-dev",
+                    repo=unittest.mock.ANY,
+                    run_command_fn=unittest.mock.ANY,
+                ),
+                unittest.mock.call(
+                    source_item,
+                    remove_label_value="state:ready-for-implementation-plan-review",
+                    add_label_value="state:ready-for-human-review",
+                    repo=unittest.mock.ANY,
+                    run_command_fn=unittest.mock.ANY,
+                ),
+            ]
+        )
+        mock_add_comment.assert_called_once()
+
     def test_approve_implementation_plan_review_transitions_source_and_generated_issues(self):
         source_issue_number = 143
         planner_comment_id = 9001
