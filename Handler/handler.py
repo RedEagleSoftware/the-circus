@@ -1747,10 +1747,24 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 implementation_plan_outcome = parse_implementation_plan_outcome(implementation_plan_path)
                 if implementation_plan_outcome != "READY":
                     normalized_implementation_plan_path = normalize_path_for_display(implementation_plan_path)
+                    outcome_name = "not ready for advancement"
+                    stop_reason = (
+                        f"implementation plan outcome `{implementation_plan_outcome}` does not permit advancement"
+                    )
+                    artifacts = {
+                        "implementation_plan": normalized_implementation_plan_path,
+                        "implementation_plan_outcome": implementation_plan_outcome,
+                    }
+
                     if implementation_plan_outcome is None:
+                        outcome_name = "invalid result artifact"
                         stop_reason = (
                             "implementation plan outcome missing or invalid; expected exactly one "
                             "`### Outcome` marker with READY, BLOCKED, or ESCALATION_REQUIRED"
+                        )
+                        print(
+                            "[Dispatch] Implementation planner outcome was missing or invalid; "
+                            "workflow will not advance."
                         )
                         item["comment"] = (
                             "⚠️ Implementation planner run completed but `implementation-plan.md` did not include "
@@ -1760,9 +1774,44 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                             "`ESCALATION_REQUIRED`. The workflow remains in implementation planning."
                         )
                         item["invalid_implementation_plan_outcome"] = True
-                    else:
+                    elif implementation_plan_outcome == "BLOCKED":
+                        outcome_name = "blocked planning outcome"
+                        stop_reason = "implementation planner reported BLOCKED outcome"
+                        print(
+                            "[Dispatch] Implementation planner reported BLOCKED outcome; "
+                            "workflow remains in implementation planning."
+                        )
+                        item["comment"] = (
+                            "⚠️ Implementation planner run completed with a blocked outcome.\n\n"
+                            f"Outcome: `{implementation_plan_outcome}`\n"
+                            f"Artifact: `{normalized_implementation_plan_path}`\n\n"
+                            "Handler did not advance labels because blocked planning outcomes require human "
+                            "follow-up before implementation-plan review can proceed."
+                        )
+                        item.pop("invalid_implementation_plan_outcome", None)
+                    elif implementation_plan_outcome == "ESCALATION_REQUIRED":
+                        outcome_name = "escalation required"
                         stop_reason = (
-                            f"implementation plan outcome `{implementation_plan_outcome}` does not permit advancement"
+                            "implementation planner reported ESCALATION_REQUIRED outcome; "
+                            "recommended route: state:systems-architecture-changes-requested"
+                        )
+                        artifacts["recommended_route"] = "state:systems-architecture-changes-requested"
+                        print(
+                            "[Dispatch] Implementation planner reported ESCALATION_REQUIRED outcome; "
+                            "recommended human route: state:systems-architecture-changes-requested."
+                        )
+                        item["comment"] = (
+                            "⚠️ Implementation planner run completed with `ESCALATION_REQUIRED`.\n\n"
+                            f"Outcome: `{implementation_plan_outcome}`\n"
+                            f"Artifact: `{normalized_implementation_plan_path}`\n\n"
+                            "Handler did not advance labels. Recommended human route: "
+                            "`state:systems-architecture-changes-requested`."
+                        )
+                        item.pop("invalid_implementation_plan_outcome", None)
+                    else:
+                        print(
+                            "[Dispatch] Implementation planner reported non-READY outcome "
+                            f"`{implementation_plan_outcome}`; workflow will not advance."
                         )
                         item["comment"] = (
                             "ℹ️ Implementation planner run completed with a non-ready outcome.\n\n"
@@ -1780,12 +1829,9 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         completed_at=utc_timestamp_now(),
                         exit_code=0,
                         success=False,
-                        outcome="invalid result artifact" if implementation_plan_outcome is None else "not ready for advancement",
+                        outcome=outcome_name,
                         stop_reason=stop_reason,
-                        artifacts={
-                            "implementation_plan": normalized_implementation_plan_path,
-                            "implementation_plan_outcome": implementation_plan_outcome,
-                        },
+                        artifacts=artifacts,
                     )
                     write_run_result(item)
                     return False
