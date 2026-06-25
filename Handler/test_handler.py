@@ -1986,8 +1986,70 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_subprocess_run.assert_called_once()
         mock_advance_transition.assert_not_called()
         mock_add_comment.assert_called_once_with(item)
-        self.assertIn("non-ready outcome", item["comment"])
+        self.assertIn("blocked outcome", item["comment"])
         self.assertIn("`BLOCKED`", item["comment"])
+
+    def test_launch_agent_codex_implementation_planner_escalation_required_outcome_stops_with_route_recommendation(
+        self,
+    ):
+        item = {
+            "type": "issue",
+            "number": 43,
+            "title": "Draft implementation plan",
+            "url": "https://github.com/owner/repo/issues/43",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "implementation-planner",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-43/run-001-implementation-planner/launch-brief.md"
+        absolute_launch_brief_path = "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/launch-brief.md"
+        implementation_plan_path = "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/implementation-plan.md"
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
+                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
+                    with patch.object(
+                        handler,
+                        "build_implementation_plan_path",
+                        return_value=implementation_plan_path,
+                    ):
+                        with patch.object(handler.os.path, "isfile", return_value=True):
+                            with patch.object(
+                                handler,
+                                "parse_implementation_plan_outcome",
+                                return_value="ESCALATION_REQUIRED",
+                            ):
+                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                    with patch.object(
+                                        handler,
+                                        "advance_implementation_planning_workflow_on_success",
+                                    ) as mock_advance_transition:
+                                        with patch.object(handler, "write_run_result"):
+                                            with patch.object(handler, "update_run_status") as mock_update_status:
+                                                launched = handler.launch_agent(
+                                                    item,
+                                                    "state:ready-for-implementation-planning",
+                                                    config,
+                                                    os.path.normpath(
+                                                        os.path.join("TheFarm", "roles", "implementation-planner.md")
+                                                    ),
+                                                    launch_brief_path,
+                                                )
+
+        self.assertFalse(launched)
+        mock_subprocess_run.assert_called_once()
+        mock_advance_transition.assert_not_called()
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("`ESCALATION_REQUIRED`", item["comment"])
+        self.assertIn("state:systems-architecture-changes-requested", item["comment"])
+        self.assertEqual(mock_update_status.call_args.kwargs["outcome"], "escalation required")
+        self.assertEqual(
+            mock_update_status.call_args.kwargs["artifacts"]["recommended_route"],
+            "state:systems-architecture-changes-requested",
+        )
 
     def test_launch_agent_codex_implementation_planner_invalid_outcome_stops_without_transition(self):
         item = {
