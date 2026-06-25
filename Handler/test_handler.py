@@ -2700,6 +2700,24 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         self.assertEqual(outcome, "READY")
 
+    def test_parse_implementation_plan_outcome_accepts_all_supported_exact_outcomes(self):
+        for expected_outcome in ("READY", "BLOCKED", "ESCALATION_REQUIRED"):
+            with self.subTest(expected_outcome=expected_outcome):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    implementation_plan_path = os.path.join(temp_dir, "implementation-plan.md")
+                    with open(implementation_plan_path, "w", encoding="utf-8") as artifact:
+                        artifact.write(
+                            "## Implementation Plan\n\n"
+                            "### Outcome\n"
+                            f"{expected_outcome}\n\n"
+                            "### Source\n"
+                            "https://github.com/owner/repo/issues/43\n"
+                        )
+
+                    outcome = handler.parse_implementation_plan_outcome(implementation_plan_path)
+
+                self.assertEqual(outcome, expected_outcome)
+
     def test_parse_implementation_plan_outcome_rejects_missing_outcome_heading(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             implementation_plan_path = os.path.join(temp_dir, "implementation-plan.md")
@@ -2727,6 +2745,31 @@ class HandlerObservabilityTests(unittest.TestCase):
             outcome = handler.parse_implementation_plan_outcome(implementation_plan_path)
 
         self.assertIsNone(outcome)
+
+    def test_parse_implementation_plan_outcome_rejects_malformed_outcome_variants(self):
+        malformed_outcome_lines = [
+            "Outcome: READY",
+            "`READY`",
+            "READY.",
+            "ready",
+        ]
+
+        for malformed_line in malformed_outcome_lines:
+            with self.subTest(malformed_line=malformed_line):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    implementation_plan_path = os.path.join(temp_dir, "implementation-plan.md")
+                    with open(implementation_plan_path, "w", encoding="utf-8") as artifact:
+                        artifact.write(
+                            "## Implementation Plan\n\n"
+                            "### Outcome\n"
+                            f"{malformed_line}\n\n"
+                            "### Source\n"
+                            "https://github.com/owner/repo/issues/43\n"
+                        )
+
+                    outcome = handler.parse_implementation_plan_outcome(implementation_plan_path)
+
+                self.assertIsNone(outcome)
 
     def test_launch_agent_codex_reviewer_runs_codex_exec_with_pr_url_and_context(self):
         item = {

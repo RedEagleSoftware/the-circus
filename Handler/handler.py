@@ -815,12 +815,7 @@ def parse_implementation_plan_outcome(implementation_plan_path):
                 if not stripped_line:
                     continue
 
-                normalized_line = stripped_line
-                if normalized_line.startswith("Outcome:"):
-                    normalized_line = normalized_line[len("Outcome:") :].strip()
-
-                normalized_line = normalized_line.strip("` ").rstrip(".")
-                candidate_outcome = normalized_line.upper()
+                candidate_outcome = stripped_line
                 if candidate_outcome in IMPLEMENTATION_PLAN_OUTCOMES:
                     if outcome is not None:
                         return None
