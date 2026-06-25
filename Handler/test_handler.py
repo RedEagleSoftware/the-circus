@@ -1467,6 +1467,21 @@ class HandlerObservabilityTests(unittest.TestCase):
     def test_required_workflow_labels_include_ready_for_system_architecture(self):
         self.assertIn("state:ready-for-systems-architecture", workflow_labels.REQUIRED_WORKFLOW_LABELS)
 
+    def test_required_workflow_labels_define_planned_as_non_dispatch_pending_human_approval(self):
+        planned = workflow_labels.REQUIRED_WORKFLOW_LABELS["state:planned"]
+
+        self.assertEqual(
+            planned["description"],
+            "Generated implementation issue pending human plan approval; not dispatchable.",
+        )
+
+    def test_planned_state_is_human_owned_and_not_dispatchable(self):
+        planned = workflow_states.WORKFLOW_STATES["state:planned"]
+
+        self.assertTrue(planned["human_owned"])
+        self.assertNotIn("dispatch", planned)
+        self.assertNotIn("state:planned", handler.LABEL_MAP)
+
     def test_label_map_is_derived_from_workflow_state_dispatch_definitions(self):
         expected = {
             label: state["dispatch"]
