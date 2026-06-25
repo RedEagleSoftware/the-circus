@@ -4524,6 +4524,64 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("- workspace item identity: `issue-32`", result_content)
         self.assertIn("- worktree root source: `env:CIRCUS_WORKTREE_ROOT`", result_content)
 
+    def test_write_run_result_lists_generated_issue_links_inside_implementation_planner_section(self):
+        item = {
+            "type": "issue",
+            "number": 69,
+            "title": "Record planner outcomes",
+            "working_branch": "circus/issue-69-record-planner-outcomes",
+        }
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            launch_brief_path = os.path.join(temp_dir, "owner-repo", "issue-69", "run-001-developer", "launch-brief.md")
+            os.makedirs(os.path.dirname(launch_brief_path), exist_ok=True)
+            with open(launch_brief_path, "w", encoding="utf-8") as launch_brief_file:
+                launch_brief_file.write("# Launch Brief\n")
+
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                    handler.initialize_run_status(item, "state:changes-requested", config, launch_brief_path)
+                    handler.update_run_status(
+                        item,
+                        started_at="2026-06-24T08:00:00Z",
+                        completed_at="2026-06-24T08:05:00Z",
+                        exit_code=0,
+                        success=True,
+                        outcome="success",
+                        stop_reason=None,
+                        implementation_planner={
+                            "outcome": "READY",
+                            "outcome_valid": True,
+                            "diagnostic": None,
+                            "implementation_plan": "C:/target/repo/Watchtower/runs/issue-69/run-001/implementation-plan.md",
+                            "recommended_route": None,
+                            "generated_issues": [
+                                {
+                                    "number": 69,
+                                    "url": "https://github.com/owner/repo/issues/69",
+                                }
+                            ],
+                            "source_recommendation_url": None,
+                            "source_recommendation_comment_id": None,
+                            "roadmap_reference": None,
+                        },
+                    )
+                    handler.write_run_result(item)
+
+            result_path = os.path.join(os.path.dirname(launch_brief_path), "result.md")
+            with open(result_path, "r", encoding="utf-8") as result_file:
+                result_content = result_file.read()
+
+        implementation_section = result_content.split("## Implementation Planner", 1)[1].split("## Artifacts", 1)[0]
+        self.assertIn("- generated issues:", implementation_section)
+        self.assertIn("  - #69: `https://github.com/owner/repo/issues/69`", implementation_section)
+
     def test_write_run_result_includes_workspace_lifecycle_diagnostics(self):
         item = {
             "type": "issue",

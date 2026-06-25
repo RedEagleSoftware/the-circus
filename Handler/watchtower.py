@@ -468,8 +468,6 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
             f"- source recommendation comment ID: `{implementation_planner.get('source_recommendation_comment_id')}`",
             f"- roadmap reference: `{implementation_planner.get('roadmap_reference')}`",
             "- generated issues:",
-            "",
-            "## Artifacts",
         ]
     )
 
@@ -486,6 +484,13 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
                 lines.append(f"  - #{issue_number}")
     else:
         lines.append("  - none")
+
+    lines.extend(
+        [
+            "",
+            "## Artifacts",
+        ]
+    )
 
     for key in sorted(artifacts.keys()):
         lines.append(f"- {key}: `{artifacts.get(key)}`")
