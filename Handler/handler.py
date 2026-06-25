@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,8 +19,11 @@ from Handler import target_instructions
 from Handler import watchtower
 from Handler import workflow
 from Handler.workflow_states import (
+    IMPLEMENTATION_PLAN_REVIEWED_LABEL,
+    IMPLEMENTATION_PLAN_REVIEW_LABEL,
     IMPLEMENTATION_PLANNING_CHANGES_REQUESTED_LABEL,
     IMPLEMENTATION_PLANNING_LABEL,
+    PLANNED_LABEL,
     ROADMAP_UPDATE_LABEL,
     SYSTEMS_ARCHITECTURE_CHANGES_REQUESTED_LABEL,
     SYSTEMS_ARCHITECTURE_LABEL,
@@ -47,6 +51,7 @@ IMPLEMENTATION_PLAN_FILENAME = watchtower.IMPLEMENTATION_PLAN_FILENAME
 REVIEW_OUTCOMES = workflow.REVIEW_OUTCOMES
 REVIEW_OUTCOME_MARKERS = workflow.REVIEW_OUTCOME_MARKERS
 IMPLEMENTATION_PLAN_OUTCOMES = {"READY", "BLOCKED", "ESCALATION_REQUIRED"}
+PLANNER_RESULT_V1_JSON_BLOCK_PATTERN = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
 AGENT_EXECUTABLE_ENV_OVERRIDES = {
     "junie": "CIRCUS_JUNIE_EXECUTABLE",
@@ -204,8 +209,8 @@ def get_candidates(item_type, list_cmd):
     return github_client.get_candidates(item_type, list_cmd, repo=REPO, run_command_fn=run_command)
 
 
-def get_current_item(item):
-    return github_client.get_item(item["type"], item["number"], repo=REPO, run_command_fn=run_command)
+def get_current_item(item, fields="number,labels,title,url"):
+    return github_client.get_item(item["type"], item["number"], repo=REPO, run_command_fn=run_command, fields=fields)
 
 
 def get_labeled_items():
@@ -832,6 +837,140 @@ def parse_implementation_plan_outcome(implementation_plan_path):
             return outcome
     except OSError:
         return None
+
+
+def parse_planner_result_v1(body):
+    if not isinstance(body, str) or not body:
+        return None
+
+    for match in PLANNER_RESULT_V1_JSON_BLOCK_PATTERN.finditer(body):
+        payload_text = match.group(1)
+        try:
+            payload = json.loads(payload_text)
+        except json.JSONDecodeError:
+            continue
+
+        planner_result = payload.get("planner_result_v1")
+        if not isinstance(planner_result, dict):
+            continue
+
+        generated_issues = planner_result.get("generated_issues")
+        if not isinstance(generated_issues, list) or not generated_issues:
+            continue
+
+        normalized_generated_issues = []
+        for generated_issue in generated_issues:
+            if not isinstance(generated_issue, dict):
+                return None
+
+            issue_number = generated_issue.get("issue_number")
+            next_state_after_approval = generated_issue.get("next_state_after_approval")
+
+            if not isinstance(issue_number, int) or issue_number <= 0:
+                return None
+
+            if not isinstance(next_state_after_approval, str) or not next_state_after_approval.startswith("state:"):
+                return None
+
+            if next_state_after_approval not in LABEL_MAP:
+                return None
+
+            normalized_generated_issues.append(
+                {
+                    "issue_number": issue_number,
+                    "next_state_after_approval": next_state_after_approval,
+                }
+            )
+
+        return {
+            "generated_issues": normalized_generated_issues,
+        }
+
+    return None
+
+
+def approve_implementation_plan_review(source_issue_number):
+    source_item, source_ok = github_client.get_item(
+        "issue",
+        source_issue_number,
+        repo=REPO,
+        run_command_fn=run_command,
+        fields="number,labels,title,url,comments",
+    )
+    if not source_ok or source_item is None:
+        print(f"[Approval] Failed to load source issue #{source_issue_number}.")
+        return False
+
+    source_item["type"] = "issue"
+    source_labels = [label.get("name") for label in source_item.get("labels", []) if isinstance(label, dict)]
+    if IMPLEMENTATION_PLAN_REVIEW_LABEL not in source_labels:
+        print(
+            f"[Approval] Issue #{source_issue_number} must be in '{IMPLEMENTATION_PLAN_REVIEW_LABEL}' before approval."
+        )
+        return False
+
+    planner_result = None
+    for comment in reversed(source_item.get("comments", [])):
+        comment_body = comment.get("body") if isinstance(comment, dict) else None
+        planner_result = parse_planner_result_v1(comment_body)
+        if planner_result is not None:
+            break
+
+    if planner_result is None:
+        print(f"[Approval] Issue #{source_issue_number} is missing a valid planner_result_v1 payload.")
+        return False
+
+    if not execute_label_transition(
+        source_item,
+        "Implementation Plan Source Approval",
+        [
+            ("remove", IMPLEMENTATION_PLAN_REVIEW_LABEL),
+            ("add", IMPLEMENTATION_PLAN_REVIEWED_LABEL),
+        ],
+        success_message=(
+            f"[Approval] Source issue #{source_issue_number} transitioned to "
+            f"'{IMPLEMENTATION_PLAN_REVIEWED_LABEL}'."
+        ),
+        failure_message=f"[Approval] Failed to transition source issue #{source_issue_number}.",
+    ):
+        return False
+
+    for generated_issue in planner_result["generated_issues"]:
+        generated_issue_number = generated_issue["issue_number"]
+        target_state = generated_issue["next_state_after_approval"]
+        generated_item, generated_ok = github_client.get_item(
+            "issue",
+            generated_issue_number,
+            repo=REPO,
+            run_command_fn=run_command,
+        )
+        if not generated_ok or generated_item is None:
+            print(f"[Approval] Failed to load generated issue #{generated_issue_number}.")
+            return False
+
+        generated_item["type"] = "issue"
+        generated_labels = [label.get("name") for label in generated_item.get("labels", []) if isinstance(label, dict)]
+        if PLANNED_LABEL not in generated_labels:
+            print(
+                f"[Approval] Generated issue #{generated_issue_number} must be in '{PLANNED_LABEL}' before approval."
+            )
+            return False
+
+        if not execute_label_transition(
+            generated_item,
+            "Implementation Plan Generated Issue Approval",
+            [
+                ("remove", PLANNED_LABEL),
+                ("add", target_state),
+            ],
+            success_message=(
+                f"[Approval] Generated issue #{generated_issue_number} transitioned to '{target_state}'."
+            ),
+            failure_message=f"[Approval] Failed to transition generated issue #{generated_issue_number}.",
+        ):
+            return False
+
+    return True
 
 
 def extract_github_repo_slug(value):

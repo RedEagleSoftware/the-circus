@@ -63,8 +63,8 @@ def get_candidates(item_type, list_cmd, repo, run_command_fn):
     return items, True
 
 
-def get_item(item_type, number, repo, run_command_fn):
-    cmd = f"gh {item_type} view {number} --repo {repo} --json number,labels,title,url"
+def get_item(item_type, number, repo, run_command_fn, fields="number,labels,title,url"):
+    cmd = f"gh {item_type} view {number} --repo {repo} --json {fields}"
     payload = run_command_fn(cmd)
     if payload is None:
         return None, False

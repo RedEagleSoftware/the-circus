@@ -2890,6 +2890,121 @@ class HandlerObservabilityTests(unittest.TestCase):
 
                 self.assertIsNone(outcome)
 
+    def test_parse_planner_result_v1_returns_generated_issues_with_next_state(self):
+        body = (
+            "Implementation plan ready for approval.\n\n"
+            "```json\n"
+            "{\n"
+            '  "planner_result_v1": {\n'
+            '    "generated_issues": [\n'
+            '      {"issue_number": 201, "next_state_after_approval": "state:ready-for-dev"},\n'
+            '      {"issue_number": 202, "next_state_after_approval": "state:ready-for-architecture"}\n'
+            "    ]\n"
+            "  }\n"
+            "}\n"
+            "```\n"
+        )
+
+        planner_result = handler.parse_planner_result_v1(body)
+
+        self.assertEqual(
+            planner_result,
+            {
+                "generated_issues": [
+                    {"issue_number": 201, "next_state_after_approval": "state:ready-for-dev"},
+                    {"issue_number": 202, "next_state_after_approval": "state:ready-for-architecture"},
+                ]
+            },
+        )
+
+    def test_parse_planner_result_v1_rejects_missing_generated_issues(self):
+        body = "```json\n{\"planner_result_v1\": {}}\n```"
+
+        planner_result = handler.parse_planner_result_v1(body)
+
+        self.assertIsNone(planner_result)
+
+    def test_approve_implementation_plan_review_transitions_source_and_generated_issues(self):
+        source_issue_number = 143
+        source_item = {
+            "type": "issue",
+            "number": source_issue_number,
+            "title": "Implementation planning complete",
+            "labels": [
+                {"name": "state:ready-for-implementation-plan-review"},
+                {"name": "status:triage"},
+            ],
+            "comments": [
+                {
+                    "body": (
+                        "```json\n"
+                        "{\n"
+                        '  "planner_result_v1": {\n'
+                        '    "generated_issues": [\n'
+                        '      {"issue_number": 201, "next_state_after_approval": "state:ready-for-dev"},\n'
+                        '      {"issue_number": 202, "next_state_after_approval": "state:ready-for-architecture"}\n'
+                        "    ]\n"
+                        "  }\n"
+                        "}\n"
+                        "```"
+                    )
+                }
+            ],
+        }
+        generated_issue_201 = {
+            "type": "issue",
+            "number": 201,
+            "title": "Generated issue A",
+            "labels": [{"name": "state:planned"}],
+        }
+        generated_issue_202 = {
+            "type": "issue",
+            "number": 202,
+            "title": "Generated issue B",
+            "labels": [{"name": "state:planned"}],
+        }
+
+        with patch.object(handler.github_client, "get_item") as mock_get_item:
+            mock_get_item.side_effect = [
+                (source_item, True),
+                (generated_issue_201, True),
+                (generated_issue_202, True),
+            ]
+            with patch.object(handler.github_client, "remove_label", return_value=True) as mock_remove_label:
+                with patch.object(handler.github_client, "add_label", return_value=True) as mock_add_label:
+                    approved = handler.approve_implementation_plan_review(source_issue_number)
+
+        self.assertTrue(approved)
+        self.assertEqual(mock_get_item.call_count, 3)
+        mock_remove_label.assert_has_calls(
+            [
+                unittest.mock.call("issue", source_issue_number, "state:ready-for-implementation-plan-review", repo="owner/repo"),
+                unittest.mock.call("issue", 201, "state:planned", repo="owner/repo"),
+                unittest.mock.call("issue", 202, "state:planned", repo="owner/repo"),
+            ]
+        )
+        mock_add_label.assert_has_calls(
+            [
+                unittest.mock.call("issue", source_issue_number, "state:implementation-plan-reviewed", repo="owner/repo"),
+                unittest.mock.call("issue", 201, "state:ready-for-dev", repo="owner/repo"),
+                unittest.mock.call("issue", 202, "state:ready-for-architecture", repo="owner/repo"),
+            ]
+        )
+
+    def test_approve_implementation_plan_review_rejects_missing_review_state_label(self):
+        source_item = {
+            "type": "issue",
+            "number": 143,
+            "title": "Implementation planning complete",
+            "labels": [{"name": "state:ready-for-dev"}],
+            "comments": [],
+        }
+
+        with patch.object(handler.github_client, "get_item", return_value=(source_item, True)):
+            approved = handler.approve_implementation_plan_review(143)
+
+        self.assertFalse(approved)
+
     def test_launch_agent_codex_reviewer_runs_codex_exec_with_pr_url_and_context(self):
         item = {
             "type": "issue",
