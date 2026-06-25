@@ -1860,18 +1860,19 @@ class HandlerObservabilityTests(unittest.TestCase):
                         return_value=implementation_plan_path,
                     ):
                         with patch.object(handler.os.path, "isfile", return_value=True):
-                            with patch.object(
-                        handler,
-                        "advance_implementation_planning_workflow_on_success",
-                        return_value=True,
-                    ) as mock_advance_transition:
-                                launched = handler.launch_agent(
-                                    item,
-                                    "state:ready-for-implementation-planning",
-                                    config,
-                                    os.path.normpath(os.path.join("TheFarm", "roles", "implementation-planner.md")),
-                                    launch_brief_path,
-                                )
+                            with patch.object(handler, "parse_implementation_plan_outcome", return_value="READY"):
+                                with patch.object(
+                                    handler,
+                                    "advance_implementation_planning_workflow_on_success",
+                                    return_value=True,
+                                ) as mock_advance_transition:
+                                    launched = handler.launch_agent(
+                                        item,
+                                        "state:ready-for-implementation-planning",
+                                        config,
+                                        os.path.normpath(os.path.join("TheFarm", "roles", "implementation-planner.md")),
+                                        launch_brief_path,
+                                    )
 
         self.assertTrue(launched)
         mock_subprocess_run.assert_called_once()
@@ -1938,6 +1939,104 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertTrue(item.get("missing_implementation_plan_artifact"))
         self.assertIn("required artifact was not produced", item["comment"])
         self.assertIn(implementation_plan_path, item["comment"])
+
+    def test_launch_agent_codex_implementation_planner_blocked_outcome_stops_without_transition(self):
+        item = {
+            "type": "issue",
+            "number": 43,
+            "title": "Draft implementation plan",
+            "url": "https://github.com/owner/repo/issues/43",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "implementation-planner",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-43/run-001-implementation-planner/launch-brief.md"
+        absolute_launch_brief_path = "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/launch-brief.md"
+        implementation_plan_path = "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/implementation-plan.md"
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
+                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
+                    with patch.object(
+                        handler,
+                        "build_implementation_plan_path",
+                        return_value=implementation_plan_path,
+                    ):
+                        with patch.object(handler.os.path, "isfile", return_value=True):
+                            with patch.object(handler, "parse_implementation_plan_outcome", return_value="BLOCKED"):
+                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                    with patch.object(
+                                        handler,
+                                        "advance_implementation_planning_workflow_on_success",
+                                    ) as mock_advance_transition:
+                                        launched = handler.launch_agent(
+                                            item,
+                                            "state:ready-for-implementation-planning",
+                                            config,
+                                            os.path.normpath(
+                                                os.path.join("TheFarm", "roles", "implementation-planner.md")
+                                            ),
+                                            launch_brief_path,
+                                        )
+
+        self.assertFalse(launched)
+        mock_subprocess_run.assert_called_once()
+        mock_advance_transition.assert_not_called()
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("non-ready outcome", item["comment"])
+        self.assertIn("`BLOCKED`", item["comment"])
+
+    def test_launch_agent_codex_implementation_planner_invalid_outcome_stops_without_transition(self):
+        item = {
+            "type": "issue",
+            "number": 43,
+            "title": "Draft implementation plan",
+            "url": "https://github.com/owner/repo/issues/43",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "implementation-planner",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-43/run-001-implementation-planner/launch-brief.md"
+        absolute_launch_brief_path = "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/launch-brief.md"
+        implementation_plan_path = "C:/abs/Watchtower/runs/issue-43/run-001-implementation-planner/implementation-plan.md"
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler.os.path, "abspath", return_value=absolute_launch_brief_path):
+                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)) as mock_subprocess_run:
+                    with patch.object(
+                        handler,
+                        "build_implementation_plan_path",
+                        return_value=implementation_plan_path,
+                    ):
+                        with patch.object(handler.os.path, "isfile", return_value=True):
+                            with patch.object(handler, "parse_implementation_plan_outcome", return_value=None):
+                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                    with patch.object(
+                                        handler,
+                                        "advance_implementation_planning_workflow_on_success",
+                                    ) as mock_advance_transition:
+                                        launched = handler.launch_agent(
+                                            item,
+                                            "state:ready-for-implementation-planning",
+                                            config,
+                                            os.path.normpath(
+                                                os.path.join("TheFarm", "roles", "implementation-planner.md")
+                                            ),
+                                            launch_brief_path,
+                                        )
+
+        self.assertFalse(launched)
+        mock_subprocess_run.assert_called_once()
+        mock_advance_transition.assert_not_called()
+        mock_add_comment.assert_called_once_with(item)
+        self.assertTrue(item.get("invalid_implementation_plan_outcome"))
+        self.assertIn("did not include a valid outcome declaration", item["comment"])
 
     def test_launch_agent_codex_systems_architect_changes_requested_advances_to_human_review(self):
         item = {
@@ -2599,6 +2698,93 @@ class HandlerObservabilityTests(unittest.TestCase):
             outcome = handler.parse_review_result_outcome(review_result_path)
 
         self.assertIsNone(outcome)
+
+    def test_parse_implementation_plan_outcome_accepts_ready_marker_in_outcome_section(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            implementation_plan_path = os.path.join(temp_dir, "implementation-plan.md")
+            with open(implementation_plan_path, "w", encoding="utf-8") as artifact:
+                artifact.write(
+                    "## Implementation Plan\n\n"
+                    "### Outcome\n"
+                    "READY\n\n"
+                    "### Source\n"
+                    "https://github.com/owner/repo/issues/43\n"
+                )
+
+            outcome = handler.parse_implementation_plan_outcome(implementation_plan_path)
+
+        self.assertEqual(outcome, "READY")
+
+    def test_parse_implementation_plan_outcome_accepts_all_supported_exact_outcomes(self):
+        for expected_outcome in ("READY", "BLOCKED", "ESCALATION_REQUIRED"):
+            with self.subTest(expected_outcome=expected_outcome):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    implementation_plan_path = os.path.join(temp_dir, "implementation-plan.md")
+                    with open(implementation_plan_path, "w", encoding="utf-8") as artifact:
+                        artifact.write(
+                            "## Implementation Plan\n\n"
+                            "### Outcome\n"
+                            f"{expected_outcome}\n\n"
+                            "### Source\n"
+                            "https://github.com/owner/repo/issues/43\n"
+                        )
+
+                    outcome = handler.parse_implementation_plan_outcome(implementation_plan_path)
+
+                self.assertEqual(outcome, expected_outcome)
+
+    def test_parse_implementation_plan_outcome_rejects_missing_outcome_heading(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            implementation_plan_path = os.path.join(temp_dir, "implementation-plan.md")
+            with open(implementation_plan_path, "w", encoding="utf-8") as artifact:
+                artifact.write("## Implementation Plan\n\n### Source\nno outcome heading\n")
+
+            outcome = handler.parse_implementation_plan_outcome(implementation_plan_path)
+
+        self.assertIsNone(outcome)
+
+    def test_parse_implementation_plan_outcome_rejects_conflicting_outcome_sections(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            implementation_plan_path = os.path.join(temp_dir, "implementation-plan.md")
+            with open(implementation_plan_path, "w", encoding="utf-8") as artifact:
+                artifact.write(
+                    "## Implementation Plan\n\n"
+                    "### Outcome\n"
+                    "READY\n\n"
+                    "### Source\n"
+                    "traceability\n\n"
+                    "### Outcome\n"
+                    "BLOCKED\n"
+                )
+
+            outcome = handler.parse_implementation_plan_outcome(implementation_plan_path)
+
+        self.assertIsNone(outcome)
+
+    def test_parse_implementation_plan_outcome_rejects_malformed_outcome_variants(self):
+        malformed_outcome_lines = [
+            "Outcome: READY",
+            "`READY`",
+            "READY.",
+            "ready",
+        ]
+
+        for malformed_line in malformed_outcome_lines:
+            with self.subTest(malformed_line=malformed_line):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    implementation_plan_path = os.path.join(temp_dir, "implementation-plan.md")
+                    with open(implementation_plan_path, "w", encoding="utf-8") as artifact:
+                        artifact.write(
+                            "## Implementation Plan\n\n"
+                            "### Outcome\n"
+                            f"{malformed_line}\n\n"
+                            "### Source\n"
+                            "https://github.com/owner/repo/issues/43\n"
+                        )
+
+                    outcome = handler.parse_implementation_plan_outcome(implementation_plan_path)
+
+                self.assertIsNone(outcome)
 
     def test_launch_agent_codex_reviewer_runs_codex_exec_with_pr_url_and_context(self):
         item = {

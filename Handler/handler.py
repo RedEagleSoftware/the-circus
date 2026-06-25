@@ -46,6 +46,7 @@ ARCHITECT_REVIEW_RESULT_FILENAME = watchtower.ARCHITECT_REVIEW_RESULT_FILENAME
 IMPLEMENTATION_PLAN_FILENAME = watchtower.IMPLEMENTATION_PLAN_FILENAME
 REVIEW_OUTCOMES = workflow.REVIEW_OUTCOMES
 REVIEW_OUTCOME_MARKERS = workflow.REVIEW_OUTCOME_MARKERS
+IMPLEMENTATION_PLAN_OUTCOMES = {"READY", "BLOCKED", "ESCALATION_REQUIRED"}
 
 AGENT_EXECUTABLE_ENV_OVERRIDES = {
     "junie": "CIRCUS_JUNIE_EXECUTABLE",
@@ -779,6 +780,58 @@ def parse_review_result_outcome(review_result_path):
 
 def parse_architect_review_result_outcome(architect_review_result_path):
     return workflow.parse_architect_review_result_outcome(architect_review_result_path)
+
+
+def parse_implementation_plan_outcome(implementation_plan_path):
+    if not os.path.exists(implementation_plan_path):
+        return None
+
+    try:
+        with open(implementation_plan_path, "r", encoding="utf-8") as result_file:
+            found_outcome_section = False
+            in_outcome_section = False
+            outcome = None
+
+            for raw_line in result_file:
+                line_without_newline = raw_line.rstrip("\r\n")
+                stripped_line = line_without_newline.strip()
+                normalized_heading = stripped_line.lower()
+
+                if normalized_heading == "### outcome":
+                    if found_outcome_section:
+                        return None
+
+                    found_outcome_section = True
+                    in_outcome_section = True
+                    continue
+
+                if not in_outcome_section:
+                    continue
+
+                if stripped_line.startswith("### ") or stripped_line.startswith("## "):
+                    in_outcome_section = False
+                    continue
+
+                if not stripped_line:
+                    continue
+
+                candidate_outcome = stripped_line
+                if candidate_outcome in IMPLEMENTATION_PLAN_OUTCOMES:
+                    if outcome is not None:
+                        return None
+
+                    outcome = candidate_outcome
+                    continue
+
+                if outcome is None:
+                    return None
+
+            if not found_outcome_section:
+                return None
+
+            return outcome
+    except OSError:
+        return None
 
 
 def extract_github_repo_slug(value):
@@ -1691,7 +1744,54 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     write_run_result(item)
                     return False
 
+                implementation_plan_outcome = parse_implementation_plan_outcome(implementation_plan_path)
+                if implementation_plan_outcome != "READY":
+                    normalized_implementation_plan_path = normalize_path_for_display(implementation_plan_path)
+                    if implementation_plan_outcome is None:
+                        stop_reason = (
+                            "implementation plan outcome missing or invalid; expected exactly one "
+                            "`### Outcome` marker with READY, BLOCKED, or ESCALATION_REQUIRED"
+                        )
+                        item["comment"] = (
+                            "⚠️ Implementation planner run completed but `implementation-plan.md` did not include "
+                            "a valid outcome declaration.\n\n"
+                            f"Expected file: `{normalized_implementation_plan_path}`\n\n"
+                            "The `### Outcome` section must declare exactly one of `READY`, `BLOCKED`, or "
+                            "`ESCALATION_REQUIRED`. The workflow remains in implementation planning."
+                        )
+                        item["invalid_implementation_plan_outcome"] = True
+                    else:
+                        stop_reason = (
+                            f"implementation plan outcome `{implementation_plan_outcome}` does not permit advancement"
+                        )
+                        item["comment"] = (
+                            "ℹ️ Implementation planner run completed with a non-ready outcome.\n\n"
+                            f"Outcome: `{implementation_plan_outcome}`\n"
+                            f"Artifact: `{normalized_implementation_plan_path}`\n\n"
+                            "Handler did not advance labels because only `READY` outcomes may transition to "
+                            "implementation-plan review."
+                        )
+                        item.pop("invalid_implementation_plan_outcome", None)
+
+                    item.pop("missing_implementation_plan_artifact", None)
+                    add_comment(item)
+                    update_run_status(
+                        item,
+                        completed_at=utc_timestamp_now(),
+                        exit_code=0,
+                        success=False,
+                        outcome="invalid result artifact" if implementation_plan_outcome is None else "not ready for advancement",
+                        stop_reason=stop_reason,
+                        artifacts={
+                            "implementation_plan": normalized_implementation_plan_path,
+                            "implementation_plan_outcome": implementation_plan_outcome,
+                        },
+                    )
+                    write_run_result(item)
+                    return False
+
                 item.pop("missing_implementation_plan_artifact", None)
+                item.pop("invalid_implementation_plan_outcome", None)
                 advanced = advance_implementation_planning_workflow_on_success(item, from_state_label=state_label)
                 update_run_status(
                     item,
@@ -1700,7 +1800,10 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     success=advanced,
                     outcome="implementation plan generated",
                     stop_reason=None if advanced else "label transition failed",
-                    artifacts={"implementation_plan": normalize_path_for_display(implementation_plan_path)},
+                    artifacts={
+                        "implementation_plan": normalize_path_for_display(implementation_plan_path),
+                        "implementation_plan_outcome": implementation_plan_outcome,
+                    },
                 )
                 write_run_result(item)
                 return advanced
