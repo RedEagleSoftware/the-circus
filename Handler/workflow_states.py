@@ -72,7 +72,7 @@ WORKFLOW_STATES = {
         "terminal": True,
     },
     PLANNED_LABEL: {
-        "description": "Implementation plan approved and queued for coding dispatch.",
+        "description": "Generated implementation issue pending human plan approval; not dispatchable.",
         "color": "0E8A16",
         "human_owned": True,
     },
