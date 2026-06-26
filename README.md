@@ -88,6 +88,12 @@ The Circus uses GitHub `state:*` labels as a workflow state machine.
 
 Planner outcomes are declared in artifacts and comments, not as separate workflow labels.
 
+Workflow return and escalation paths are governance recommendations before they are runtime automation:
+
+- Roles may recommend upstream or downstream routing in GitHub comments and durable artifacts.
+- Handler remains the only workflow state authority.
+- Complexity, risk, slice size, and architecture uncertainty are separate advisory dimensions until a future approved routing capability validates and preserves them.
+
 Systems Architect routing remains strategic and non-implementation:
 
 - The Systems Architect publishes a structured recommendation in a GitHub issue comment for human review.
@@ -162,6 +168,7 @@ The accepted workspace isolation architecture is documented in [docs/worktree-is
 The accepted worktree and branch lifecycle architecture is documented in [docs/worktree-lifecycle.md](docs/worktree-lifecycle.md).
 The accepted issue dependency blocking architecture is documented in [docs/dependency-blocking.md](docs/dependency-blocking.md).
 The accepted implementation planning architecture is documented in [docs/implementation-planning.md](docs/implementation-planning.md).
+The accepted workflow governance and routing doctrine is documented in [docs/workflow-governance.md](docs/workflow-governance.md).
 
 ---
 

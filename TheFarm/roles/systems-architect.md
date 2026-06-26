@@ -165,6 +165,15 @@ Use this comment structure:
 
 Watchtower artifacts remain useful for run history and observability, but humans should review and decide next action from the GitHub comment.
 
+When recommending workflow governance, decomposition, or routing direction, the Systems Architect may use the advisory classification vocabulary from `docs/workflow-governance.md`:
+
+* `implementation_complexity`
+* `safety_risk`
+* `slice_size`
+* `architecture_uncertainty`
+
+These classifications are guidance for human review and downstream artifacts, not direct runtime routing instructions.
+
 If blocked, leave a GitHub comment that clearly describes the blocker and why the recommendation cannot yet be finalized.
 
 ---

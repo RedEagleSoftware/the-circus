@@ -384,6 +384,33 @@ The roadmap sequence for this capability is:
 
 Detailed architecture: [Implementation Planning](../implementation-planning.md).
 
+## Accepted Workflow Governance Direction
+
+Issue #59 approved circular planning and complexity-based routing as workflow governance doctrine before runtime automation.
+
+The accepted direction is:
+
+- keep Handler as the only workflow state authority
+- allow roles to recommend returns, blockers, escalations, decomposition changes, or follow-up routing through GitHub comments and durable artifacts
+- route accepted Systems Architect recommendations to Roadmap Updater through human-applied `state:ready-for-roadmap-update`
+- route accepted and merged roadmap documentation to Implementation Planner through human-applied `state:ready-for-implementation-planning`
+- route unresolved systems-level planning decisions back to Systems Architect through `ESCALATION_REQUIRED` and a recommendation for `state:systems-architecture-changes-requested`
+- route implementation plan revisions through `state:implementation-planning-changes-requested`
+- let Feature Architect flag issues that are too broad, too risky, blocked, under-specified, or in need of implementation planning, while leaving label mutation to humans or Handler
+- use `implementation_complexity`, `safety_risk`, `slice_size`, and `architecture_uncertainty` as advisory classification vocabulary in comments and artifacts
+- defer automatic model selection, effort routing, reviewer-depth changes, and extra review gates until reliability and traceability are mature enough
+
+The roadmap sequence for this capability is:
+
+1. Document workflow governance, ownership boundaries, return paths, and advisory classification vocabulary.
+2. Encourage Systems Architect, Implementation Planner, and Feature Architect artifacts to use the vocabulary when it materially affects routing or review depth.
+3. Add optional structured classification blocks to architecture and planning artifacts.
+4. Record accepted Systems Architect recommendation comment URLs and IDs in Watchtower run history.
+5. Add Handler validation for classification blocks only after their manual use proves stable.
+6. Consider model, effort, reviewer-depth, and extra-gate routing after the runtime can preserve and recover routing decisions reliably.
+
+Detailed architecture: [Workflow Governance and Routing Doctrine](../workflow-governance.md).
+
 ---
 
 # Artifact Model

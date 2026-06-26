@@ -29,6 +29,8 @@ Use the [Architect Agent](../TheFarm/roles/architect.md) as the Feature Architec
 
 The Feature Architect focuses on how to implement one issue safely and clearly.
 
+If the issue is too broad, too risky, blocked, under-specified, or actually requires implementation planning first, the Feature Architect should leave a structured routing recommendation for human/Handler action rather than changing workflow labels directly.
+
 ## Reviewer
 
 Use the [Reviewer](../TheFarm/roles/reviewer.md) for:
@@ -91,6 +93,14 @@ Ownership boundary for this workflow:
 - Roadmap Updater owns durable strategic documentation before planning starts.
 - Handler owns dispatch eligibility, workflow label transitions, dependency blocking, automatic unblocking, and approved transitions from plan review into dispatchable workflow states.
 - Feature Architect and Developer workflows remain responsible for one approved implementation issue at a time after human plan approval.
+
+When planning would require unresolved systems-level decisions, the Implementation Planner should declare `ESCALATION_REQUIRED` and recommend `state:systems-architecture-changes-requested` instead of generating issues. When a plan needs revision without a new systems decision, it should recommend `state:implementation-planning-changes-requested`.
+
+## Workflow Governance
+
+Use [Workflow Governance and Routing Doctrine](workflow-governance.md) for circular planning, return paths, ownership boundaries, and advisory classification vocabulary.
+
+Roles may recommend routing changes, blockers, decomposition, or extra review in comments and artifacts. Handler remains the workflow state authority.
 
 ## Quick Distinction
 

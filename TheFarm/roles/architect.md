@@ -130,6 +130,8 @@ Shared artifacts should:
 - Perform only the assigned workflow step.
 - Do not auto-merge.
 - Do not silently modify workflow labels.
+- If an issue is too broad, too risky, blocked, under-specified, or actually requires implementation planning first, leave a structured routing recommendation for human/Handler action instead of self-routing.
+- Use `implementation_complexity`, `safety_risk`, `slice_size`, and `architecture_uncertainty` as advisory vocabulary when those dimensions materially affect implementation handoff safety or routing.
 - Leave GitHub comments describing:
   - architectural recommendations
   - blockers
