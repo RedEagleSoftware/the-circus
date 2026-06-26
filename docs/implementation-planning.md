@@ -2,6 +2,7 @@
 
 Issue #37 accepted Implementation Planning as a distinct workflow role and capability.
 Issue #64 accepted the formal Planner Outcome Model and architecture escalation workflow.
+Issue #59 accepted circular planning and complexity-based routing as workflow governance doctrine before runtime automation.
 
 This document records the approved Systems Architect recommendation for roadmap and implementation planning. It is not a runtime implementation specification.
 
@@ -74,6 +75,8 @@ Watchtower owns observability only:
 - preserving run history
 
 GitHub issues and comments remain the human review surface and source of truth.
+
+Workflow return paths and advisory classification vocabulary are documented in [Workflow Governance and Routing Doctrine](workflow-governance.md). The planner may use `implementation_complexity`, `safety_risk`, `slice_size`, and `architecture_uncertainty` when those dimensions materially affect decomposition, blocker handling, escalation, or review-depth recommendations, but they are not runtime metadata requirements in v1.
 
 ## Workflow States
 

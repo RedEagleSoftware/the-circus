@@ -7,6 +7,7 @@ Approved issue #30 direction: use Git worktrees as the primary isolation mechani
 Approved issue #34 direction: add explicit dependency blocking as a Handler-owned scheduling capability before broad parallel execution.
 Approved issue #37 direction: add Implementation Planning as a distinct review-gated bridge from accepted strategy to generated implementation issues.
 Approved issue #64 direction: add a formal Planner Outcome Model with `READY`, `BLOCKED`, and `ESCALATION_REQUIRED` outcomes.
+Approved issue #59 direction: formalize circular planning and complexity-based routing as workflow governance doctrine before runtime routing automation.
 Approved issue #51 direction: formalize worktree and branch lifecycle management around conservative inventory, recovery, and cleanup safety rules.
 Approved issue #54 direction: implement the first lifecycle slice as a read-only workspace inventory and lifecycle classification service.
 The next capability frontier is **self-hosting reliability and strategic memory**.
@@ -42,7 +43,7 @@ flowchart LR
 ## Self Hosting
 
 Self Hosting now means reliable repeated execution across fresh sessions without hidden context drift.
-The approved sequence is repository onboarding, workspace isolation, durable polling, dependency blocking, worktree/branch lifecycle management, stale-lock/run recovery, persistent Watchtower visibility, strategic memory, and implementation planning with explicit outcome handling.
+The approved sequence is repository onboarding, workspace isolation, durable polling, dependency blocking, worktree/branch lifecycle management, stale-lock/run recovery, persistent Watchtower visibility, strategic memory, implementation planning with explicit outcome handling, and workflow governance for circular planning before routing automation.
 
 ```mermaid
 flowchart LR
@@ -55,6 +56,7 @@ flowchart LR
     visibility["○ Persistent Watchtower Visibility"]
     memory["○ Strategic Memory"]
     planning["○ Implementation Planning"]
+    governance["○ Workflow Governance"]
 
     onboarding --> workspace
     workspace --> polling
@@ -64,6 +66,7 @@ flowchart LR
     recovery --> visibility
     visibility --> memory
     memory --> planning
+    planning --> governance
 ```
 
 ## Agent Evolution
@@ -152,3 +155,20 @@ The accepted architecture is:
 - Watchtower records planning artifacts and generated issue links for observability only.
 
 Detailed architecture: [Implementation Planning](implementation-planning.md).
+
+## Workflow Governance and Routing Doctrine
+
+Workflow Governance is now an accepted Self Hosting / Strategic Memory capability direction, based on the approved Systems Architect recommendation in issue #59.
+
+The accepted architecture is:
+
+- Circular planning should be represented through human-visible recommendations, durable artifacts, and Handler-mediated workflow transitions.
+- Handler remains the only workflow state authority; workflow roles may recommend blockers, returns, escalations, and decomposition changes, but do not mutate labels directly.
+- Systems Architect owns strategic direction and unresolved system-level decisions.
+- Roadmap Updater owns durable documentation synchronization after accepted strategy.
+- Implementation Planner owns decomposition of accepted documented strategy into generated implementation issues.
+- Feature Architect owns implementation handoff for one sufficiently scoped issue and may flag oversized, risky, blocked, or under-specified work for human/Handler routing.
+- Complexity-based routing starts as advisory vocabulary: `implementation_complexity`, `safety_risk`, `slice_size`, and `architecture_uncertainty`.
+- Automatic model selection, effort routing, reviewer-depth changes, and extra review gates remain deferred until self-hosting reliability, implementation planning, and Watchtower traceability are mature enough to support them.
+
+Detailed architecture: [Workflow Governance and Routing Doctrine](workflow-governance.md).

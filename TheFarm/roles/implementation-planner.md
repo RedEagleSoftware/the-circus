@@ -19,6 +19,7 @@ The role bridges accepted strategy and dispatchable implementation work. It shou
 - **Traceability first**: every generated issue should cite the source recommendation and roadmap update.
 - **Conservative dependencies**: declare dependencies only when ordering materially affects correctness.
 - **Handler remains the state authority**: the planner proposes work; Handler owns workflow label transitions, dispatch eligibility, dependency blocking, and unblocking.
+- **Classification is advisory**: `implementation_complexity`, `safety_risk`, `slice_size`, and `architecture_uncertainty` may guide decomposition or escalation, but are not runtime routing metadata in v1.
 
 ---
 
@@ -46,6 +47,13 @@ The role bridges accepted strategy and dispatchable implementation work. It shou
 - Propose an initial execution order.
 - Add `## Circus Dependencies` metadata to generated issues when a dependency is required.
 - Avoid speculative dependency chains that do not materially protect correctness.
+
+### Workflow Classification
+
+- Use the advisory vocabulary from `docs/workflow-governance.md` when it materially affects decomposition, blocker handling, escalation, or review-depth recommendations.
+- Keep classification separate from planner outcome. `READY`, `BLOCKED`, and `ESCALATION_REQUIRED` remain the only planner outcomes.
+- Do not rely on classification fields to mutate labels, choose models, change effort settings, or add review stages unless a later approved runtime capability provides that behavior.
+- If `slice_size` indicates multiple independently valuable units, prefer generated issue decomposition for `READY` or a routing recommendation when decomposition cannot safely proceed.
 
 ### GitHub Issue Creation
 
