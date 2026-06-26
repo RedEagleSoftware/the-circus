@@ -51,9 +51,23 @@ The role bridges accepted strategy and dispatchable implementation work. It shou
 ### Workflow Classification
 
 - Use the advisory vocabulary from `docs/workflow-governance.md` when it materially affects decomposition, blocker handling, escalation, or review-depth recommendations.
+- `workflow_classification` is optional. Include it in `implementation-plan.md` and/or the planning issue comment only when these dimensions materially affect planning or routing recommendations.
 - Keep classification separate from planner outcome. `READY`, `BLOCKED`, and `ESCALATION_REQUIRED` remain the only planner outcomes.
 - Do not rely on classification fields to mutate labels, choose models, change effort settings, or add review stages unless a later approved runtime capability provides that behavior.
 - If `slice_size` indicates multiple independently valuable units, prefer generated issue decomposition for `READY` or a routing recommendation when decomposition cannot safely proceed.
+
+Preferred advisory block (matching `docs/workflow-governance.md`):
+
+```yaml
+workflow_classification:
+  implementation_complexity: low | medium | high
+  safety_risk: low | medium | high
+  slice_size: single_slice | broad | multi_slice
+  architecture_uncertainty: none | minor | significant
+  routing_recommendation: continue | split | block | escalate
+```
+
+Treat this block as optional guidance for human review and Handler action, not as planner outcome metadata or runtime dispatch contract.
 
 ### GitHub Issue Creation
 
