@@ -58,6 +58,7 @@ RUN_STATUS_FIELDS = [
     "label_transition",
     "artifacts",
     "implementation_planner",
+    "recommendation_traceability",
 ]
 
 
@@ -148,6 +149,182 @@ def _extract_source_traceability_fields(source_section_lines):
     }
 
 
+def build_recommendation_traceability_snapshot(
+    *,
+    recommendation_url=None,
+    recommendation_comment_id=None,
+    source_issue=None,
+    roadmap_reference=None,
+    source=None,
+    diagnostic=None,
+):
+    normalized_recommendation_url = recommendation_url if isinstance(recommendation_url, str) else None
+    normalized_comment_id = recommendation_comment_id if isinstance(recommendation_comment_id, int) else None
+
+    if normalized_comment_id is None and normalized_recommendation_url:
+        issue_comment_match = ISSUE_COMMENT_URL_PATTERN.search(normalized_recommendation_url)
+        if issue_comment_match:
+            normalized_comment_id = int(issue_comment_match.group(1))
+
+    available = bool(normalized_recommendation_url and normalized_comment_id)
+    normalized_diagnostic = diagnostic
+    if not available and normalized_diagnostic is None:
+        normalized_diagnostic = "not provided"
+
+    return {
+        "available": available,
+        "recommendation_url": normalized_recommendation_url if available else None,
+        "recommendation_comment_id": normalized_comment_id if available else None,
+        "source_issue": source_issue,
+        "roadmap_reference": roadmap_reference,
+        "source": source,
+        "diagnostic": normalized_diagnostic,
+    }
+
+
+def build_unavailable_recommendation_traceability_snapshot(
+    *,
+    source_issue=None,
+    roadmap_reference=None,
+    source=None,
+    diagnostic="not provided",
+):
+    return build_recommendation_traceability_snapshot(
+        recommendation_url=None,
+        recommendation_comment_id=None,
+        source_issue=source_issue,
+        roadmap_reference=roadmap_reference,
+        source=source,
+        diagnostic=diagnostic,
+    )
+
+
+def _extract_comment_url(comment):
+    if not isinstance(comment, dict):
+        return None
+
+    for candidate_key in ("html_url", "url"):
+        candidate_value = comment.get(candidate_key)
+        if not isinstance(candidate_value, str):
+            continue
+
+        issue_comment_match = ISSUE_COMMENT_URL_PATTERN.search(candidate_value)
+        if issue_comment_match:
+            return _trim_trailing_markdown_punctuation(issue_comment_match.group(0))
+
+    comment_body = comment.get("body")
+    if isinstance(comment_body, str):
+        issue_comment_match = ISSUE_COMMENT_URL_PATTERN.search(comment_body)
+        if issue_comment_match:
+            return _trim_trailing_markdown_punctuation(issue_comment_match.group(0))
+
+    return None
+
+
+def _extract_comment_id(comment):
+    if not isinstance(comment, dict):
+        return None
+
+    for candidate_key in ("id", "databaseId"):
+        candidate_value = comment.get(candidate_key)
+        if isinstance(candidate_value, int):
+            return candidate_value
+        if isinstance(candidate_value, str) and candidate_value.strip().isdigit():
+            return int(candidate_value.strip())
+
+    comment_url = _extract_comment_url(comment)
+    if not comment_url:
+        return None
+
+    issue_comment_match = ISSUE_COMMENT_URL_PATTERN.search(comment_url)
+    if issue_comment_match:
+        return int(issue_comment_match.group(1))
+
+    return None
+
+
+def extract_issue_comment_recommendation_traceability(
+    comments,
+    *,
+    source_issue=None,
+    roadmap_reference=None,
+    source="roadmap-updater",
+):
+    if not isinstance(comments, list):
+        return build_unavailable_recommendation_traceability_snapshot(
+            source_issue=source_issue,
+            roadmap_reference=roadmap_reference,
+            source=source,
+            diagnostic="accepted recommendation unavailable",
+        )
+
+    recommendation_candidates = []
+    for comment in comments:
+        if not isinstance(comment, dict):
+            continue
+
+        comment_body = comment.get("body")
+        if not isinstance(comment_body, str):
+            continue
+
+        if "## systems architect recommendation" not in comment_body.lower():
+            continue
+
+        recommendation_url = _extract_comment_url(comment)
+        recommendation_comment_id = _extract_comment_id(comment)
+        if recommendation_url and recommendation_comment_id:
+            recommendation_candidates.append(
+                {
+                    "recommendation_url": recommendation_url,
+                    "recommendation_comment_id": recommendation_comment_id,
+                }
+            )
+
+    if len(recommendation_candidates) == 1:
+        recommendation_candidate = recommendation_candidates[0]
+        return build_recommendation_traceability_snapshot(
+            recommendation_url=recommendation_candidate["recommendation_url"],
+            recommendation_comment_id=recommendation_candidate["recommendation_comment_id"],
+            source_issue=source_issue,
+            roadmap_reference=roadmap_reference,
+            source=source,
+            diagnostic=None,
+        )
+
+    diagnostic = "accepted recommendation unavailable"
+    if len(recommendation_candidates) > 1:
+        diagnostic = "accepted recommendation ambiguous"
+
+    return build_unavailable_recommendation_traceability_snapshot(
+        source_issue=source_issue,
+        roadmap_reference=roadmap_reference,
+        source=source,
+        diagnostic=diagnostic,
+    )
+
+
+def build_implementation_planner_recommendation_traceability_snapshot(
+    implementation_planner_snapshot,
+    *,
+    source_issue=None,
+):
+    if not isinstance(implementation_planner_snapshot, dict):
+        return build_unavailable_recommendation_traceability_snapshot(
+            source_issue=source_issue,
+            source="implementation-planner",
+            diagnostic="not provided",
+        )
+
+    return build_recommendation_traceability_snapshot(
+        recommendation_url=implementation_planner_snapshot.get("source_recommendation_url"),
+        recommendation_comment_id=implementation_planner_snapshot.get("source_recommendation_comment_id"),
+        source_issue=source_issue,
+        roadmap_reference=implementation_planner_snapshot.get("roadmap_reference"),
+        source="implementation-planner",
+        diagnostic="not provided",
+    )
+
+
 def build_implementation_planner_snapshot(
     implementation_plan_path,
     *,
@@ -175,7 +352,7 @@ def build_implementation_planner_snapshot(
         except OSError:
             pass
 
-    return {
+    snapshot = {
         "outcome": outcome,
         "outcome_valid": bool(outcome_valid),
         "diagnostic": diagnostic,
@@ -186,6 +363,9 @@ def build_implementation_planner_snapshot(
         "roadmap_reference": roadmap_reference,
         "recommended_route": recommended_route,
     }
+
+    snapshot["recommendation_traceability"] = build_implementation_planner_recommendation_traceability_snapshot(snapshot)
+    return snapshot
 
 
 def append_reviewer_feedback_note(
@@ -338,6 +518,7 @@ def initialize_run_status(
             "status": normalized_status_path,
             "result": normalized_result_path,
         },
+        "recommendation_traceability": build_unavailable_recommendation_traceability_snapshot(),
     }
 
     for field in run_status_fields:
@@ -377,6 +558,12 @@ def read_run_status(run_state, *, run_status_fields=RUN_STATUS_FIELDS, normalize
     artifacts.setdefault("status", normalize_path_for_display_fn(run_state["status_path"]))
     artifacts.setdefault("result", normalize_path_for_display_fn(run_state["result_path"]))
     artifacts.setdefault("launch_brief", normalize_path_for_display_fn(run_state["launch_brief_path"]))
+
+    recommendation_traceability = status_payload.get("recommendation_traceability")
+    if not isinstance(recommendation_traceability, dict):
+        recommendation_traceability = build_unavailable_recommendation_traceability_snapshot()
+        status_payload["recommendation_traceability"] = recommendation_traceability
+
     return status_payload
 
 
@@ -414,6 +601,7 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
     status_payload = read_run_status_fn(run_state)
     artifacts = status_payload.get("artifacts") or {}
     implementation_planner = status_payload.get("implementation_planner") or {}
+    recommendation_traceability = status_payload.get("recommendation_traceability") or {}
     label_transition = status_payload.get("label_transition")
     lifecycle_diagnostics = status_payload.get("lifecycle_diagnostics")
 
@@ -457,6 +645,15 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
             "## Outcome",
             f"- linked PR: `{status_payload.get('linked_pr')}`",
             f"- working branch: `{status_payload.get('working_branch')}`",
+            "",
+            "## Recommendation Traceability",
+            f"- available: `{recommendation_traceability.get('available')}`",
+            f"- recommendation URL: `{recommendation_traceability.get('recommendation_url')}`",
+            f"- recommendation comment ID: `{recommendation_traceability.get('recommendation_comment_id')}`",
+            f"- source issue: `{recommendation_traceability.get('source_issue')}`",
+            f"- roadmap reference: `{recommendation_traceability.get('roadmap_reference')}`",
+            f"- source: `{recommendation_traceability.get('source')}`",
+            f"- diagnostic: `{recommendation_traceability.get('diagnostic')}`",
             "",
             "## Implementation Planner",
             f"- outcome: `{implementation_planner.get('outcome')}`",
