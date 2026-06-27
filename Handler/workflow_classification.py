@@ -1,14 +1,16 @@
-import json
 import re
 
 
-WORKFLOW_CLASSIFICATION_V1_FENCED_BLOCK_PATTERN = re.compile(
-    r"```(?:json|yaml|yml)?\s*(.*?)```",
-    re.DOTALL | re.IGNORECASE,
-)
-
-WORKFLOW_CLASSIFICATION_V1_ROOT_KEY = "workflow_classification_v1"
-WORKFLOW_CLASSIFICATION_CONFIDENCE_LEVELS = {"low", "medium", "high"}
+WORKFLOW_CLASSIFICATION_FENCED_BLOCK_PATTERN = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
+WORKFLOW_CLASSIFICATION_ROOT_KEY = "workflow_classification"
+WORKFLOW_CLASSIFICATION_ALLOWED_VALUES = {
+    "implementation_complexity": {"low", "medium", "high"},
+    "safety_risk": {"low", "medium", "high"},
+    "slice_size": {"single_slice", "broad", "multi_slice"},
+    "architecture_uncertainty": {"none", "minor", "significant"},
+    "routing_recommendation": {"continue", "split", "block", "escalate"},
+}
+WORKFLOW_CLASSIFICATION_REQUIRED_FIELDS = tuple(WORKFLOW_CLASSIFICATION_ALLOWED_VALUES.keys())
 
 
 def _parse_yaml_scalar_value(raw_value):
@@ -29,7 +31,23 @@ def _parse_yaml_scalar_value(raw_value):
     return stripped_value
 
 
-def _parse_workflow_classification_yaml_block(block_text):
+def _build_workflow_classification_result(status, *, classification=None, diagnostic=None):
+    normalized_classification = classification if isinstance(classification, dict) else None
+    result = {
+        "status": status,
+        "classification": normalized_classification,
+        "diagnostic": diagnostic,
+    }
+
+    for field_name in WORKFLOW_CLASSIFICATION_REQUIRED_FIELDS:
+        result[field_name] = (
+            normalized_classification.get(field_name) if normalized_classification is not None else None
+        )
+
+    return result
+
+
+def _extract_workflow_classification_from_block(block_text):
     if not isinstance(block_text, str) or not block_text:
         return None
 
@@ -41,7 +59,7 @@ def _parse_workflow_classification_yaml_block(block_text):
         if not stripped_line:
             continue
 
-        if stripped_line == f"{WORKFLOW_CLASSIFICATION_V1_ROOT_KEY}:":
+        if stripped_line == f"{WORKFLOW_CLASSIFICATION_ROOT_KEY}:":
             root_index = index
             root_indent = len(line) - len(line.lstrip(" "))
             break
@@ -55,135 +73,163 @@ def _parse_workflow_classification_yaml_block(block_text):
         if not stripped_line:
             continue
 
+        if "\t" in line:
+            return {
+                "classification": None,
+                "diagnostic": "workflow_classification block has malformed indentation",
+            }
+
         current_indent = len(line) - len(line.lstrip(" "))
         if current_indent <= root_indent:
             break
 
+        if current_indent != root_indent + 2:
+            return {
+                "classification": None,
+                "diagnostic": "workflow_classification block has malformed indentation",
+            }
+
         if ":" not in stripped_line:
-            continue
+            return {
+                "classification": None,
+                "diagnostic": "workflow_classification block must contain only field: value entries",
+            }
 
         field_name, field_value = stripped_line.split(":", 1)
         field_name = field_name.strip()
-        classification_fields[field_name] = _parse_yaml_scalar_value(field_value)
+        if not field_name:
+            return {
+                "classification": None,
+                "diagnostic": "workflow_classification block contains an empty field name",
+            }
 
-    return {
-        WORKFLOW_CLASSIFICATION_V1_ROOT_KEY: classification_fields,
-    }
+        if field_name in classification_fields:
+            return {
+                "classification": None,
+                "diagnostic": f"workflow_classification field `{field_name}` is duplicated",
+            }
 
+        parsed_value = _parse_yaml_scalar_value(field_value)
+        if parsed_value is None or not parsed_value:
+            return {
+                "classification": None,
+                "diagnostic": f"workflow_classification field `{field_name}` must be a non-empty scalar",
+            }
 
-def _parse_workflow_classification_payload(markdown_text):
-    for match in WORKFLOW_CLASSIFICATION_V1_FENCED_BLOCK_PATTERN.finditer(markdown_text or ""):
-        payload_text = match.group(1)
-        try:
-            payload = json.loads(payload_text)
-        except json.JSONDecodeError:
-            payload = _parse_workflow_classification_yaml_block(payload_text)
+        if parsed_value.startswith("[") or parsed_value.startswith("{") or parsed_value in {"|", ">"}:
+            return {
+                "classification": None,
+                "diagnostic": f"workflow_classification field `{field_name}` must be a flat scalar value",
+            }
 
-        if not isinstance(payload, dict):
-            continue
+        classification_fields[field_name] = parsed_value
 
-        if WORKFLOW_CLASSIFICATION_V1_ROOT_KEY in payload:
-            return payload
-
-    return None
+    return {"classification": classification_fields, "diagnostic": None}
 
 
 def validate_workflow_classification(markdown_text, *, valid_routes):
-    payload = _parse_workflow_classification_payload(markdown_text)
-    if payload is None:
-        return {
-            "status": "absent",
-            "route": None,
-            "confidence": None,
-            "rationale": None,
-            "diagnostic": "workflow classification block not provided",
-        }
+    del valid_routes
 
-    classification = payload.get(WORKFLOW_CLASSIFICATION_V1_ROOT_KEY)
+    matches = []
+    for match in WORKFLOW_CLASSIFICATION_FENCED_BLOCK_PATTERN.finditer(markdown_text or ""):
+        language = (match.group(1) or "").strip().lower()
+        if language not in {"", "yaml", "yml"}:
+            continue
+
+        parsed_block = _extract_workflow_classification_from_block(match.group(2))
+        if parsed_block is None:
+            continue
+
+        matches.append(parsed_block)
+
+    if not matches:
+        return _build_workflow_classification_result("absent")
+
+    if len(matches) > 1:
+        return _build_workflow_classification_result(
+            "malformed",
+            diagnostic="multiple workflow_classification blocks found; expected at most one",
+        )
+
+    parsed_match = matches[0]
+    classification = parsed_match.get("classification")
+    if parsed_match.get("diagnostic"):
+        return _build_workflow_classification_result(
+            "malformed",
+            classification=classification,
+            diagnostic=parsed_match.get("diagnostic"),
+        )
+
     if not isinstance(classification, dict):
-        return {
-            "status": "malformed",
-            "route": None,
-            "confidence": None,
-            "rationale": None,
-            "diagnostic": "workflow classification block must map to an object",
-        }
+        return _build_workflow_classification_result(
+            "malformed",
+            diagnostic="workflow_classification block must map to flat field: value entries",
+        )
 
-    route = classification.get("route")
-    confidence = classification.get("confidence")
-    rationale = classification.get("rationale")
+    unsupported_fields = sorted(set(classification.keys()) - set(WORKFLOW_CLASSIFICATION_REQUIRED_FIELDS))
+    if unsupported_fields:
+        return _build_workflow_classification_result(
+            "malformed",
+            classification=classification,
+            diagnostic=(
+                "unsupported workflow_classification field(s): "
+                + ", ".join(f"`{field}`" for field in unsupported_fields)
+            ),
+        )
 
-    errors = []
-    if not isinstance(route, str) or not route:
-        errors.append("route must be a non-empty string")
-    elif route not in valid_routes:
-        errors.append("route must reference a known workflow state label")
+    missing_fields = [field for field in WORKFLOW_CLASSIFICATION_REQUIRED_FIELDS if field not in classification]
+    if missing_fields:
+        return _build_workflow_classification_result(
+            "malformed",
+            classification=classification,
+            diagnostic=(
+                "missing required workflow_classification field(s): "
+                + ", ".join(f"`{field}`" for field in missing_fields)
+            ),
+        )
 
-    if not isinstance(confidence, str) or not confidence:
-        errors.append("confidence must be a non-empty string")
-    elif confidence.lower() not in WORKFLOW_CLASSIFICATION_CONFIDENCE_LEVELS:
-        errors.append("confidence must be one of low, medium, or high")
+    for field_name, allowed_values in WORKFLOW_CLASSIFICATION_ALLOWED_VALUES.items():
+        raw_value = classification.get(field_name)
+        normalized_value = raw_value.lower() if isinstance(raw_value, str) else raw_value
+        if normalized_value not in allowed_values:
+            expected = ", ".join(sorted(allowed_values))
+            return _build_workflow_classification_result(
+                "malformed",
+                classification=classification,
+                diagnostic=(
+                    f"unsupported value for `{field_name}`: `{raw_value}` "
+                    f"(expected one of: {expected})"
+                ),
+            )
 
-    if not isinstance(rationale, str) or not rationale.strip():
-        errors.append("rationale must be a non-empty string")
+        classification[field_name] = normalized_value
 
-    if errors:
-        return {
-            "status": "malformed",
-            "route": route if isinstance(route, str) and route else None,
-            "confidence": confidence if isinstance(confidence, str) and confidence else None,
-            "rationale": rationale if isinstance(rationale, str) and rationale else None,
-            "diagnostic": "; ".join(errors),
-        }
-
-    return {
-        "status": "valid",
-        "route": route,
-        "confidence": confidence.lower(),
-        "rationale": rationale,
-        "diagnostic": None,
-    }
+    return _build_workflow_classification_result("valid", classification=classification)
 
 
 def validate_workflow_classification_file(markdown_path, *, valid_routes):
     if not markdown_path:
-        return {
-            "status": "absent",
-            "route": None,
-            "confidence": None,
-            "rationale": None,
-            "diagnostic": "workflow classification source path not provided",
-        }
+        return _build_workflow_classification_result(
+            "absent", diagnostic="workflow classification source path not provided"
+        )
 
     if not isinstance(markdown_path, str):
-        return {
-            "status": "absent",
-            "route": None,
-            "confidence": None,
-            "rationale": None,
-            "diagnostic": "workflow classification source path is not a string",
-        }
+        return _build_workflow_classification_result(
+            "absent", diagnostic="workflow classification source path is not a string"
+        )
 
     if not re.search(r"\.md$", markdown_path, re.IGNORECASE):
-        return {
-            "status": "absent",
-            "route": None,
-            "confidence": None,
-            "rationale": None,
-            "diagnostic": "workflow classification source is not a markdown artifact",
-        }
+        return _build_workflow_classification_result(
+            "absent", diagnostic="workflow classification source is not a markdown artifact"
+        )
 
     try:
         with open(markdown_path, "r", encoding="utf-8") as markdown_file:
             markdown_text = markdown_file.read()
     except OSError:
-        return {
-            "status": "absent",
-            "route": None,
-            "confidence": None,
-            "rationale": None,
-            "diagnostic": "workflow classification source artifact unavailable",
-        }
+        return _build_workflow_classification_result(
+            "absent", diagnostic="workflow classification source artifact unavailable"
+        )
 
     return validate_workflow_classification(markdown_text, valid_routes=valid_routes)
 

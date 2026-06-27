@@ -1665,11 +1665,13 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         malformed_snapshot = {
             "status": "malformed",
-            "route": "state:ready-for-dev",
-            "confidence": "high",
-            "rationale": "invalid shape",
+            "implementation_complexity": "medium",
+            "safety_risk": "critical",
+            "slice_size": "single_slice",
+            "architecture_uncertainty": "minor",
+            "routing_recommendation": "continue",
             "source": "C:/abs/Watchtower/runs/issue-19/shared/architecture-handoff.md",
-            "diagnostic": "route must reference a known workflow state label",
+            "diagnostic": "unsupported value for `safety_risk`: `critical` (expected one of: high, low, medium)",
         }
 
         with patch.dict(os.environ, {}, clear=True):
@@ -1694,7 +1696,7 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         self.assertTrue(launched)
         mock_add_comment.assert_called_once_with(item)
-        self.assertIn("workflow_classification_v1", item["comment"])
+        self.assertIn("workflow_classification", item["comment"])
         self.assertIn("Routing and label transitions were not changed", item["comment"])
         self.assertEqual(mock_update_run_status.call_args.kwargs["workflow_classification"], malformed_snapshot)
 
@@ -1959,11 +1961,13 @@ class HandlerObservabilityTests(unittest.TestCase):
         implementation_plan_path = "C:/abs/Watchtower/runs/issue-55/run-001-implementation-planner/implementation-plan.md"
         malformed_snapshot = {
             "status": "malformed",
-            "route": "state:ready-for-dev",
-            "confidence": "medium",
-            "rationale": "route unsupported",
+            "implementation_complexity": "medium",
+            "safety_risk": "critical",
+            "slice_size": "single_slice",
+            "architecture_uncertainty": "minor",
+            "routing_recommendation": "continue",
             "source": implementation_plan_path,
-            "diagnostic": "route must reference a known workflow state label",
+            "diagnostic": "unsupported value for `safety_risk`: `critical` (expected one of: high, low, medium)",
         }
 
         with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
@@ -1996,7 +2000,7 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         self.assertTrue(launched)
         mock_add_comment.assert_called_once_with(item)
-        self.assertIn("workflow_classification_v1", item["comment"])
+        self.assertIn("workflow_classification", item["comment"])
         self.assertEqual(mock_update_run_status.call_args.kwargs["workflow_classification"], malformed_snapshot)
 
     def test_launch_agent_codex_implementation_planner_missing_plan_artifact_fails_without_transition(self):

@@ -2215,7 +2215,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 workflow_classification_snapshot = validate_workflow_classification_from_markdown(architecture_handoff_path)
                 if workflow_classification_snapshot.get("status") == "malformed":
                     item["comment"] = (
-                        "⚠️ Optional `workflow_classification_v1` block in architecture handoff was malformed.\n\n"
+                        "⚠️ Optional `workflow_classification` block in architecture handoff was malformed.\n\n"
                         f"Artifact: `{normalize_path_for_display(architecture_handoff_path)}`\n\n"
                         "Routing and label transitions were not changed. "
                         f"Diagnostic: {workflow_classification_snapshot.get('diagnostic')}"
@@ -2351,7 +2351,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     if workflow_classification_snapshot.get("status") == "malformed":
                         item["comment"] = (
                             f"{item.get('comment', '')}\n\n"
-                            "⚠️ Optional `workflow_classification_v1` block in `implementation-plan.md` was malformed.\n\n"
+                            "⚠️ Optional `workflow_classification` block in `implementation-plan.md` was malformed.\n\n"
                             "Routing and label transitions were not changed. "
                             f"Diagnostic: {workflow_classification_snapshot.get('diagnostic')}"
                         ).strip()
@@ -2457,7 +2457,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 normalized_implementation_plan_path = normalize_path_for_display(implementation_plan_path)
                 if workflow_classification_snapshot.get("status") == "malformed":
                     item["comment"] = (
-                        "⚠️ Optional `workflow_classification_v1` block in `implementation-plan.md` was malformed.\n\n"
+                        "⚠️ Optional `workflow_classification` block in `implementation-plan.md` was malformed.\n\n"
                         "Routing and label transitions were not changed. "
                         f"Diagnostic: {workflow_classification_snapshot.get('diagnostic')}"
                     )

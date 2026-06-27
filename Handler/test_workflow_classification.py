@@ -5,17 +5,16 @@ from Handler import workflow_classification
 
 
 class WorkflowClassificationTests(unittest.TestCase):
-    def test_validate_workflow_classification_accepts_json_payload(self):
+    def test_validate_workflow_classification_accepts_valid_yaml_block(self):
         markdown_text = (
             "# Architecture Handoff\n\n"
-            "```json\n"
-            "{\n"
-            "  \"workflow_classification_v1\": {\n"
-            "    \"route\": \"state:ready-for-dev\",\n"
-            "    \"confidence\": \"High\",\n"
-            "    \"rationale\": \"Feature scope is implementation only\"\n"
-            "  }\n"
-            "}\n"
+            "```yaml\n"
+            "workflow_classification:\n"
+            "  implementation_complexity: medium\n"
+            "  safety_risk: low\n"
+            "  slice_size: single_slice\n"
+            "  architecture_uncertainty: minor\n"
+            "  routing_recommendation: continue\n"
             "```\n"
         )
 
@@ -25,51 +24,136 @@ class WorkflowClassificationTests(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "valid")
-        self.assertEqual(result["route"], "state:ready-for-dev")
-        self.assertEqual(result["confidence"], "high")
-        self.assertIn("Feature scope", result["rationale"])
+        self.assertEqual(result["implementation_complexity"], "medium")
+        self.assertEqual(result["safety_risk"], "low")
+        self.assertEqual(result["slice_size"], "single_slice")
+        self.assertEqual(result["architecture_uncertainty"], "minor")
+        self.assertEqual(result["routing_recommendation"], "continue")
         self.assertIsNone(result["diagnostic"])
 
-    def test_validate_workflow_classification_accepts_yaml_payload(self):
+    def test_validate_workflow_classification_returns_absent_when_block_missing(self):
+        markdown_text = (
+            "# Implementation Plan\n\n"
+            "No advisory classification was included in this artifact.\n"
+        )
+
+        result = workflow_classification.validate_workflow_classification(
+            markdown_text,
+            valid_routes=set(),
+        )
+
+        self.assertEqual(result["status"], "absent")
+        self.assertIsNone(result["diagnostic"])
+
+    def test_validate_workflow_classification_reports_unsupported_value(self):
         markdown_text = (
             "```yaml\n"
-            "workflow_classification_v1:\n"
-            "  route: state:ready-for-implementation-planning\n"
-            "  confidence: medium\n"
-            "  rationale: Route requires implementation planning\n"
+            "workflow_classification:\n"
+            "  implementation_complexity: medium\n"
+            "  safety_risk: critical\n"
+            "  slice_size: single_slice\n"
+            "  architecture_uncertainty: minor\n"
+            "  routing_recommendation: continue\n"
             "```\n"
         )
 
         result = workflow_classification.validate_workflow_classification(
             markdown_text,
-            valid_routes={"state:ready-for-implementation-planning"},
-        )
-
-        self.assertEqual(result["status"], "valid")
-        self.assertEqual(result["route"], "state:ready-for-implementation-planning")
-        self.assertEqual(result["confidence"], "medium")
-
-    def test_validate_workflow_classification_reports_malformed_route(self):
-        markdown_text = (
-            "```json\n"
-            "{\n"
-            "  \"workflow_classification_v1\": {\n"
-            "    \"route\": \"state:not-a-real-route\",\n"
-            "    \"confidence\": \"low\",\n"
-            "    \"rationale\": \"Example\"\n"
-            "  }\n"
-            "}\n"
-            "```\n"
-        )
-
-        result = workflow_classification.validate_workflow_classification(
-            markdown_text,
-            valid_routes={"state:ready-for-dev"},
+            valid_routes=set(),
         )
 
         self.assertEqual(result["status"], "malformed")
-        self.assertEqual(result["route"], "state:not-a-real-route")
-        self.assertIn("known workflow state label", result["diagnostic"])
+        self.assertIn("unsupported value for `safety_risk`", result["diagnostic"])
+
+    def test_validate_workflow_classification_reports_unsupported_field(self):
+        markdown_text = (
+            "```yaml\n"
+            "workflow_classification:\n"
+            "  implementation_complexity: medium\n"
+            "  safety_risk: low\n"
+            "  slice_size: single_slice\n"
+            "  architecture_uncertainty: minor\n"
+            "  routing_recommendation: continue\n"
+            "  reviewer_depth: deep\n"
+            "```\n"
+        )
+
+        result = workflow_classification.validate_workflow_classification(
+            markdown_text,
+            valid_routes=set(),
+        )
+
+        self.assertEqual(result["status"], "malformed")
+        self.assertIn("unsupported workflow_classification field", result["diagnostic"])
+        self.assertIn("reviewer_depth", result["diagnostic"])
+
+    def test_validate_workflow_classification_reports_missing_required_field(self):
+        markdown_text = (
+            "```yaml\n"
+            "workflow_classification:\n"
+            "  implementation_complexity: medium\n"
+            "  safety_risk: low\n"
+            "  slice_size: single_slice\n"
+            "  architecture_uncertainty: minor\n"
+            "```\n"
+        )
+
+        result = workflow_classification.validate_workflow_classification(
+            markdown_text,
+            valid_routes=set(),
+        )
+
+        self.assertEqual(result["status"], "malformed")
+        self.assertIn("missing required workflow_classification field", result["diagnostic"])
+        self.assertIn("routing_recommendation", result["diagnostic"])
+
+    def test_validate_workflow_classification_reports_malformed_indentation(self):
+        markdown_text = (
+            "```yaml\n"
+            "workflow_classification:\n"
+            " implementation_complexity: medium\n"
+            "  safety_risk: low\n"
+            "  slice_size: single_slice\n"
+            "  architecture_uncertainty: minor\n"
+            "  routing_recommendation: continue\n"
+            "```\n"
+        )
+
+        result = workflow_classification.validate_workflow_classification(
+            markdown_text,
+            valid_routes=set(),
+        )
+
+        self.assertEqual(result["status"], "malformed")
+        self.assertIn("malformed indentation", result["diagnostic"])
+
+    def test_validate_workflow_classification_reports_duplicate_blocks(self):
+        markdown_text = (
+            "```yaml\n"
+            "workflow_classification:\n"
+            "  implementation_complexity: low\n"
+            "  safety_risk: low\n"
+            "  slice_size: single_slice\n"
+            "  architecture_uncertainty: none\n"
+            "  routing_recommendation: continue\n"
+            "```\n\n"
+            "```yaml\n"
+            "workflow_classification:\n"
+            "  implementation_complexity: high\n"
+            "  safety_risk: high\n"
+            "  slice_size: multi_slice\n"
+            "  architecture_uncertainty: significant\n"
+            "  routing_recommendation: escalate\n"
+            "```\n"
+        )
+
+        result = workflow_classification.validate_workflow_classification(
+            markdown_text,
+            valid_routes=set(),
+        )
+
+        self.assertEqual(result["status"], "malformed")
+        self.assertIn("multiple workflow_classification blocks", result["diagnostic"])
 
     def test_validate_workflow_classification_file_returns_absent_for_non_markdown_path(self):
         with tempfile.NamedTemporaryFile(suffix=".txt") as text_file:
