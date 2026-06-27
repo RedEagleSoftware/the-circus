@@ -2348,13 +2348,13 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     }
                     implementation_planner_diagnostic = None
                     recommended_route = None
+                    classification_diagnostic_comment = None
                     if workflow_classification_snapshot.get("status") == "malformed":
-                        item["comment"] = (
-                            f"{item.get('comment', '')}\n\n"
+                        classification_diagnostic_comment = (
                             "⚠️ Optional `workflow_classification` block in `implementation-plan.md` was malformed.\n\n"
                             "Routing and label transitions were not changed. "
                             f"Diagnostic: {workflow_classification_snapshot.get('diagnostic')}"
-                        ).strip()
+                        )
 
                     if implementation_plan_outcome is None:
                         outcome_name = "invalid result artifact"
@@ -2423,6 +2423,11 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                             "implementation-plan review."
                         )
                         item.pop("invalid_implementation_plan_outcome", None)
+
+                    if classification_diagnostic_comment:
+                        item["comment"] = (
+                            f"{item['comment']}\n\n{classification_diagnostic_comment}"
+                        )
 
                     item.pop("missing_implementation_plan_artifact", None)
                     add_comment(item)

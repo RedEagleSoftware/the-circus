@@ -2003,6 +2003,61 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("workflow_classification", item["comment"])
         self.assertEqual(mock_update_run_status.call_args.kwargs["workflow_classification"], malformed_snapshot)
 
+    def test_launch_agent_codex_implementation_planner_blocked_outcome_preserves_malformed_classification_diagnostic(self):
+        item = {
+            "type": "issue",
+            "number": 55,
+            "title": "Implementation plan has blocked outcome and malformed optional classification",
+            "url": "https://github.com/owner/repo/issues/55",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "implementation-planner",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-55/run-001-implementation-planner/launch-brief.md"
+        implementation_plan_path = "C:/abs/Watchtower/runs/issue-55/run-001-implementation-planner/implementation-plan.md"
+        malformed_snapshot = {
+            "status": "malformed",
+            "implementation_complexity": "medium",
+            "safety_risk": "critical",
+            "slice_size": "single_slice",
+            "architecture_uncertainty": "minor",
+            "routing_recommendation": "continue",
+            "source": implementation_plan_path,
+            "diagnostic": "unsupported value for `safety_risk`: `critical` (expected one of: high, low, medium)",
+        }
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler.os.path, "abspath", return_value="C:/abs/launch-brief.md"):
+                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                    with patch.object(handler, "build_implementation_plan_path", return_value=implementation_plan_path):
+                        with patch.object(handler.os.path, "isfile", return_value=True):
+                            with patch.object(handler, "parse_implementation_plan_outcome", return_value="BLOCKED"):
+                                with patch.object(
+                                    handler,
+                                    "validate_workflow_classification_from_markdown",
+                                    return_value=malformed_snapshot,
+                                ):
+                                    with patch.object(handler, "add_comment") as mock_add_comment:
+                                        with patch.object(handler, "update_run_status") as mock_update_run_status:
+                                            launched = handler.launch_agent(
+                                                item,
+                                                "state:ready-for-implementation-planning",
+                                                config,
+                                                os.path.normpath(
+                                                    os.path.join("TheFarm", "roles", "implementation-planner.md")
+                                                ),
+                                                launch_brief_path,
+                                            )
+
+        self.assertFalse(launched)
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("blocked outcome", item["comment"])
+        self.assertIn("workflow_classification", item["comment"])
+        self.assertEqual(mock_update_run_status.call_args.kwargs["workflow_classification"], malformed_snapshot)
+
     def test_launch_agent_codex_implementation_planner_missing_plan_artifact_fails_without_transition(self):
         item = {
             "type": "issue",
