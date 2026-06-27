@@ -132,6 +132,19 @@ Shared artifacts should:
 - Do not silently modify workflow labels.
 - If an issue is too broad, too risky, blocked, under-specified, or actually requires implementation planning first, leave a structured routing recommendation for human/Handler action instead of self-routing.
 - Use `implementation_complexity`, `safety_risk`, `slice_size`, and `architecture_uncertainty` as advisory vocabulary when those dimensions materially affect implementation handoff safety or routing.
+- `workflow_classification` is optional guidance. Include it in `architecture-handoff.md` and/or the issue comment only when it materially clarifies decomposition, blocker handling, escalation, or routing recommendation.
+- Prefer the shared advisory format from `docs/workflow-governance.md`:
+
+  ```yaml
+  workflow_classification:
+    implementation_complexity: low | medium | high
+    safety_risk: low | medium | high
+    slice_size: single_slice | broad | multi_slice
+    architecture_uncertainty: none | minor | significant
+    routing_recommendation: continue | split | block | escalate
+  ```
+
+- Treat this block as advisory context for human/Handler action, not as a dispatch contract or label-mutation authority.
 - Leave GitHub comments describing:
   - architectural recommendations
   - blockers
