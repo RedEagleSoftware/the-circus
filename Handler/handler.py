@@ -2261,6 +2261,11 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     success=advanced,
                     outcome="systems architecture recommendation generated",
                     stop_reason=None if advanced else "label transition failed",
+                    recommendation_traceability=watchtower.build_unavailable_recommendation_traceability_snapshot(
+                        source_issue=item.get("number"),
+                        source="systems-architect",
+                        diagnostic="not yet accepted",
+                    ),
                 )
                 write_run_result(item)
                 return advanced
@@ -2269,6 +2274,21 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 advanced = validated
                 if validated:
                     advanced = advance_roadmap_update_workflow_on_success(item, from_state_label=state_label)
+
+                recommendation_traceability = watchtower.build_unavailable_recommendation_traceability_snapshot(
+                    source_issue=item.get("number"),
+                    roadmap_reference=item.get("roadmap_pr"),
+                    source="roadmap-updater",
+                    diagnostic="accepted recommendation unavailable",
+                )
+                current_issue, current_issue_ok = get_current_item(item, fields="number,comments")
+                if current_issue_ok and isinstance(current_issue, dict):
+                    recommendation_traceability = watchtower.extract_issue_comment_recommendation_traceability(
+                        current_issue.get("comments"),
+                        source_issue=item.get("number"),
+                        roadmap_reference=item.get("roadmap_pr"),
+                        source="roadmap-updater",
+                    )
 
                 if advanced:
                     outcome = "roadmap documentation PR ready"
@@ -2287,6 +2307,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     success=advanced,
                     outcome=outcome,
                     stop_reason=stop_reason,
+                    recommendation_traceability=recommendation_traceability,
                 )
                 write_run_result(item)
                 return advanced
@@ -2306,6 +2327,14 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     )
                     item["missing_implementation_plan_artifact"] = True
                     add_comment(item)
+                    missing_artifact_snapshot = watchtower.build_implementation_planner_snapshot(
+                        normalized_implementation_plan_path,
+                        outcome=None,
+                        outcome_valid=False,
+                        diagnostic=(
+                            f"missing implementation plan artifact at {normalized_implementation_plan_path}"
+                        ),
+                    )
                     update_run_status(
                         item,
                         completed_at=utc_timestamp_now(),
@@ -2314,13 +2343,10 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         outcome="missing result artifact",
                         stop_reason=f"missing implementation plan artifact at {normalized_implementation_plan_path}",
                         artifacts={"implementation_plan": normalized_implementation_plan_path},
-                        implementation_planner=watchtower.build_implementation_planner_snapshot(
-                            normalized_implementation_plan_path,
-                            outcome=None,
-                            outcome_valid=False,
-                            diagnostic=(
-                                f"missing implementation plan artifact at {normalized_implementation_plan_path}"
-                            ),
+                        implementation_planner=missing_artifact_snapshot,
+                        recommendation_traceability=watchtower.build_implementation_planner_recommendation_traceability_snapshot(
+                            missing_artifact_snapshot,
+                            source_issue=item.get("number"),
                         ),
                     )
                     write_run_result(item)
@@ -2410,6 +2436,13 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
 
                     item.pop("missing_implementation_plan_artifact", None)
                     add_comment(item)
+                    non_ready_snapshot = watchtower.build_implementation_planner_snapshot(
+                        normalized_implementation_plan_path,
+                        outcome=implementation_plan_outcome,
+                        outcome_valid=implementation_plan_outcome is not None,
+                        diagnostic=implementation_planner_diagnostic,
+                        recommended_route=recommended_route,
+                    )
                     update_run_status(
                         item,
                         completed_at=utc_timestamp_now(),
@@ -2418,12 +2451,10 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         outcome=outcome_name,
                         stop_reason=stop_reason,
                         artifacts=artifacts,
-                        implementation_planner=watchtower.build_implementation_planner_snapshot(
-                            normalized_implementation_plan_path,
-                            outcome=implementation_plan_outcome,
-                            outcome_valid=implementation_plan_outcome is not None,
-                            diagnostic=implementation_planner_diagnostic,
-                            recommended_route=recommended_route,
+                        implementation_planner=non_ready_snapshot,
+                        recommendation_traceability=watchtower.build_implementation_planner_recommendation_traceability_snapshot(
+                            non_ready_snapshot,
+                            source_issue=item.get("number"),
                         ),
                     )
                     write_run_result(item)
@@ -2454,6 +2485,10 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         "implementation_plan_outcome": implementation_plan_outcome,
                     },
                     implementation_planner=ready_snapshot,
+                    recommendation_traceability=watchtower.build_implementation_planner_recommendation_traceability_snapshot(
+                        ready_snapshot,
+                        source_issue=item.get("number"),
+                    ),
                 )
                 write_run_result(item)
                 return advanced

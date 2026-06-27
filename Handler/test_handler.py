@@ -2358,19 +2358,34 @@ class HandlerObservabilityTests(unittest.TestCase):
 
     @patch("Handler.handler.validate_roadmap_updater_open_pull_request")
     @patch("Handler.handler.advance_roadmap_update_workflow_on_success")
+    @patch("Handler.handler.get_current_item")
     @patch("Handler.handler.subprocess.run")
     def test_roadmap_updater_success_path_validates_pr_and_transitions(
-        self, mock_subprocess, mock_advance, mock_validate
+        self, mock_subprocess, mock_get_current_item, mock_advance, mock_validate
     ):
         mock_validate.return_value = True
         mock_advance.return_value = True
         mock_subprocess.return_value = MagicMock(returncode=0)
+        mock_get_current_item.return_value = (
+            {
+                "number": 20,
+                "comments": [
+                    {
+                        "id": 7001,
+                        "html_url": "https://github.com/owner/repo/issues/20#issuecomment-7001",
+                        "body": "## Systems Architect Recommendation\n\nApproved recommendation.",
+                    }
+                ],
+            },
+            True,
+        )
 
         item = {
             "type": "issue",
             "number": 20,
             "title": "Roadmap update",
             "labels": [{"name": "state:ready-for-roadmap-update"}],
+            "roadmap_pr": "https://github.com/owner/repo/pull/88",
         }
         launch_brief_path = "launch-brief.md"
 
@@ -2379,7 +2394,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                 with patch.object(handler, "LOCK_LABEL", "state:locked"):
                     with patch.object(handler, "utc_timestamp_now", return_value="2026-06-10T07:54:00Z"):
                         with patch.object(handler, "write_run_result"):
-                            with patch.object(handler, "update_run_status"):
+                            with patch.object(handler, "update_run_status") as mock_update_run_status:
                                 advanced = handler.launch_agent(
                                     item,
                                     "state:ready-for-roadmap-update",
@@ -2391,15 +2406,29 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertTrue(advanced)
         mock_validate.assert_called_once_with(item)
         mock_advance.assert_called_once_with(item, from_state_label="state:ready-for-roadmap-update")
+        self.assertEqual(
+            mock_update_run_status.call_args.kwargs["recommendation_traceability"],
+            {
+                "available": True,
+                "recommendation_url": "https://github.com/owner/repo/issues/20#issuecomment-7001",
+                "recommendation_comment_id": 7001,
+                "source_issue": 20,
+                "roadmap_reference": "https://github.com/owner/repo/pull/88",
+                "source": "roadmap-updater",
+                "diagnostic": None,
+            },
+        )
 
     @patch("Handler.handler.advance_roadmap_update_workflow_on_success")
     @patch("Handler.handler.validate_roadmap_updater_open_pull_request")
+    @patch("Handler.handler.get_current_item")
     @patch("Handler.handler.subprocess.run")
     def test_roadmap_updater_success_path_blocks_transition_when_pr_validation_fails(
-        self, mock_subprocess, mock_validate, mock_advance
+        self, mock_subprocess, mock_get_current_item, mock_validate, mock_advance
     ):
         mock_subprocess.return_value = MagicMock(returncode=0)
         mock_validate.return_value = False
+        mock_get_current_item.return_value = ({"number": 20, "comments": []}, True)
 
         item = {
             "type": "issue",
@@ -2427,6 +2456,18 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(
             mock_update_status.call_args.kwargs["stop_reason"],
             "roadmap updater PR validation failed",
+        )
+        self.assertEqual(
+            mock_update_status.call_args.kwargs["recommendation_traceability"],
+            {
+                "available": False,
+                "recommendation_url": None,
+                "recommendation_comment_id": None,
+                "source_issue": 20,
+                "roadmap_reference": None,
+                "source": "roadmap-updater",
+                "diagnostic": "accepted recommendation unavailable",
+            },
         )
 
     def test_validate_roadmap_updater_open_pull_request_requires_working_branch(self):
@@ -4897,6 +4938,18 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(status_payload["mode"], "developer")
         self.assertIsNone(status_payload["started_at"])
         self.assertIsNone(status_payload["exit_code"])
+        self.assertEqual(
+            status_payload["recommendation_traceability"],
+            {
+                "available": False,
+                "recommendation_url": None,
+                "recommendation_comment_id": None,
+                "source_issue": None,
+                "roadmap_reference": None,
+                "source": None,
+                "diagnostic": "not provided",
+            },
+        )
         self.assertEqual(status_payload["worktree_root"], "C:/target/repo-worktrees")
         self.assertEqual(status_payload["worktree_root_source"], "derived-default")
         self.assertEqual(status_payload["workspace_name"], "issue-3")
@@ -5047,6 +5100,15 @@ class HandlerObservabilityTests(unittest.TestCase):
                             "source_recommendation_comment_id": None,
                             "roadmap_reference": None,
                         },
+                        recommendation_traceability={
+                            "available": True,
+                            "recommendation_url": "https://github.com/owner/repo/issues/69#issuecomment-50001",
+                            "recommendation_comment_id": 50001,
+                            "source_issue": 69,
+                            "roadmap_reference": "https://github.com/owner/repo/pull/90",
+                            "source": "implementation-planner",
+                            "diagnostic": None,
+                        },
                     )
                     handler.write_run_result(item)
 
@@ -5057,6 +5119,9 @@ class HandlerObservabilityTests(unittest.TestCase):
         implementation_section = result_content.split("## Implementation Planner", 1)[1].split("## Artifacts", 1)[0]
         self.assertIn("- generated issues:", implementation_section)
         self.assertIn("  - #69: `https://github.com/owner/repo/issues/69`", implementation_section)
+        traceability_section = result_content.split("## Recommendation Traceability", 1)[1].split("## Implementation Planner", 1)[0]
+        self.assertIn("- available: `True`", traceability_section)
+        self.assertIn("- recommendation comment ID: `50001`", traceability_section)
 
     def test_write_run_result_includes_workspace_lifecycle_diagnostics(self):
         item = {
