@@ -10,7 +10,8 @@ Approved issue #64 direction: add a formal Planner Outcome Model with `READY`, `
 Approved issue #59 direction: formalize circular planning and complexity-based routing as workflow governance doctrine before runtime routing automation.
 Approved issue #51 direction: formalize worktree and branch lifecycle management around conservative inventory, recovery, and cleanup safety rules.
 Approved issue #54 direction: implement the first lifecycle slice as a read-only workspace inventory and lifecycle classification service.
-The next capability frontier is **self-hosting reliability and strategic memory**.
+Approved issue #84 direction: sharpen the self-hosting reliability and strategic memory frontier into an organizational maturity program focused on workflow governance parity, accepted-decision traceability, recovery, human decision management, and lightweight organizational metrics.
+The next capability frontier is **organizational maturity for self-hosting reliability and strategic memory**.
 
 ## Current Frontier
 
@@ -44,6 +45,7 @@ flowchart LR
 
 Self Hosting now means reliable repeated execution across fresh sessions without hidden context drift.
 The approved sequence is repository onboarding, workspace isolation, durable polling, dependency blocking, worktree/branch lifecycle management, stale-lock/run recovery, persistent Watchtower visibility, strategic memory, implementation planning with explicit outcome handling, and workflow governance for circular planning before routing automation.
+Issue #84 keeps that frontier in place and clarifies the next organizational maturity program: make accepted strategy auditable against executable workflow definitions, preserve accepted-decision traceability, complete recovery as an institutional capability, structure human decision states, and seed lightweight metrics before expanding provider routing, skills, or broad parallel dispatch.
 
 ```mermaid
 flowchart LR
@@ -57,6 +59,7 @@ flowchart LR
     memory["○ Strategic Memory"]
     planning["○ Implementation Planning"]
     governance["○ Workflow Governance"]
+    maturity["○ Organizational Maturity Loop"]
 
     onboarding --> workspace
     workspace --> polling
@@ -67,7 +70,30 @@ flowchart LR
     visibility --> memory
     memory --> planning
     planning --> governance
+    governance --> maturity
 ```
+
+## Organizational Maturity Frontier
+
+Organizational Maturity is now the active refinement of Self Hosting reliability and Strategic Memory, based on the approved Systems Architect recommendation in issue #84.
+
+The accepted program is:
+
+- Reconcile workflow doctrine, roadmap documentation, canonical labels, and runtime state support into one auditable workflow governance contract.
+- Build an organizational memory ledger for accepted recommendations, roadmap updates, generated plans, resulting implementation issues, and outcomes, while keeping GitHub as the review surface and Watchtower as observability.
+- Finish operational recovery as a first-class capability covering stale locks, interrupted runs, workspace lifecycle classification, dependency blocking, and safe resume or blocked behavior.
+- Add a lightweight metrics and decision-review loop that records run outcomes, blocker classes, review churn, recovery events, and planning-to-implementation traceability.
+- Mature human decision management so every human-owned state has an explicit decision artifact, accepted source reference, next-state options, and stale-decision detection.
+
+The near-term roadmap sequence is:
+
+1. Workflow governance parity.
+2. Accepted-decision traceability.
+3. Recovery baseline.
+4. Human decision ledger.
+5. Organizational metrics seed.
+
+This program should be decomposed into independently valuable implementation slices after roadmap synchronization. Provider routing, skills, broad parallel dispatch, and model/resource optimization remain deferred until these organizational reliability gaps are closed.
 
 ## Agent Evolution
 

@@ -250,7 +250,7 @@ Issue #19 confirms that the broad capability order remains:
 
 `Workflow Foundation` -> `Self Hosting` -> `Provider Routing` -> `Skills`
 
-The next active frontier is **self-hosting reliability and strategic memory**.
+Issue #84 keeps that order in place and sharpens the next active frontier from broad **self-hosting reliability and strategic memory** into an organizational maturity program for self-hosted execution.
 
 Within that frontier, the intended sequence is:
 
@@ -263,8 +263,33 @@ Within that frontier, the intended sequence is:
 7. Persistent Watchtower visibility.
 8. Strategic memory that records accepted recommendations without making Watchtower the primary review surface.
 9. Implementation planning that converts accepted strategy into review-gated generated implementation issues, or explicitly blocks/escalates when safe planning cannot continue.
+10. Workflow governance parity across doctrine, roadmap documentation, canonical labels, and executable Handler state support.
+11. Human decision management and lightweight organizational metrics that make pending decisions, stale decisions, blocker classes, recovery events, review churn, and planning-to-implementation traceability inspectable.
 
 Provider Routing and Skills remain valid future work, but both should stay behind self-hosting reliability so provider complexity and role specialization are added only after the runtime can observe, recover, and preserve context across repeated runs.
+
+## Accepted Organizational Maturity Direction
+
+Issue #84 approved an organizational maturity refinement under the existing Self Hosting reliability and Strategic Memory frontier.
+
+The accepted direction is:
+
+- keep the current strategic frontier, but treat organizational closure as the limiting capability before provider routing, skills, broad parallel dispatch, or model/resource optimization
+- reconcile workflow doctrine, roadmap documentation, canonical labels, and runtime state support into one auditable workflow governance contract
+- build an organizational memory ledger for accepted recommendations, roadmap updates, generated plans, resulting implementation issues, and outcome state, with GitHub remaining the review surface and Watchtower remaining observability
+- finish operational recovery as a first-class capability covering stale locks, interrupted runs, workspace lifecycle classification, dependency blocking, and safe resume or blocked behavior
+- add a lightweight metrics and decision-review loop that records run outcomes, blocker classes, review churn, recovery events, and planning-to-implementation traceability
+- mature human decision management so every human-owned state has an explicit decision artifact, accepted source reference, next-state options, and stale-decision detection
+
+The roadmap sequence for this program is:
+
+1. Workflow governance parity: document and then enforce parity between accepted workflow states, label sync, Handler dispatchability, human-owned states, and unsupported-state handling.
+2. Accepted-decision traceability: record Systems Architect recommendation URL/comment ID, roadmap PR, planner issue, generated issue IDs, and outcome state in Watchtower run history while preserving GitHub as authority.
+3. Recovery baseline: complete stale-lock/run recovery, workspace lifecycle classification, and dependency-blocked resume behavior before expanding parallelism or provider routing.
+4. Human decision ledger: standardize artifacts for roadmap acceptance, implementation-plan approval, generated issue dispatch approval, and stale-plan/change-request loops.
+5. Organizational metrics seed: start with simple, inspectable counts and categories for run outcomes, blockers, recovery events, review changes requested, and plan churn.
+
+These initiatives should become independently valuable implementation slices after roadmap synchronization. Metrics are visibility and review inputs in v1; they should not become automatic routing or control signals until later approved runtime capabilities validate that behavior.
 
 ## Accepted Workspace Isolation Direction
 
