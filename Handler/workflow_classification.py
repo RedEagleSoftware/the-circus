@@ -62,7 +62,7 @@ def _extract_workflow_classification_from_block(block_text):
         if not stripped_line:
             continue
 
-        root_match = WORKFLOW_CLASSIFICATION_ROOT_PATTERN.match(stripped_line)
+        root_match = WORKFLOW_CLASSIFICATION_ROOT_PATTERN.match(line.rstrip())
         if root_match:
             root_suffix = root_match.group(1).strip()
             if root_suffix:

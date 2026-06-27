@@ -200,6 +200,27 @@ class WorkflowClassificationTests(unittest.TestCase):
         self.assertEqual(result["status"], "malformed")
         self.assertIn("root must be a nested mapping", result["diagnostic"])
 
+    def test_validate_workflow_classification_rejects_nested_root_key(self):
+        markdown_text = (
+            "```yaml\n"
+            "metadata:\n"
+            "  workflow_classification:\n"
+            "    implementation_complexity: medium\n"
+            "    safety_risk: low\n"
+            "    slice_size: single_slice\n"
+            "    architecture_uncertainty: minor\n"
+            "    routing_recommendation: continue\n"
+            "```\n"
+        )
+
+        result = workflow_classification.validate_workflow_classification(
+            markdown_text,
+            valid_routes=set(),
+        )
+
+        self.assertEqual(result["status"], "absent")
+        self.assertIsNone(result["diagnostic"])
+
     def test_validate_workflow_classification_file_returns_absent_for_non_markdown_path(self):
         with tempfile.NamedTemporaryFile(suffix=".txt") as text_file:
             result = workflow_classification.validate_workflow_classification_file(
