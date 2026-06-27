@@ -18,6 +18,7 @@ from Handler import review_flow
 from Handler import target_instructions
 from Handler import watchtower
 from Handler import workflow
+from Handler import workflow_classification
 from Handler.workflow_states import (
     HUMAN_REVIEW_LABEL,
     IMPLEMENTATION_PLAN_REVIEW_LABEL,
@@ -789,55 +790,19 @@ def parse_architect_review_result_outcome(architect_review_result_path):
 
 
 def parse_implementation_plan_outcome(implementation_plan_path):
-    if not os.path.exists(implementation_plan_path):
-        return None
+    return workflow_classification.parse_implementation_plan_outcome(
+        implementation_plan_path,
+        allowed_outcomes=IMPLEMENTATION_PLAN_OUTCOMES,
+    )
 
-    try:
-        with open(implementation_plan_path, "r", encoding="utf-8") as result_file:
-            found_outcome_section = False
-            in_outcome_section = False
-            outcome = None
 
-            for raw_line in result_file:
-                line_without_newline = raw_line.rstrip("\r\n")
-                stripped_line = line_without_newline.strip()
-                normalized_heading = stripped_line.lower()
-
-                if normalized_heading == "### outcome":
-                    if found_outcome_section:
-                        return None
-
-                    found_outcome_section = True
-                    in_outcome_section = True
-                    continue
-
-                if not in_outcome_section:
-                    continue
-
-                if stripped_line.startswith("### ") or stripped_line.startswith("## "):
-                    in_outcome_section = False
-                    continue
-
-                if not stripped_line:
-                    continue
-
-                candidate_outcome = stripped_line
-                if candidate_outcome in IMPLEMENTATION_PLAN_OUTCOMES:
-                    if outcome is not None:
-                        return None
-
-                    outcome = candidate_outcome
-                    continue
-
-                if outcome is None:
-                    return None
-
-            if not found_outcome_section:
-                return None
-
-            return outcome
-    except OSError:
-        return None
+def validate_workflow_classification_from_markdown(markdown_path):
+    classification = workflow_classification.validate_workflow_classification_file(
+        markdown_path,
+        valid_routes=set(LABEL_MAP.keys()),
+    )
+    classification["source"] = normalize_path_for_display(markdown_path) if markdown_path else None
+    return classification
 
 
 def parse_planner_result_v1(body):
@@ -2242,6 +2207,20 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             item.pop("agent_exit_non_zero", None)
             if mode == "architect" and state_label == "state:ready-for-architecture":
                 advanced = advance_architect_workflow_on_success(item)
+                launch_run_dir = os.path.dirname(launch_brief_path)
+                item_run_root = os.path.dirname(launch_run_dir)
+                architecture_handoff_path = normalize_path_for_display(
+                    os.path.join(item_run_root, "shared", "architecture-handoff.md")
+                )
+                workflow_classification_snapshot = validate_workflow_classification_from_markdown(architecture_handoff_path)
+                if workflow_classification_snapshot.get("status") == "malformed":
+                    item["comment"] = (
+                        "⚠️ Optional `workflow_classification_v1` block in architecture handoff was malformed.\n\n"
+                        f"Artifact: `{normalize_path_for_display(architecture_handoff_path)}`\n\n"
+                        "Routing and label transitions were not changed. "
+                        f"Diagnostic: {workflow_classification_snapshot.get('diagnostic')}"
+                    )
+                    add_comment(item)
                 update_run_status(
                     item,
                     completed_at=utc_timestamp_now(),
@@ -2249,6 +2228,8 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     success=advanced,
                     outcome="architect handoff generated",
                     stop_reason=None if advanced else "label transition failed",
+                    artifacts={"architecture_handoff": normalize_path_for_display(architecture_handoff_path)},
+                    workflow_classification=workflow_classification_snapshot,
                 )
                 write_run_result(item)
                 return advanced
@@ -2313,6 +2294,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 return advanced
             elif mode == "implementation-planner" and state_label in implementation_planner_state_labels:
                 implementation_plan_path = build_implementation_plan_path(launch_brief_path)
+                workflow_classification_snapshot = validate_workflow_classification_from_markdown(implementation_plan_path)
                 if not os.path.isfile(implementation_plan_path):
                     normalized_implementation_plan_path = normalize_path_for_display(implementation_plan_path)
                     print(
@@ -2344,6 +2326,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         stop_reason=f"missing implementation plan artifact at {normalized_implementation_plan_path}",
                         artifacts={"implementation_plan": normalized_implementation_plan_path},
                         implementation_planner=missing_artifact_snapshot,
+                        workflow_classification=workflow_classification_snapshot,
                         recommendation_traceability=watchtower.build_implementation_planner_recommendation_traceability_snapshot(
                             missing_artifact_snapshot,
                             source_issue=item.get("number"),
@@ -2365,6 +2348,13 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     }
                     implementation_planner_diagnostic = None
                     recommended_route = None
+                    if workflow_classification_snapshot.get("status") == "malformed":
+                        item["comment"] = (
+                            f"{item.get('comment', '')}\n\n"
+                            "⚠️ Optional `workflow_classification_v1` block in `implementation-plan.md` was malformed.\n\n"
+                            "Routing and label transitions were not changed. "
+                            f"Diagnostic: {workflow_classification_snapshot.get('diagnostic')}"
+                        ).strip()
 
                     if implementation_plan_outcome is None:
                         outcome_name = "invalid result artifact"
@@ -2452,6 +2442,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         stop_reason=stop_reason,
                         artifacts=artifacts,
                         implementation_planner=non_ready_snapshot,
+                        workflow_classification=workflow_classification_snapshot,
                         recommendation_traceability=watchtower.build_implementation_planner_recommendation_traceability_snapshot(
                             non_ready_snapshot,
                             source_issue=item.get("number"),
@@ -2464,6 +2455,13 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                 item.pop("invalid_implementation_plan_outcome", None)
                 advanced = advance_implementation_planning_workflow_on_success(item, from_state_label=state_label)
                 normalized_implementation_plan_path = normalize_path_for_display(implementation_plan_path)
+                if workflow_classification_snapshot.get("status") == "malformed":
+                    item["comment"] = (
+                        "⚠️ Optional `workflow_classification_v1` block in `implementation-plan.md` was malformed.\n\n"
+                        "Routing and label transitions were not changed. "
+                        f"Diagnostic: {workflow_classification_snapshot.get('diagnostic')}"
+                    )
+                    add_comment(item)
                 ready_snapshot = watchtower.build_implementation_planner_snapshot(
                     normalized_implementation_plan_path,
                     outcome=implementation_plan_outcome,
@@ -2485,6 +2483,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         "implementation_plan_outcome": implementation_plan_outcome,
                     },
                     implementation_planner=ready_snapshot,
+                    workflow_classification=workflow_classification_snapshot,
                     recommendation_traceability=watchtower.build_implementation_planner_recommendation_traceability_snapshot(
                         ready_snapshot,
                         source_issue=item.get("number"),

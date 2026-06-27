@@ -1649,6 +1649,55 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn(f"Read the launch brief at {absolute_launch_brief_path}", executing_lines[0])
         self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", executing_lines[0])
 
+    def test_launch_agent_codex_architect_malformed_workflow_classification_posts_comment_without_blocking(self):
+        item = {
+            "type": "issue",
+            "number": 19,
+            "title": "Architecture handoff emitted malformed classification",
+            "url": "https://github.com/owner/repo/issues/19",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "architect",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        malformed_snapshot = {
+            "status": "malformed",
+            "route": "state:ready-for-dev",
+            "confidence": "high",
+            "rationale": "invalid shape",
+            "source": "C:/abs/Watchtower/runs/issue-19/shared/architecture-handoff.md",
+            "diagnostic": "route must reference a known workflow state label",
+        }
+
+        with patch.dict(os.environ, {}, clear=True):
+            with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                with patch.object(handler.os.path, "abspath", return_value="C:/abs/launch-brief.md"):
+                    with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                        with patch.object(handler, "advance_architect_workflow_on_success", return_value=True):
+                            with patch.object(
+                                handler,
+                                "validate_workflow_classification_from_markdown",
+                                return_value=malformed_snapshot,
+                            ):
+                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                    with patch.object(handler, "update_run_status") as mock_update_run_status:
+                                        launched = handler.launch_agent(
+                                            item,
+                                            "state:ready-for-architecture",
+                                            config,
+                                            os.path.normpath(os.path.join("TheFarm", "roles", "architect.md")),
+                                            "Watchtower/runs/issue-19/run-001-architect/launch-brief.md",
+                                        )
+
+        self.assertTrue(launched)
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("workflow_classification_v1", item["comment"])
+        self.assertIn("Routing and label transitions were not changed", item["comment"])
+        self.assertEqual(mock_update_run_status.call_args.kwargs["workflow_classification"], malformed_snapshot)
+
     def test_launch_agent_codex_architect_success_does_not_trigger_developer_pr_flow(self):
         item = {
             "type": "issue",
@@ -1892,6 +1941,63 @@ class HandlerObservabilityTests(unittest.TestCase):
             item,
             from_state_label="state:ready-for-implementation-planning",
         )
+
+    def test_launch_agent_codex_implementation_planner_ready_with_malformed_classification_posts_comment(self):
+        item = {
+            "type": "issue",
+            "number": 55,
+            "title": "Implementation plan uses malformed optional classification",
+            "url": "https://github.com/owner/repo/issues/55",
+        }
+        config = {
+            "agent": "codex",
+            "mode": "implementation-planner",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-55/run-001-implementation-planner/launch-brief.md"
+        implementation_plan_path = "C:/abs/Watchtower/runs/issue-55/run-001-implementation-planner/implementation-plan.md"
+        malformed_snapshot = {
+            "status": "malformed",
+            "route": "state:ready-for-dev",
+            "confidence": "medium",
+            "rationale": "route unsupported",
+            "source": implementation_plan_path,
+            "diagnostic": "route must reference a known workflow state label",
+        }
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler.os.path, "abspath", return_value="C:/abs/launch-brief.md"):
+                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                    with patch.object(handler, "build_implementation_plan_path", return_value=implementation_plan_path):
+                        with patch.object(handler.os.path, "isfile", return_value=True):
+                            with patch.object(handler, "parse_implementation_plan_outcome", return_value="READY"):
+                                with patch.object(
+                                    handler,
+                                    "validate_workflow_classification_from_markdown",
+                                    return_value=malformed_snapshot,
+                                ):
+                                    with patch.object(
+                                        handler,
+                                        "advance_implementation_planning_workflow_on_success",
+                                        return_value=True,
+                                    ):
+                                        with patch.object(handler, "add_comment") as mock_add_comment:
+                                            with patch.object(handler, "update_run_status") as mock_update_run_status:
+                                                launched = handler.launch_agent(
+                                                    item,
+                                                    "state:ready-for-implementation-planning",
+                                                    config,
+                                                    os.path.normpath(
+                                                        os.path.join("TheFarm", "roles", "implementation-planner.md")
+                                                    ),
+                                                    launch_brief_path,
+                                                )
+
+        self.assertTrue(launched)
+        mock_add_comment.assert_called_once_with(item)
+        self.assertIn("workflow_classification_v1", item["comment"])
+        self.assertEqual(mock_update_run_status.call_args.kwargs["workflow_classification"], malformed_snapshot)
 
     def test_launch_agent_codex_implementation_planner_missing_plan_artifact_fails_without_transition(self):
         item = {
