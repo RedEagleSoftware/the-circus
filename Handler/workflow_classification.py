@@ -3,6 +3,9 @@ import re
 
 WORKFLOW_CLASSIFICATION_FENCED_BLOCK_PATTERN = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
 WORKFLOW_CLASSIFICATION_ROOT_KEY = "workflow_classification"
+WORKFLOW_CLASSIFICATION_ROOT_PATTERN = re.compile(
+    rf"^{WORKFLOW_CLASSIFICATION_ROOT_KEY}\s*:(.*)$"
+)
 WORKFLOW_CLASSIFICATION_ALLOWED_VALUES = {
     "implementation_complexity": {"low", "medium", "high"},
     "safety_risk": {"low", "medium", "high"},
@@ -59,7 +62,15 @@ def _extract_workflow_classification_from_block(block_text):
         if not stripped_line:
             continue
 
-        if stripped_line == f"{WORKFLOW_CLASSIFICATION_ROOT_KEY}:":
+        root_match = WORKFLOW_CLASSIFICATION_ROOT_PATTERN.match(stripped_line)
+        if root_match:
+            root_suffix = root_match.group(1).strip()
+            if root_suffix:
+                return {
+                    "classification": None,
+                    "diagnostic": "workflow_classification root must be a nested mapping",
+                }
+
             root_index = index
             root_indent = len(line) - len(line.lstrip(" "))
             break

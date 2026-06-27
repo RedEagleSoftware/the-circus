@@ -155,6 +155,51 @@ class WorkflowClassificationTests(unittest.TestCase):
         self.assertEqual(result["status"], "malformed")
         self.assertIn("multiple workflow_classification blocks", result["diagnostic"])
 
+    def test_validate_workflow_classification_reports_inline_scalar_root(self):
+        markdown_text = (
+            "```yaml\n"
+            "workflow_classification: continue\n"
+            "```\n"
+        )
+
+        result = workflow_classification.validate_workflow_classification(
+            markdown_text,
+            valid_routes=set(),
+        )
+
+        self.assertEqual(result["status"], "malformed")
+        self.assertIn("root must be a nested mapping", result["diagnostic"])
+
+    def test_validate_workflow_classification_reports_inline_mapping_root(self):
+        markdown_text = (
+            "```yaml\n"
+            "workflow_classification: {implementation_complexity: medium}\n"
+            "```\n"
+        )
+
+        result = workflow_classification.validate_workflow_classification(
+            markdown_text,
+            valid_routes=set(),
+        )
+
+        self.assertEqual(result["status"], "malformed")
+        self.assertIn("root must be a nested mapping", result["diagnostic"])
+
+    def test_validate_workflow_classification_reports_inline_sequence_root(self):
+        markdown_text = (
+            "```yaml\n"
+            "workflow_classification: []\n"
+            "```\n"
+        )
+
+        result = workflow_classification.validate_workflow_classification(
+            markdown_text,
+            valid_routes=set(),
+        )
+
+        self.assertEqual(result["status"], "malformed")
+        self.assertIn("root must be a nested mapping", result["diagnostic"])
+
     def test_validate_workflow_classification_file_returns_absent_for_non_markdown_path(self):
         with tempfile.NamedTemporaryFile(suffix=".txt") as text_file:
             result = workflow_classification.validate_workflow_classification_file(
