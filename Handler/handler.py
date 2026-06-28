@@ -226,16 +226,16 @@ def get_labeled_items():
     candidates = []
     for item in all_items:
         labels = [label["name"] for label in item["labels"]]
-        primary_states = get_primary_state_labels(labels)
+        primary_states = get_known_primary_workflow_state_labels(labels)
 
         if primary_states:
             candidates.append(item)
             continue
 
-        state_labels = get_state_labels(labels)
-        if state_labels:
+        unsupported_state_labels = get_unsupported_state_labels(labels)
+        if unsupported_state_labels:
             print(
-                f"[Poll] {item['type']} #{item['number']} has unsupported state label(s): {repr(state_labels)}"
+                f"[Poll] {item['type']} #{item['number']} has unsupported state label(s): {repr(unsupported_state_labels)}"
             )
 
     return issues, prs, candidates, issues_ok and prs_ok
@@ -245,8 +245,16 @@ def get_primary_state_labels(labels):
     return workflow.get_primary_state_labels(labels)
 
 
+def get_known_primary_workflow_state_labels(labels):
+    return workflow.get_known_primary_workflow_state_labels(labels)
+
+
 def get_state_labels(labels):
     return workflow.get_state_labels(labels)
+
+
+def get_unsupported_state_labels(labels):
+    return workflow.get_unsupported_state_labels(labels)
 
 
 def is_locked(labels):

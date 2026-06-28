@@ -5422,6 +5422,7 @@ class HandlerObservabilityTests(unittest.TestCase):
             "["
             "{\"number\": 11, \"title\": \"ready\", \"labels\": [{\"name\": \"state:ready-for-review\"}]},"
             "{\"number\": 12, \"title\": \"unknown\", \"labels\": [{\"name\": \"state:unknown-state\"}]},"
+            "{\"number\": 14, \"title\": \"non-dispatch\", \"labels\": [{\"name\": \"state:dependency-blocked\"}]},"
             "{\"number\": 13, \"title\": \"plain\", \"labels\": [{\"name\": \"bug\"}]}"
             "]"
         )
@@ -5440,9 +5441,9 @@ class HandlerObservabilityTests(unittest.TestCase):
                     issues, prs, candidates, ok = handler.get_labeled_items()
 
         self.assertTrue(ok)
-        self.assertEqual(len(issues), 3)
+        self.assertEqual(len(issues), 4)
         self.assertEqual(len(prs), 1)
-        self.assertEqual([item["number"] for item in candidates], [11, 21])
+        self.assertEqual([item["number"] for item in candidates], [11, 14, 21])
 
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(
@@ -5451,6 +5452,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                 for line in printed_lines
             )
         )
+        self.assertFalse(any("issue #14 has unsupported state label" in line for line in printed_lines))
 
 
 if __name__ == "__main__":

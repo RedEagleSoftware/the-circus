@@ -58,6 +58,10 @@ def get_primary_workflow_state_labels(labels):
     return [label for label in get_state_labels(labels) if label != LOCK_LABEL]
 
 
+def get_known_primary_workflow_state_labels(labels):
+    return [label for label in get_primary_workflow_state_labels(labels) if label in WORKFLOW_STATES]
+
+
 def is_locked(labels):
     return LOCK_LABEL in labels
 
