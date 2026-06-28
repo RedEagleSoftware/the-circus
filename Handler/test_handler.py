@@ -245,6 +245,25 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("unsupported workflow state", item["comment"])
         self.assertIn("unsupported workflow state label", item["skip_reason"])
 
+    def test_resolve_dispatch_config_fails_closed_when_supported_and_unsupported_states_coexist(self):
+        item = {"type": "issue", "number": 12, "labels": []}
+
+        result = handler.resolve_dispatch_config(item, ["state:ready-for-dev", "state:unknown-state"])
+
+        self.assertIsNone(result)
+        self.assertIn("unsupported workflow state", item["comment"])
+        self.assertIn("state:unknown-state", item["comment"])
+        self.assertEqual(item["skip_reason"], "unsupported workflow state label(s): state:unknown-state")
+
+    def test_resolve_dispatch_config_reports_non_dispatch_state(self):
+        item = {"type": "issue", "number": 12, "labels": []}
+
+        result = handler.resolve_dispatch_config(item, ["state:dependency-blocked"])
+
+        self.assertIsNone(result)
+        self.assertIn("non-dispatch workflow state label", item["comment"])
+        self.assertIn("state:dependency-blocked", item["skip_reason"])
+
     def test_process_one_item_reports_locked_skip(self):
         items = [
             {

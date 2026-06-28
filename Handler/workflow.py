@@ -35,11 +35,27 @@ HUMAN_OWNED_WORKFLOW_STATES = {label for label, state in WORKFLOW_STATES.items()
 
 
 def get_primary_state_labels(labels):
-    return [label for label in labels if label in LABEL_MAP]
+    return get_dispatchable_state_labels(labels)
 
 
 def get_state_labels(labels):
     return [label for label in labels if label.startswith("state:")]
+
+
+def get_known_state_labels(labels):
+    return [label for label in get_state_labels(labels) if label in WORKFLOW_STATES]
+
+
+def get_dispatchable_state_labels(labels):
+    return [label for label in labels if label in LABEL_MAP]
+
+
+def get_unsupported_state_labels(labels):
+    return [label for label in get_state_labels(labels) if label not in WORKFLOW_STATES]
+
+
+def get_primary_workflow_state_labels(labels):
+    return [label for label in get_state_labels(labels) if label != LOCK_LABEL]
 
 
 def is_locked(labels):
@@ -55,22 +71,24 @@ def is_human_owned_state_label(label):
 
 
 def resolve_dispatch_config(item, labels):
-    primary_states = get_primary_state_labels(labels)
-    state_labels = get_state_labels(labels)
+    primary_states = get_primary_workflow_state_labels(labels)
+    dispatchable_states = get_dispatchable_state_labels(labels)
+    unsupported_states = get_unsupported_state_labels(labels)
+
+    if unsupported_states:
+        item["comment"] = (
+            "Handler skipped this item: unsupported workflow state label(s) were found "
+            f"({', '.join(unsupported_states)}). Please remove unsupported labels before dispatch."
+        )
+        item["skip_reason"] = f"unsupported workflow state label(s): {', '.join(unsupported_states)}"
+        return None
 
     if not primary_states:
-        if state_labels:
-            item["comment"] = (
-                "Handler skipped this item: unsupported workflow state label(s) were found "
-                f"({', '.join(state_labels)}). Please use one supported state label from the doctrine."
-            )
-            item["skip_reason"] = f"unsupported workflow state label(s): {', '.join(state_labels)}"
-        else:
-            item["comment"] = (
-                "Handler skipped this item: no supported workflow state label was found. "
-                "Please add exactly one primary `state:*` label to continue."
-            )
-            item["skip_reason"] = "no supported workflow state label"
+        item["comment"] = (
+            "Handler skipped this item: no supported workflow state label was found. "
+            "Please add exactly one primary `state:*` label to continue."
+        )
+        item["skip_reason"] = "no supported workflow state label"
         return None
 
     if len(primary_states) > 1:
@@ -79,6 +97,14 @@ def resolve_dispatch_config(item, labels):
             f"({', '.join(primary_states)}). Please keep exactly one primary `state:*` label."
         )
         item["skip_reason"] = f"ambiguous workflow state labels: {', '.join(primary_states)}"
+        return None
+
+    if not dispatchable_states:
+        item["comment"] = (
+            "Handler skipped this item: non-dispatch workflow state label found "
+            f"({primary_states[0]}). This state requires human or scheduler action before dispatch."
+        )
+        item["skip_reason"] = f"non-dispatch workflow state label: {primary_states[0]}"
         return None
 
     return primary_states[0], LABEL_MAP[primary_states[0]]

@@ -201,6 +201,14 @@ def run_target_repo_init(target_repo_path):
     return True
 
 
+def run_workflow_governance_parity_check():
+    from Handler.workflow_parity import evaluate_workflow_governance_parity, format_workflow_parity_report
+
+    parity_result = evaluate_workflow_governance_parity(repo_root=os.getcwd())
+    print(format_workflow_parity_report(parity_result))
+    return parity_result["ok"]
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="The Circus orchestrator launcher")
     parser.add_argument(
@@ -212,6 +220,11 @@ def main(argv=None):
         "--init",
         action="store_true",
         help="Initialize target repository instruction scaffolding under CIRCUS_TARGET_REPO_PATH and exit.",
+    )
+    parser.add_argument(
+        "--check-workflow-governance",
+        action="store_true",
+        help="Run workflow governance parity checks and exit.",
     )
     parser.add_argument(
         "--approve-implementation-plan",
@@ -242,6 +255,10 @@ def main(argv=None):
         if not repo:
             return
         run_label_sync(repo)
+        return
+
+    if args.check_workflow_governance:
+        run_workflow_governance_parity_check()
         return
 
     if args.approve_implementation_plan is not None:
