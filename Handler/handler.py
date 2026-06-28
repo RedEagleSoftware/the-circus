@@ -553,15 +553,19 @@ def revalidate_candidate_after_lock(item, expected_state_label):
         return None, "prelaunch-failed"
 
     current_labels = [label["name"] for label in current_item.get("labels", [])]
-    current_primary_states = get_primary_state_labels(current_labels)
-    still_matches = len(current_primary_states) == 1 and current_primary_states[0] == expected_state_label
-    if still_matches:
+    dispatch_resolution = resolve_dispatch_config(current_item, current_labels)
+    if dispatch_resolution and dispatch_resolution[0] == expected_state_label:
         item.update(current_item)
         return item, None
 
+    if dispatch_resolution:
+        current_state_description = repr([dispatch_resolution[0]])
+    else:
+        current_state_description = current_item.get("skip_reason", "unsupported workflow state")
+
     print(
         f"[Dispatch] Candidate {item['type']} #{item['number']} changed state after lock acquisition; "
-        f"expected `{expected_state_label}`, now {repr(current_primary_states)}."
+        f"expected `{expected_state_label}`, now {current_state_description}."
     )
     print(f"[Dispatch] Releasing lock for stale candidate {item['type']} #{item['number']}...")
     lock_released = unlock_item(item)

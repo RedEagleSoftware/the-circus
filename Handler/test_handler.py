@@ -4876,6 +4876,43 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_write_launch_brief.assert_not_called()
         mock_launch_agent.assert_not_called()
 
+    def test_process_one_item_revalidation_with_unsupported_state_releases_lock_and_skips_launch(self):
+        item = {
+            "type": "issue",
+            "number": 145,
+            "title": "Reviewer candidate gained unsupported state",
+            "url": "https://github.com/owner/repo/issues/145",
+            "labels": [{"name": "state:ready-for-review"}],
+        }
+        current_item = {
+            "type": "issue",
+            "number": 145,
+            "title": "Reviewer candidate gained unsupported state",
+            "url": "https://github.com/owner/repo/issues/145",
+            "labels": [
+                {"name": "state:ready-for-review"},
+                {"name": "state:unknown-state"},
+                {"name": handler.LOCK_LABEL},
+            ],
+        }
+
+        with patch.object(handler, "lock_item", return_value=True):
+            with patch.object(handler, "get_current_item", return_value=(current_item, True)) as mock_get_current_item:
+                with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                    with patch.object(handler, "find_open_review_pr_for_issue") as mock_find_review_pr:
+                        with patch.object(handler, "write_launch_brief") as mock_write_launch_brief:
+                            with patch.object(handler, "launch_agent") as mock_launch_agent:
+                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                    dispatched = handler.process_one_item([item])
+
+        self.assertEqual(dispatched, "stale-candidate")
+        mock_get_current_item.assert_called_once_with(item)
+        mock_unlock.assert_called_once_with(item)
+        mock_find_review_pr.assert_not_called()
+        mock_write_launch_brief.assert_not_called()
+        mock_launch_agent.assert_not_called()
+        mock_add_comment.assert_not_called()
+
     def test_process_one_item_revalidation_matching_state_continues_reviewer_dispatch(self):
         item = {
             "type": "issue",
