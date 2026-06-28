@@ -12,6 +12,7 @@ REVIEW_LABEL = "state:ready-for-review"
 ARCHITECT_REVIEW_LABEL = "state:ready-for-architect-review"
 HUMAN_REVIEW_LABEL = "state:ready-for-human-review"
 BLOCKED_LABEL = "state:blocked"
+DEPENDENCY_BLOCKED_LABEL = "state:dependency-blocked"
 LOCK_LABEL = "state:agent-in-progress"
 
 WORKFLOW_STATES = {
@@ -137,6 +138,10 @@ WORKFLOW_STATES = {
         "color": "D73A4A",
         "human_owned": True,
         "terminal": True,
+    },
+    DEPENDENCY_BLOCKED_LABEL: {
+        "description": "Blocked by declared dependencies; scheduler-managed non-dispatch state.",
+        "color": "BFD4F2",
     },
     LOCK_LABEL: {
         "description": "Lock label indicating an agent currently owns this item.",

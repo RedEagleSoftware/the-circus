@@ -245,6 +245,25 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("unsupported workflow state", item["comment"])
         self.assertIn("unsupported workflow state label", item["skip_reason"])
 
+    def test_resolve_dispatch_config_fails_closed_when_supported_and_unsupported_states_coexist(self):
+        item = {"type": "issue", "number": 12, "labels": []}
+
+        result = handler.resolve_dispatch_config(item, ["state:ready-for-dev", "state:unknown-state"])
+
+        self.assertIsNone(result)
+        self.assertIn("unsupported workflow state", item["comment"])
+        self.assertIn("state:unknown-state", item["comment"])
+        self.assertEqual(item["skip_reason"], "unsupported workflow state label(s): state:unknown-state")
+
+    def test_resolve_dispatch_config_reports_non_dispatch_state(self):
+        item = {"type": "issue", "number": 12, "labels": []}
+
+        result = handler.resolve_dispatch_config(item, ["state:dependency-blocked"])
+
+        self.assertIsNone(result)
+        self.assertIn("non-dispatch workflow state label", item["comment"])
+        self.assertIn("state:dependency-blocked", item["skip_reason"])
+
     def test_process_one_item_reports_locked_skip(self):
         items = [
             {
@@ -4857,6 +4876,43 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_write_launch_brief.assert_not_called()
         mock_launch_agent.assert_not_called()
 
+    def test_process_one_item_revalidation_with_unsupported_state_releases_lock_and_skips_launch(self):
+        item = {
+            "type": "issue",
+            "number": 145,
+            "title": "Reviewer candidate gained unsupported state",
+            "url": "https://github.com/owner/repo/issues/145",
+            "labels": [{"name": "state:ready-for-review"}],
+        }
+        current_item = {
+            "type": "issue",
+            "number": 145,
+            "title": "Reviewer candidate gained unsupported state",
+            "url": "https://github.com/owner/repo/issues/145",
+            "labels": [
+                {"name": "state:ready-for-review"},
+                {"name": "state:unknown-state"},
+                {"name": handler.LOCK_LABEL},
+            ],
+        }
+
+        with patch.object(handler, "lock_item", return_value=True):
+            with patch.object(handler, "get_current_item", return_value=(current_item, True)) as mock_get_current_item:
+                with patch.object(handler, "unlock_item", return_value=True) as mock_unlock:
+                    with patch.object(handler, "find_open_review_pr_for_issue") as mock_find_review_pr:
+                        with patch.object(handler, "write_launch_brief") as mock_write_launch_brief:
+                            with patch.object(handler, "launch_agent") as mock_launch_agent:
+                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                    dispatched = handler.process_one_item([item])
+
+        self.assertEqual(dispatched, "stale-candidate")
+        mock_get_current_item.assert_called_once_with(item)
+        mock_unlock.assert_called_once_with(item)
+        mock_find_review_pr.assert_not_called()
+        mock_write_launch_brief.assert_not_called()
+        mock_launch_agent.assert_not_called()
+        mock_add_comment.assert_not_called()
+
     def test_process_one_item_revalidation_matching_state_continues_reviewer_dispatch(self):
         item = {
             "type": "issue",
@@ -5403,6 +5459,7 @@ class HandlerObservabilityTests(unittest.TestCase):
             "["
             "{\"number\": 11, \"title\": \"ready\", \"labels\": [{\"name\": \"state:ready-for-review\"}]},"
             "{\"number\": 12, \"title\": \"unknown\", \"labels\": [{\"name\": \"state:unknown-state\"}]},"
+            "{\"number\": 14, \"title\": \"non-dispatch\", \"labels\": [{\"name\": \"state:dependency-blocked\"}]},"
             "{\"number\": 13, \"title\": \"plain\", \"labels\": [{\"name\": \"bug\"}]}"
             "]"
         )
@@ -5421,9 +5478,9 @@ class HandlerObservabilityTests(unittest.TestCase):
                     issues, prs, candidates, ok = handler.get_labeled_items()
 
         self.assertTrue(ok)
-        self.assertEqual(len(issues), 3)
+        self.assertEqual(len(issues), 4)
         self.assertEqual(len(prs), 1)
-        self.assertEqual([item["number"] for item in candidates], [11, 21])
+        self.assertEqual([item["number"] for item in candidates], [11, 14, 21])
 
         printed_lines = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(
@@ -5432,6 +5489,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                 for line in printed_lines
             )
         )
+        self.assertFalse(any("issue #14 has unsupported state label" in line for line in printed_lines))
 
 
 if __name__ == "__main__":

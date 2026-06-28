@@ -226,16 +226,16 @@ def get_labeled_items():
     candidates = []
     for item in all_items:
         labels = [label["name"] for label in item["labels"]]
-        primary_states = get_primary_state_labels(labels)
+        primary_states = get_known_primary_workflow_state_labels(labels)
 
         if primary_states:
             candidates.append(item)
             continue
 
-        state_labels = get_state_labels(labels)
-        if state_labels:
+        unsupported_state_labels = get_unsupported_state_labels(labels)
+        if unsupported_state_labels:
             print(
-                f"[Poll] {item['type']} #{item['number']} has unsupported state label(s): {repr(state_labels)}"
+                f"[Poll] {item['type']} #{item['number']} has unsupported state label(s): {repr(unsupported_state_labels)}"
             )
 
     return issues, prs, candidates, issues_ok and prs_ok
@@ -245,8 +245,16 @@ def get_primary_state_labels(labels):
     return workflow.get_primary_state_labels(labels)
 
 
+def get_known_primary_workflow_state_labels(labels):
+    return workflow.get_known_primary_workflow_state_labels(labels)
+
+
 def get_state_labels(labels):
     return workflow.get_state_labels(labels)
+
+
+def get_unsupported_state_labels(labels):
+    return workflow.get_unsupported_state_labels(labels)
 
 
 def is_locked(labels):
@@ -545,15 +553,19 @@ def revalidate_candidate_after_lock(item, expected_state_label):
         return None, "prelaunch-failed"
 
     current_labels = [label["name"] for label in current_item.get("labels", [])]
-    current_primary_states = get_primary_state_labels(current_labels)
-    still_matches = len(current_primary_states) == 1 and current_primary_states[0] == expected_state_label
-    if still_matches:
+    dispatch_resolution = resolve_dispatch_config(current_item, current_labels)
+    if dispatch_resolution and dispatch_resolution[0] == expected_state_label:
         item.update(current_item)
         return item, None
 
+    if dispatch_resolution:
+        current_state_description = repr([dispatch_resolution[0]])
+    else:
+        current_state_description = current_item.get("skip_reason", "unsupported workflow state")
+
     print(
         f"[Dispatch] Candidate {item['type']} #{item['number']} changed state after lock acquisition; "
-        f"expected `{expected_state_label}`, now {repr(current_primary_states)}."
+        f"expected `{expected_state_label}`, now {current_state_description}."
     )
     print(f"[Dispatch] Releasing lock for stale candidate {item['type']} #{item['number']}...")
     lock_released = unlock_item(item)

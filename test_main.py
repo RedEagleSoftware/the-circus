@@ -7,6 +7,23 @@ import main
 
 
 class MainStartupTests(unittest.TestCase):
+    def test_run_workflow_governance_parity_check_prints_report_and_returns_status(self):
+        parity_result = {
+            "ok": False,
+            "errors": ["test error"],
+            "warnings": [],
+            "details": {},
+        }
+
+        with patch("Handler.workflow_parity.evaluate_workflow_governance_parity", return_value=parity_result) as mock_eval:
+            with patch("Handler.workflow_parity.format_workflow_parity_report", return_value="report") as mock_format:
+                with patch("builtins.print") as mock_print:
+                    result = main.run_workflow_governance_parity_check()
+
+        self.assertFalse(result)
+        mock_eval.assert_called_once_with(repo_root=os.getcwd())
+        mock_format.assert_called_once_with(parity_result)
+        mock_print.assert_called_once_with("report")
     def test_validate_init_target_path_requires_target_repo_path(self):
         with patch.dict(os.environ, {"CIRCUS_TARGET_REPO_PATH": ""}, clear=False):
             with patch("builtins.print") as mock_print:
@@ -130,6 +147,24 @@ class MainStartupTests(unittest.TestCase):
 
         mock_approve.assert_not_called()
         mock_poll.assert_not_called()
+
+    def test_main_check_workflow_governance_runs_parity_and_skips_polling(self):
+        with patch.object(main, "run_workflow_governance_parity_check", return_value=True) as mock_parity:
+            with patch.object(main, "run_label_sync") as mock_sync:
+                with patch.object(main, "launch_handler_polling") as mock_poll:
+                    main.main(["--check-workflow-governance"])
+
+        mock_parity.assert_called_once_with()
+        mock_sync.assert_not_called()
+        mock_poll.assert_not_called()
+
+    def test_main_check_workflow_governance_exits_non_zero_on_parity_failure(self):
+        with patch.object(main, "run_workflow_governance_parity_check", return_value=False) as mock_parity:
+            with self.assertRaises(SystemExit) as context:
+                main.main(["--check-workflow-governance"])
+
+        self.assertEqual(context.exception.code, 1)
+        mock_parity.assert_called_once_with()
 
     def test_main_default_path_does_not_run_label_sync(self):
         with tempfile.TemporaryDirectory() as temp_dir:
