@@ -58,6 +58,7 @@ RUN_STATUS_FIELDS = [
     "label_transition",
     "artifacts",
     "implementation_planner",
+    "workflow_classification",
     "recommendation_traceability",
 ]
 
@@ -601,6 +602,7 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
     status_payload = read_run_status_fn(run_state)
     artifacts = status_payload.get("artifacts") or {}
     implementation_planner = status_payload.get("implementation_planner") or {}
+    workflow_classification = status_payload.get("workflow_classification") or {}
     recommendation_traceability = status_payload.get("recommendation_traceability") or {}
     label_transition = status_payload.get("label_transition")
     lifecycle_diagnostics = status_payload.get("lifecycle_diagnostics")
@@ -681,6 +683,21 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
                 lines.append(f"  - #{issue_number}")
     else:
         lines.append("  - none")
+
+    lines.extend(
+        [
+            "",
+            "## Workflow Classification",
+            f"- status: `{workflow_classification.get('status')}`",
+            f"- implementation_complexity: `{workflow_classification.get('implementation_complexity')}`",
+            f"- safety_risk: `{workflow_classification.get('safety_risk')}`",
+            f"- slice_size: `{workflow_classification.get('slice_size')}`",
+            f"- architecture_uncertainty: `{workflow_classification.get('architecture_uncertainty')}`",
+            f"- routing_recommendation: `{workflow_classification.get('routing_recommendation')}`",
+            f"- source: `{workflow_classification.get('source')}`",
+            f"- diagnostic: `{workflow_classification.get('diagnostic')}`",
+        ]
+    )
 
     lines.extend(
         [
