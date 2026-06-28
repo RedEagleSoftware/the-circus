@@ -158,6 +158,14 @@ class MainStartupTests(unittest.TestCase):
         mock_sync.assert_not_called()
         mock_poll.assert_not_called()
 
+    def test_main_check_workflow_governance_exits_non_zero_on_parity_failure(self):
+        with patch.object(main, "run_workflow_governance_parity_check", return_value=False) as mock_parity:
+            with self.assertRaises(SystemExit) as context:
+                main.main(["--check-workflow-governance"])
+
+        self.assertEqual(context.exception.code, 1)
+        mock_parity.assert_called_once_with()
+
     def test_main_default_path_does_not_run_label_sync(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(main, "run_label_sync") as mock_sync:

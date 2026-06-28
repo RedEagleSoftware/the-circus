@@ -258,7 +258,9 @@ def main(argv=None):
         return
 
     if args.check_workflow_governance:
-        run_workflow_governance_parity_check()
+        parity_ok = run_workflow_governance_parity_check()
+        if not parity_ok:
+            raise SystemExit(1)
         return
 
     if args.approve_implementation_plan is not None:

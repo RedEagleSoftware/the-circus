@@ -101,7 +101,7 @@ over hidden inference and automation.
 
 - `state:ready-for-architecture`
 - `state:ready-for-dev`
-- `state:review-requested`
+- `state:ready-for-review`
 - `state:ready-for-architect-review`
 - `state:ready-for-systems-architecture`
 - `state:systems-architecture-changes-requested`
