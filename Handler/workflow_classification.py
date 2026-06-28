@@ -92,6 +92,16 @@ def _extract_workflow_classification_from_block(block_text):
 
         current_indent = len(line) - len(line.lstrip(" "))
         if current_indent <= root_indent:
+            if (
+                current_indent == root_indent
+                and WORKFLOW_CLASSIFICATION_ROOT_PATTERN.match(line.rstrip())
+            ):
+                return {
+                    "classification": None,
+                    "diagnostic": (
+                        "multiple workflow_classification blocks found; expected at most one"
+                    ),
+                }
             break
 
         if current_indent != root_indent + 2:

@@ -155,6 +155,32 @@ class WorkflowClassificationTests(unittest.TestCase):
         self.assertEqual(result["status"], "malformed")
         self.assertIn("multiple workflow_classification blocks", result["diagnostic"])
 
+    def test_validate_workflow_classification_reports_duplicate_root_in_single_block(self):
+        markdown_text = (
+            "```yaml\n"
+            "workflow_classification:\n"
+            "  implementation_complexity: low\n"
+            "  safety_risk: low\n"
+            "  slice_size: single_slice\n"
+            "  architecture_uncertainty: none\n"
+            "  routing_recommendation: continue\n"
+            "workflow_classification:\n"
+            "  implementation_complexity: high\n"
+            "  safety_risk: high\n"
+            "  slice_size: multi_slice\n"
+            "  architecture_uncertainty: significant\n"
+            "  routing_recommendation: escalate\n"
+            "```\n"
+        )
+
+        result = workflow_classification.validate_workflow_classification(
+            markdown_text,
+            valid_routes=set(),
+        )
+
+        self.assertEqual(result["status"], "malformed")
+        self.assertIn("multiple workflow_classification blocks", result["diagnostic"])
+
     def test_validate_workflow_classification_reports_inline_scalar_root(self):
         markdown_text = (
             "```yaml\n"
