@@ -1045,6 +1045,33 @@ def _extract_comment_id(comment):
     return None
 
 
+def extract_latest_planner_result_v1_metadata(comments):
+    if not isinstance(comments, list):
+        return None
+
+    candidate_results = []
+    for comment in comments:
+        if not isinstance(comment, dict):
+            continue
+
+        planner_result = parse_planner_result_v1(comment.get("body"))
+        if planner_result is None:
+            continue
+
+        candidate_results.append(
+            {
+                "planner_result": planner_result,
+                "planner_result_comment_id": _extract_comment_id(comment),
+                "planner_result_comment_url": comment.get("url") if isinstance(comment.get("url"), str) else None,
+            }
+        )
+
+    if not candidate_results:
+        return None
+
+    return candidate_results[-1]
+
+
 def _label_names(item):
     return [label.get("name") for label in item.get("labels", []) if isinstance(label, dict)]
 
@@ -2307,6 +2334,40 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             elif mode == "implementation-planner" and state_label in implementation_planner_state_labels:
                 implementation_plan_path = build_implementation_plan_path(launch_brief_path)
                 workflow_classification_snapshot = validate_workflow_classification_from_markdown(implementation_plan_path)
+                planner_result_metadata = extract_latest_planner_result_v1_metadata(item.get("comments"))
+                planner_result = (
+                    planner_result_metadata.get("planner_result")
+                    if isinstance(planner_result_metadata, dict)
+                    else None
+                )
+                planner_result_parent_issue = (
+                    planner_result.get("parent_issue")
+                    if isinstance(planner_result, dict) and isinstance(planner_result.get("parent_issue"), int)
+                    else None
+                )
+                planner_result_recommendation_comment_id = (
+                    planner_result.get("recommendation_comment_id")
+                    if isinstance(planner_result, dict)
+                    and isinstance(planner_result.get("recommendation_comment_id"), int)
+                    else None
+                )
+                planner_result_roadmap_pr = (
+                    planner_result.get("roadmap_pr")
+                    if isinstance(planner_result, dict) and isinstance(planner_result.get("roadmap_pr"), int)
+                    else None
+                )
+                planner_result_comment_id = (
+                    planner_result_metadata.get("planner_result_comment_id")
+                    if isinstance(planner_result_metadata, dict)
+                    and isinstance(planner_result_metadata.get("planner_result_comment_id"), int)
+                    else None
+                )
+                planner_result_comment_url = (
+                    planner_result_metadata.get("planner_result_comment_url")
+                    if isinstance(planner_result_metadata, dict)
+                    and isinstance(planner_result_metadata.get("planner_result_comment_url"), str)
+                    else None
+                )
                 if not os.path.isfile(implementation_plan_path):
                     normalized_implementation_plan_path = normalize_path_for_display(implementation_plan_path)
                     print(
@@ -2328,6 +2389,11 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         diagnostic=(
                             f"missing implementation plan artifact at {normalized_implementation_plan_path}"
                         ),
+                        planner_result_comment_id=planner_result_comment_id,
+                        planner_result_comment_url=planner_result_comment_url,
+                        parent_issue=planner_result_parent_issue,
+                        recommendation_comment_id=planner_result_recommendation_comment_id,
+                        roadmap_pr_number=planner_result_roadmap_pr,
                     )
                     update_run_status(
                         item,
@@ -2449,6 +2515,11 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         outcome_valid=implementation_plan_outcome is not None,
                         diagnostic=implementation_planner_diagnostic,
                         recommended_route=recommended_route,
+                        planner_result_comment_id=planner_result_comment_id,
+                        planner_result_comment_url=planner_result_comment_url,
+                        parent_issue=planner_result_parent_issue,
+                        recommendation_comment_id=planner_result_recommendation_comment_id,
+                        roadmap_pr_number=planner_result_roadmap_pr,
                     )
                     update_run_status(
                         item,
@@ -2483,6 +2554,11 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     normalized_implementation_plan_path,
                     outcome=implementation_plan_outcome,
                     outcome_valid=True,
+                    planner_result_comment_id=planner_result_comment_id,
+                    planner_result_comment_url=planner_result_comment_url,
+                    parent_issue=planner_result_parent_issue,
+                    recommendation_comment_id=planner_result_recommendation_comment_id,
+                    roadmap_pr_number=planner_result_roadmap_pr,
                 )
                 if not ready_snapshot.get("generated_issues"):
                     ready_snapshot["diagnostic"] = (

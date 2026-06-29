@@ -13,7 +13,7 @@ This changelog tracks notable completed work by GitHub issue.
 - [concise user-visible or workflow-significant change]
 - [optional second concise change]
 
-### Issue #89 - Generate complete accepted-decision traceability artifacts
+### Issue #89 - [Generated] Complete accepted-decision traceability artifacts
 
 - Added a versioned `accepted_decision_traceability` snapshot to Handler run status artifacts, with explicit diagnostics for missing, ambiguous, and reference-mismatch decision links.
 - Updated run result rendering and tests so decision provenance captures accepted recommendation, roadmap reference, planner outcome/artifact, generated issue mappings, and outcome-state consistency signals.

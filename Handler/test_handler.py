@@ -5284,6 +5284,7 @@ class HandlerObservabilityTests(unittest.TestCase):
             source_issue=69,
             recommendation_traceability={
                 "recommendation_url": "https://github.com/owner/repo/issues/69#issuecomment-50001",
+                "source_issue": 84,
                 "roadmap_reference": "https://github.com/owner/repo/pull/90",
                 "diagnostic": None,
             },
@@ -5299,16 +5300,57 @@ class HandlerObservabilityTests(unittest.TestCase):
                     }
                 ],
                 "planner_result_comment_url": "https://github.com/owner/repo/issues/69#issuecomment-70002",
+                "parent_issue": 84,
+                "recommendation_comment_id": 50001,
+                "roadmap_pr_number": 90,
                 "roadmap_reference_merged": True,
             },
         )
 
         self.assertEqual(snapshot["status"], "available")
         self.assertEqual(snapshot["accepted_recommendation"]["comment_id"], 50001)
+        self.assertEqual(snapshot["source_issue"]["number"], 84)
         self.assertEqual(snapshot["planner"]["result_comment_id"], 70002)
+        self.assertEqual(snapshot["planner"]["issue_number"], 84)
         self.assertEqual(snapshot["roadmap_reference"]["pr_number"], 90)
         self.assertTrue(snapshot["roadmap_reference"]["merged"])
         self.assertEqual(snapshot["outcome_state"], "state:ready-for-dev")
+
+    def test_build_accepted_decision_traceability_snapshot_reports_reference_mismatch_diagnostics(self):
+        snapshot = handler.watchtower.build_accepted_decision_traceability_snapshot(
+            repository="owner/repo",
+            source_issue=89,
+            recommendation_traceability={
+                "recommendation_url": "https://github.com/owner/repo/issues/84#issuecomment-50001",
+                "recommendation_comment_id": 50001,
+                "source_issue": 89,
+                "roadmap_reference": "https://github.com/owner/repo/pull/91",
+                "diagnostic": None,
+            },
+            implementation_planner={
+                "outcome": "READY",
+                "implementation_plan": "C:/target/repo/Watchtower/runs/issue-89/run-001/implementation-plan.md",
+                "parent_issue": 84,
+                "recommendation_comment_id": 50002,
+                "roadmap_pr_number": 90,
+                "roadmap_reference_merged": False,
+                "generated_issues": [
+                    {
+                        "number": 90,
+                        "url": "https://github.com/owner/repo/issues/90",
+                        "initial_state": "state:planned",
+                        "next_state_after_approval": "state:ready-for-dev",
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(snapshot["status"], "reference_mismatch")
+        self.assertEqual(snapshot["source_issue"]["number"], 84)
+        self.assertIn("source issue reference mismatches planner metadata", snapshot["diagnostics"])
+        self.assertIn("accepted recommendation reference mismatches planner metadata", snapshot["diagnostics"])
+        self.assertIn("roadmap reference mismatches planner metadata", snapshot["diagnostics"])
+        self.assertIn("roadmap reference is stale (not merged)", snapshot["diagnostics"])
 
     def test_write_run_result_includes_workspace_metadata_fields(self):
         item = {

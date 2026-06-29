@@ -360,6 +360,8 @@ def build_implementation_planner_snapshot(
     recommended_route=None,
     planner_result_comment_id=None,
     planner_result_comment_url=None,
+    parent_issue=None,
+    recommendation_comment_id=None,
     roadmap_pr_number=None,
     roadmap_reference_merged=None,
 ):
@@ -394,6 +396,8 @@ def build_implementation_planner_snapshot(
         "recommended_route": recommended_route,
         "planner_result_comment_id": planner_result_comment_id,
         "planner_result_comment_url": planner_result_comment_url,
+        "parent_issue": parent_issue,
+        "recommendation_comment_id": recommendation_comment_id,
         "roadmap_pr_number": roadmap_pr_number,
         "roadmap_reference_merged": roadmap_reference_merged,
     }
@@ -442,8 +446,21 @@ def build_accepted_decision_traceability_snapshot(
 
     recommendation_url = recommendation_traceability.get("recommendation_url")
     recommendation_comment_id = recommendation_traceability.get("recommendation_comment_id")
+    recommendation_source_issue = recommendation_traceability.get("source_issue")
     recommendation_diagnostic = recommendation_traceability.get("diagnostic")
     roadmap_reference = recommendation_traceability.get("roadmap_reference")
+
+    planner_source_issue = implementation_planner.get("parent_issue")
+    if not isinstance(planner_source_issue, int) or planner_source_issue <= 0:
+        planner_source_issue = source_issue if isinstance(source_issue, int) and source_issue > 0 else None
+
+    planner_recommendation_comment_id = implementation_planner.get("recommendation_comment_id")
+    if not isinstance(planner_recommendation_comment_id, int) or planner_recommendation_comment_id <= 0:
+        planner_recommendation_comment_id = None
+
+    planner_roadmap_pr = implementation_planner.get("roadmap_pr_number")
+    if not isinstance(planner_roadmap_pr, int) or planner_roadmap_pr <= 0:
+        planner_roadmap_pr = None
 
     if not isinstance(recommendation_url, str) or not recommendation_url:
         recommendation_url = implementation_planner.get("source_recommendation_url")
@@ -455,9 +472,10 @@ def build_accepted_decision_traceability_snapshot(
     if not isinstance(recommendation_comment_id, int) or recommendation_comment_id <= 0:
         recommendation_comment_id = _extract_issue_comment_id_from_url(recommendation_url)
 
+    observed_roadmap_pr = _extract_pull_request_number_from_url(roadmap_reference)
     roadmap_pr_number = implementation_planner.get("roadmap_pr_number")
     if not isinstance(roadmap_pr_number, int) or roadmap_pr_number <= 0:
-        roadmap_pr_number = _extract_pull_request_number_from_url(roadmap_reference)
+        roadmap_pr_number = observed_roadmap_pr
 
     roadmap_reference_merged = implementation_planner.get("roadmap_reference_merged")
     if not isinstance(roadmap_reference_merged, bool):
@@ -490,6 +508,25 @@ def build_accepted_decision_traceability_snapshot(
         diagnostics.append("roadmap reference missing")
     else:
         status = "partial" if status == "missing" else status
+
+    if isinstance(recommendation_source_issue, int) and recommendation_source_issue > 0:
+        if planner_source_issue is not None and recommendation_source_issue != planner_source_issue:
+            diagnostics.append("source issue reference mismatches planner metadata")
+            status = "reference_mismatch"
+
+    if recommendation_available and planner_recommendation_comment_id is not None:
+        if recommendation_comment_id != planner_recommendation_comment_id:
+            diagnostics.append("accepted recommendation reference mismatches planner metadata")
+            status = "reference_mismatch"
+
+    if observed_roadmap_pr is not None and planner_roadmap_pr is not None:
+        if observed_roadmap_pr != planner_roadmap_pr:
+            diagnostics.append("roadmap reference mismatches planner metadata")
+            status = "reference_mismatch"
+
+    if roadmap_reference_merged is False:
+        diagnostics.append("roadmap reference is stale (not merged)")
+        status = "reference_mismatch"
 
     generated_issues = []
     generated_issues_raw = implementation_planner.get("generated_issues")
@@ -556,10 +593,13 @@ def build_accepted_decision_traceability_snapshot(
         "status": status,
         "source_issue": {
             "repo": repository,
-            "number": source_issue,
+            "number": planner_source_issue,
             "url": (
-                f"https://github.com/{repository}/issues/{source_issue}"
-                if isinstance(repository, str) and repository and isinstance(source_issue, int) and source_issue > 0
+                f"https://github.com/{repository}/issues/{planner_source_issue}"
+                if isinstance(repository, str)
+                and repository
+                and isinstance(planner_source_issue, int)
+                and planner_source_issue > 0
                 else None
             ),
         },
@@ -573,7 +613,7 @@ def build_accepted_decision_traceability_snapshot(
             "merged": roadmap_reference_merged,
         },
         "planner": {
-            "issue_number": source_issue,
+            "issue_number": planner_source_issue,
             "result_comment_id": planner_result_comment_id,
             "outcome": planner_outcome,
             "artifact": planner_artifact,
