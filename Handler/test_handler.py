@@ -5250,6 +5250,66 @@ class HandlerObservabilityTests(unittest.TestCase):
             "# Decision Log\n\nNo decisions have been recorded yet.\n",
         )
 
+    def test_build_accepted_decision_traceability_snapshot_requires_outcome_state_for_available_status(self):
+        snapshot = handler.watchtower.build_accepted_decision_traceability_snapshot(
+            repository="owner/repo",
+            source_issue=69,
+            recommendation_traceability={
+                "recommendation_url": "https://github.com/owner/repo/issues/69#issuecomment-50001",
+                "recommendation_comment_id": 50001,
+                "roadmap_reference": "https://github.com/owner/repo/pull/90",
+                "diagnostic": None,
+            },
+            implementation_planner={
+                "outcome": "READY",
+                "implementation_plan": "C:/target/repo/Watchtower/runs/issue-69/run-001/implementation-plan.md",
+                "generated_issues": [
+                    {
+                        "number": 70,
+                        "url": "https://github.com/owner/repo/issues/70",
+                        "initial_state": "state:changes-requested",
+                        "next_state_after_approval": None,
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(snapshot["status"], "partial")
+        self.assertIsNone(snapshot["outcome_state"])
+        self.assertIn("generated issue next-state references missing", snapshot["diagnostics"])
+
+    def test_build_accepted_decision_traceability_snapshot_normalizes_planner_and_roadmap_metadata(self):
+        snapshot = handler.watchtower.build_accepted_decision_traceability_snapshot(
+            repository="owner/repo",
+            source_issue=69,
+            recommendation_traceability={
+                "recommendation_url": "https://github.com/owner/repo/issues/69#issuecomment-50001",
+                "roadmap_reference": "https://github.com/owner/repo/pull/90",
+                "diagnostic": None,
+            },
+            implementation_planner={
+                "outcome": "READY",
+                "implementation_plan": "C:/target/repo/Watchtower/runs/issue-69/run-001/implementation-plan.md",
+                "generated_issues": [
+                    {
+                        "number": 70,
+                        "url": "https://github.com/owner/repo/issues/70",
+                        "initial_state": "state:changes-requested",
+                        "next_state_after_approval": "state:ready-for-dev",
+                    }
+                ],
+                "planner_result_comment_url": "https://github.com/owner/repo/issues/69#issuecomment-70002",
+                "roadmap_reference_merged": True,
+            },
+        )
+
+        self.assertEqual(snapshot["status"], "available")
+        self.assertEqual(snapshot["accepted_recommendation"]["comment_id"], 50001)
+        self.assertEqual(snapshot["planner"]["result_comment_id"], 70002)
+        self.assertEqual(snapshot["roadmap_reference"]["pr_number"], 90)
+        self.assertTrue(snapshot["roadmap_reference"]["merged"])
+        self.assertEqual(snapshot["outcome_state"], "state:ready-for-dev")
+
     def test_write_run_result_includes_workspace_metadata_fields(self):
         item = {
             "type": "issue",
@@ -5351,6 +5411,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                                 {
                                     "number": 69,
                                     "url": "https://github.com/owner/repo/issues/69",
+                                    "next_state_after_approval": "state:ready-for-dev",
                                 }
                             ],
                             "source_recommendation_url": None,

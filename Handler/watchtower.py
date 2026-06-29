@@ -151,6 +151,30 @@ def _extract_source_traceability_fields(source_section_lines):
     }
 
 
+def _extract_issue_comment_id_from_url(value):
+    if not isinstance(value, str):
+        return None
+
+    issue_comment_match = ISSUE_COMMENT_URL_PATTERN.search(value)
+    if issue_comment_match:
+        return int(issue_comment_match.group(1))
+
+    return None
+
+
+def _extract_pull_request_number_from_url(value):
+    if not isinstance(value, str):
+        return None
+
+    pull_request_match = PULL_REQUEST_URL_PATTERN.search(value)
+    if pull_request_match:
+        pull_request_number_match = re.search(r"/pull/(\d+)", pull_request_match.group(0), re.IGNORECASE)
+        if pull_request_number_match:
+            return int(pull_request_number_match.group(1))
+
+    return None
+
+
 def build_recommendation_traceability_snapshot(
     *,
     recommendation_url=None,
@@ -334,6 +358,10 @@ def build_implementation_planner_snapshot(
     outcome_valid,
     diagnostic=None,
     recommended_route=None,
+    planner_result_comment_id=None,
+    planner_result_comment_url=None,
+    roadmap_pr_number=None,
+    roadmap_reference_merged=None,
 ):
     generated_issues = []
     source_recommendation_url = None
@@ -364,6 +392,10 @@ def build_implementation_planner_snapshot(
         "source_recommendation_comment_id": source_recommendation_comment_id,
         "roadmap_reference": roadmap_reference,
         "recommended_route": recommended_route,
+        "planner_result_comment_id": planner_result_comment_id,
+        "planner_result_comment_url": planner_result_comment_url,
+        "roadmap_pr_number": roadmap_pr_number,
+        "roadmap_reference_merged": roadmap_reference_merged,
     }
 
     snapshot["recommendation_traceability"] = build_implementation_planner_recommendation_traceability_snapshot(snapshot)
@@ -420,7 +452,29 @@ def build_accepted_decision_traceability_snapshot(
     if not isinstance(roadmap_reference, str) or not roadmap_reference:
         roadmap_reference = implementation_planner.get("roadmap_reference")
 
-    recommendation_available = bool(isinstance(recommendation_url, str) and recommendation_url and isinstance(recommendation_comment_id, int))
+    if not isinstance(recommendation_comment_id, int) or recommendation_comment_id <= 0:
+        recommendation_comment_id = _extract_issue_comment_id_from_url(recommendation_url)
+
+    roadmap_pr_number = implementation_planner.get("roadmap_pr_number")
+    if not isinstance(roadmap_pr_number, int) or roadmap_pr_number <= 0:
+        roadmap_pr_number = _extract_pull_request_number_from_url(roadmap_reference)
+
+    roadmap_reference_merged = implementation_planner.get("roadmap_reference_merged")
+    if not isinstance(roadmap_reference_merged, bool):
+        roadmap_reference_merged = None
+
+    planner_result_comment_id = implementation_planner.get("planner_result_comment_id")
+    if not isinstance(planner_result_comment_id, int) or planner_result_comment_id <= 0:
+        planner_result_comment_id = _extract_issue_comment_id_from_url(
+            implementation_planner.get("planner_result_comment_url")
+        )
+
+    recommendation_available = bool(
+        isinstance(recommendation_url, str)
+        and recommendation_url
+        and isinstance(recommendation_comment_id, int)
+        and recommendation_comment_id > 0
+    )
     if recommendation_available:
         status = "partial"
     elif isinstance(recommendation_diagnostic, str) and "ambiguous" in recommendation_diagnostic.lower():
@@ -482,6 +536,7 @@ def build_accepted_decision_traceability_snapshot(
         and roadmap_reference
         and planner_outcome
         and generated_issues
+        and outcome_state
     ):
         status = "available"
 
@@ -514,12 +569,12 @@ def build_accepted_decision_traceability_snapshot(
         },
         "roadmap_reference": {
             "url": roadmap_reference,
-            "pr_number": None,
-            "merged": None,
+            "pr_number": roadmap_pr_number,
+            "merged": roadmap_reference_merged,
         },
         "planner": {
             "issue_number": source_issue,
-            "result_comment_id": None,
+            "result_comment_id": planner_result_comment_id,
             "outcome": planner_outcome,
             "artifact": planner_artifact,
         },

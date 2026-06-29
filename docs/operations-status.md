@@ -17,7 +17,7 @@
 - Workspace inventory and lifecycle classification are implemented as a read-only service with conservative `blocked-unsafe` handling, dirty workspace detection, and upstream/PR relationship signals
 - Lifecycle diagnostics reporting is implemented for human/operator visibility and remains reporting-only (not yet a recovery or cleanup command)
 - Implementation Planning is partially implemented as a review-gated workflow with canonical states/labels, planner dispatch, artifact handling, outcome parsing/validation (`READY`, `BLOCKED`, `ESCALATION_REQUIRED`), and plan-review advancement for `READY`
-- Planner-generated issue linkage and recommendation traceability are partially surfaced in Watchtower artifacts
+- Planner-generated issue linkage and accepted-decision traceability snapshots are surfaced in Watchtower artifacts (including recommendation comment linkage, roadmap reference metadata, planner outcome/artifact, and normalized outcome-state diagnostics)
 
 ### Organizational Maturity
 - Organizational maturity frontier from issue #84 is accepted strategy: workflow-governance parity, accepted-decision traceability, recovery baseline, human decision ledger, and lightweight metrics
@@ -56,7 +56,7 @@
 - Repository onboarding is still manual; no target repo initialization command yet.
 - Durable polling and stale-lock/run recovery need to be hardened.
 - Worktree lifecycle recovery/cleanup integration is not complete; current lifecycle implementation is inventory/diagnostics-first and conservative.
-- Recommendation traceability exists in part, but a consistent artifact contract for accepted decision references is still incomplete.
+- Accepted-decision traceability contract is implemented in Watchtower run artifacts, but broader cross-run observability and downstream policy enforcement remain future work.
 - No persistent Watchtower visibility beyond local run artifacts.
 - Implementation Planner still has gaps around deeper generated-issue validation, dependency enforcement, and end-to-end generated issue creation when not already present in approved plans.
 - Workflow-governance parity across doctrine, labels, Handler dispatchability, and unsupported-state handling remains an accepted maturity gap.
@@ -105,7 +105,7 @@
 ## Next Likely Tasks
 
 - Implement workflow-governance parity checks across doctrine, labels, Handler dispatchability, human-owned states, and unsupported-state handling.
-- Complete accepted-decision traceability artifact contract for Watchtower run history.
+- Expand accepted-decision traceability from per-run artifacts into persistent/cross-run Watchtower observability and enforcement workflows.
 - Implement a conservative recovery baseline for stale locks/runs using existing lifecycle inventory/classification diagnostics.
 - Define and implement a lightweight human decision ledger artifact contract.
 - Seed lightweight organizational metrics for visibility/review (non-control).
