@@ -5171,6 +5171,42 @@ class HandlerObservabilityTests(unittest.TestCase):
                 "diagnostic": "not provided",
             },
         )
+        self.assertEqual(
+            status_payload["accepted_decision_traceability"],
+            {
+                "version": 1,
+                "status": "missing",
+                "source_issue": {
+                    "repo": "owner/repo",
+                    "number": 3,
+                    "url": "https://github.com/owner/repo/issues/3",
+                },
+                "accepted_recommendation": {
+                    "url": None,
+                    "comment_id": None,
+                },
+                "roadmap_reference": {
+                    "url": None,
+                    "pr_number": None,
+                    "merged": None,
+                },
+                "planner": {
+                    "issue_number": 3,
+                    "result_comment_id": None,
+                    "outcome": None,
+                    "artifact": None,
+                },
+                "generated_issues": [],
+                "outcome_state": None,
+                "diagnostics": [
+                    "accepted recommendation missing",
+                    "roadmap reference missing",
+                    "generated issues missing",
+                    "planner outcome missing",
+                    "generated issue next-state references missing",
+                ],
+            },
+        )
         self.assertEqual(status_payload["worktree_root"], "C:/target/repo-worktrees")
         self.assertEqual(status_payload["worktree_root_source"], "derived-default")
         self.assertEqual(status_payload["workspace_name"], "issue-3")
@@ -5343,6 +5379,13 @@ class HandlerObservabilityTests(unittest.TestCase):
         traceability_section = result_content.split("## Recommendation Traceability", 1)[1].split("## Implementation Planner", 1)[0]
         self.assertIn("- available: `True`", traceability_section)
         self.assertIn("- recommendation comment ID: `50001`", traceability_section)
+        accepted_traceability_section = result_content.split("## Accepted Decision Traceability", 1)[1].split(
+            "## Implementation Planner", 1
+        )[0]
+        self.assertIn("- version: `1`", accepted_traceability_section)
+        self.assertIn("- status: `available`", accepted_traceability_section)
+        self.assertIn("- recommendation comment ID: `50001`", accepted_traceability_section)
+        self.assertIn("- planner outcome: `READY`", accepted_traceability_section)
 
     def test_write_run_result_includes_workspace_lifecycle_diagnostics(self):
         item = {

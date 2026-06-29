@@ -60,6 +60,7 @@ RUN_STATUS_FIELDS = [
     "implementation_planner",
     "workflow_classification",
     "recommendation_traceability",
+    "accepted_decision_traceability",
 ]
 
 
@@ -369,6 +370,165 @@ def build_implementation_planner_snapshot(
     return snapshot
 
 
+def _normalize_traceability_generated_issue(generated_issue, repository):
+    if not isinstance(generated_issue, dict):
+        return None
+
+    issue_number = generated_issue.get("number")
+    if not isinstance(issue_number, int):
+        issue_number = generated_issue.get("issue_number")
+    if not isinstance(issue_number, int) or issue_number <= 0:
+        return None
+
+    normalized_generated_issue = {
+        "repo": repository,
+        "number": issue_number,
+        "url": generated_issue.get("url") if isinstance(generated_issue.get("url"), str) else None,
+        "initial_state": generated_issue.get("initial_state") if isinstance(generated_issue.get("initial_state"), str) else None,
+        "suggested_next_state": (
+            generated_issue.get("next_state_after_approval")
+            if isinstance(generated_issue.get("next_state_after_approval"), str)
+            else None
+        ),
+        "dependencies": generated_issue.get("dependencies") if isinstance(generated_issue.get("dependencies"), list) else None,
+    }
+    return normalized_generated_issue
+
+
+def build_accepted_decision_traceability_snapshot(
+    *,
+    repository,
+    source_issue,
+    recommendation_traceability=None,
+    implementation_planner=None,
+):
+    diagnostics = []
+    status = "missing"
+
+    recommendation_traceability = recommendation_traceability if isinstance(recommendation_traceability, dict) else {}
+    implementation_planner = implementation_planner if isinstance(implementation_planner, dict) else {}
+
+    recommendation_url = recommendation_traceability.get("recommendation_url")
+    recommendation_comment_id = recommendation_traceability.get("recommendation_comment_id")
+    recommendation_diagnostic = recommendation_traceability.get("diagnostic")
+    roadmap_reference = recommendation_traceability.get("roadmap_reference")
+
+    if not isinstance(recommendation_url, str) or not recommendation_url:
+        recommendation_url = implementation_planner.get("source_recommendation_url")
+    if not isinstance(recommendation_comment_id, int):
+        recommendation_comment_id = implementation_planner.get("source_recommendation_comment_id")
+    if not isinstance(roadmap_reference, str) or not roadmap_reference:
+        roadmap_reference = implementation_planner.get("roadmap_reference")
+
+    recommendation_available = bool(isinstance(recommendation_url, str) and recommendation_url and isinstance(recommendation_comment_id, int))
+    if recommendation_available:
+        status = "partial"
+    elif isinstance(recommendation_diagnostic, str) and "ambiguous" in recommendation_diagnostic.lower():
+        status = "ambiguous"
+        diagnostics.append("accepted recommendation ambiguous")
+    elif recommendation_url or recommendation_comment_id:
+        status = "partial"
+        diagnostics.append("accepted recommendation reference incomplete")
+    else:
+        diagnostics.append("accepted recommendation missing")
+
+    if not roadmap_reference:
+        diagnostics.append("roadmap reference missing")
+    else:
+        status = "partial" if status == "missing" else status
+
+    generated_issues = []
+    generated_issues_raw = implementation_planner.get("generated_issues")
+    if isinstance(generated_issues_raw, list):
+        for generated_issue in generated_issues_raw:
+            normalized_generated_issue = _normalize_traceability_generated_issue(generated_issue, repository)
+            if normalized_generated_issue is not None:
+                generated_issues.append(normalized_generated_issue)
+
+    if not generated_issues:
+        diagnostics.append("generated issues missing")
+    else:
+        status = "partial" if status == "missing" else status
+
+    planner_outcome = implementation_planner.get("outcome") if isinstance(implementation_planner.get("outcome"), str) else None
+    if not planner_outcome:
+        diagnostics.append("planner outcome missing")
+    else:
+        status = "partial" if status == "missing" else status
+
+    planner_artifact = implementation_planner.get("implementation_plan")
+    if not isinstance(planner_artifact, str):
+        planner_artifact = None
+
+    outcome_states = [
+        generated_issue.get("suggested_next_state")
+        for generated_issue in generated_issues
+        if isinstance(generated_issue.get("suggested_next_state"), str)
+    ]
+    unique_outcome_states = sorted(set(outcome_states))
+    if len(unique_outcome_states) == 1:
+        outcome_state = unique_outcome_states[0]
+    elif len(unique_outcome_states) > 1:
+        outcome_state = None
+        diagnostics.append("generated issue next-state references are inconsistent")
+        status = "reference_mismatch"
+    else:
+        outcome_state = None
+        diagnostics.append("generated issue next-state references missing")
+
+    if (
+        status not in {"ambiguous", "reference_mismatch"}
+        and recommendation_available
+        and roadmap_reference
+        and planner_outcome
+        and generated_issues
+    ):
+        status = "available"
+
+    if isinstance(recommendation_diagnostic, str) and recommendation_diagnostic and recommendation_diagnostic not in {
+        "not provided",
+        "accepted recommendation unavailable",
+    }:
+        diagnostics.append(recommendation_diagnostic)
+
+    unique_diagnostics = []
+    for diagnostic in diagnostics:
+        if diagnostic not in unique_diagnostics:
+            unique_diagnostics.append(diagnostic)
+
+    return {
+        "version": 1,
+        "status": status,
+        "source_issue": {
+            "repo": repository,
+            "number": source_issue,
+            "url": (
+                f"https://github.com/{repository}/issues/{source_issue}"
+                if isinstance(repository, str) and repository and isinstance(source_issue, int) and source_issue > 0
+                else None
+            ),
+        },
+        "accepted_recommendation": {
+            "url": recommendation_url if recommendation_available else None,
+            "comment_id": recommendation_comment_id if recommendation_available else None,
+        },
+        "roadmap_reference": {
+            "url": roadmap_reference,
+            "pr_number": None,
+            "merged": None,
+        },
+        "planner": {
+            "issue_number": source_issue,
+            "result_comment_id": None,
+            "outcome": planner_outcome,
+            "artifact": planner_artifact,
+        },
+        "generated_issues": generated_issues,
+        "outcome_state": outcome_state,
+        "diagnostics": unique_diagnostics,
+    }
+
+
 def append_reviewer_feedback_note(
     item_run_root,
     review_result_path,
@@ -521,6 +681,12 @@ def initialize_run_status(
         },
         "recommendation_traceability": build_unavailable_recommendation_traceability_snapshot(),
     }
+    status_payload["accepted_decision_traceability"] = build_accepted_decision_traceability_snapshot(
+        repository=status_payload.get("repository"),
+        source_issue=status_payload.get("item_number"),
+        recommendation_traceability=status_payload.get("recommendation_traceability"),
+        implementation_planner=status_payload.get("implementation_planner"),
+    )
 
     for field in run_status_fields:
         status_payload.setdefault(field, None)
@@ -565,6 +731,16 @@ def read_run_status(run_state, *, run_status_fields=RUN_STATUS_FIELDS, normalize
         recommendation_traceability = build_unavailable_recommendation_traceability_snapshot()
         status_payload["recommendation_traceability"] = recommendation_traceability
 
+    accepted_decision_traceability = status_payload.get("accepted_decision_traceability")
+    if not isinstance(accepted_decision_traceability, dict):
+        accepted_decision_traceability = build_accepted_decision_traceability_snapshot(
+            repository=status_payload.get("repository"),
+            source_issue=status_payload.get("item_number"),
+            recommendation_traceability=recommendation_traceability,
+            implementation_planner=status_payload.get("implementation_planner"),
+        )
+        status_payload["accepted_decision_traceability"] = accepted_decision_traceability
+
     return status_payload
 
 
@@ -591,6 +767,13 @@ def update_run_status(item, *, get_run_state_fn, read_run_status_fn, write_run_s
     if item.get("last_label_transition") is not None:
         status_payload["label_transition"] = item.get("last_label_transition")
 
+    status_payload["accepted_decision_traceability"] = build_accepted_decision_traceability_snapshot(
+        repository=status_payload.get("repository"),
+        source_issue=status_payload.get("item_number"),
+        recommendation_traceability=status_payload.get("recommendation_traceability"),
+        implementation_planner=status_payload.get("implementation_planner"),
+    )
+
     write_run_status_fn(run_state, status_payload)
 
 
@@ -604,6 +787,7 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
     implementation_planner = status_payload.get("implementation_planner") or {}
     workflow_classification = status_payload.get("workflow_classification") or {}
     recommendation_traceability = status_payload.get("recommendation_traceability") or {}
+    accepted_decision_traceability = status_payload.get("accepted_decision_traceability") or {}
     label_transition = status_payload.get("label_transition")
     lifecycle_diagnostics = status_payload.get("lifecycle_diagnostics")
 
@@ -656,6 +840,32 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
             f"- roadmap reference: `{recommendation_traceability.get('roadmap_reference')}`",
             f"- source: `{recommendation_traceability.get('source')}`",
             f"- diagnostic: `{recommendation_traceability.get('diagnostic')}`",
+            "",
+            "## Accepted Decision Traceability",
+            f"- version: `{accepted_decision_traceability.get('version')}`",
+            f"- status: `{accepted_decision_traceability.get('status')}`",
+            f"- source issue repo: `{(accepted_decision_traceability.get('source_issue') or {}).get('repo')}`",
+            f"- source issue number: `{(accepted_decision_traceability.get('source_issue') or {}).get('number')}`",
+            f"- source issue url: `{(accepted_decision_traceability.get('source_issue') or {}).get('url')}`",
+            f"- recommendation url: `{(accepted_decision_traceability.get('accepted_recommendation') or {}).get('url')}`",
+            f"- recommendation comment ID: `{(accepted_decision_traceability.get('accepted_recommendation') or {}).get('comment_id')}`",
+            f"- roadmap reference: `{(accepted_decision_traceability.get('roadmap_reference') or {}).get('url')}`",
+            f"- planner outcome: `{(accepted_decision_traceability.get('planner') or {}).get('outcome')}`",
+            f"- planner artifact: `{(accepted_decision_traceability.get('planner') or {}).get('artifact')}`",
+            f"- outcome state: `{accepted_decision_traceability.get('outcome_state')}`",
+            "- diagnostics:",
+        ]
+    )
+
+    accepted_decision_diagnostics = accepted_decision_traceability.get("diagnostics")
+    if isinstance(accepted_decision_diagnostics, list) and accepted_decision_diagnostics:
+        for accepted_decision_diagnostic in accepted_decision_diagnostics:
+            lines.append(f"  - {accepted_decision_diagnostic}")
+    else:
+        lines.append("  - none")
+
+    lines.extend(
+        [
             "",
             "## Implementation Planner",
             f"- outcome: `{implementation_planner.get('outcome')}`",
