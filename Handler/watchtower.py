@@ -364,8 +364,9 @@ def build_implementation_planner_snapshot(
     recommendation_comment_id=None,
     roadmap_pr_number=None,
     roadmap_reference_merged=None,
+    generated_issues=None,
 ):
-    generated_issues = []
+    generated_issue_links = []
     source_recommendation_url = None
     source_recommendation_comment_id = None
     roadmap_reference = None
@@ -375,7 +376,7 @@ def build_implementation_planner_snapshot(
             with open(implementation_plan_path, "r", encoding="utf-8") as implementation_plan_file:
                 implementation_plan_markdown = implementation_plan_file.read()
             generated_issue_section_lines = _extract_markdown_section_lines(implementation_plan_markdown, "generated issues")
-            generated_issues = _parse_generated_issue_references(generated_issue_section_lines)
+            generated_issue_links = _parse_generated_issue_references(generated_issue_section_lines)
             source_section_lines = _extract_markdown_section_lines(implementation_plan_markdown, "source")
             source_traceability_fields = _extract_source_traceability_fields(source_section_lines)
             source_recommendation_url = source_traceability_fields["source_recommendation_url"]
@@ -384,12 +385,63 @@ def build_implementation_planner_snapshot(
         except OSError:
             pass
 
+    merged_generated_issues = []
+    generated_issues_by_number = {}
+    for generated_issue_link in generated_issue_links:
+        issue_number = generated_issue_link.get("number")
+        if not isinstance(issue_number, int) or issue_number <= 0:
+            continue
+        normalized_generated_issue = {
+            "number": issue_number,
+            "url": generated_issue_link.get("url") if isinstance(generated_issue_link.get("url"), str) else None,
+            "initial_state": None,
+            "next_state_after_approval": None,
+            "dependencies": None,
+        }
+        generated_issues_by_number[issue_number] = normalized_generated_issue
+        merged_generated_issues.append(normalized_generated_issue)
+
+    if isinstance(generated_issues, list):
+        for generated_issue in generated_issues:
+            if not isinstance(generated_issue, dict):
+                continue
+
+            issue_number = generated_issue.get("issue_number")
+            if issue_number is None:
+                issue_number = generated_issue.get("number")
+            if not isinstance(issue_number, int) or issue_number <= 0:
+                continue
+
+            normalized_generated_issue = generated_issues_by_number.get(issue_number)
+            if normalized_generated_issue is None:
+                normalized_generated_issue = {
+                    "number": issue_number,
+                    "url": generated_issue.get("url") if isinstance(generated_issue.get("url"), str) else None,
+                    "initial_state": None,
+                    "next_state_after_approval": None,
+                    "dependencies": None,
+                }
+                generated_issues_by_number[issue_number] = normalized_generated_issue
+                merged_generated_issues.append(normalized_generated_issue)
+
+            initial_state = generated_issue.get("initial_state")
+            if isinstance(initial_state, str) and initial_state:
+                normalized_generated_issue["initial_state"] = initial_state
+
+            next_state_after_approval = generated_issue.get("next_state_after_approval")
+            if isinstance(next_state_after_approval, str) and next_state_after_approval:
+                normalized_generated_issue["next_state_after_approval"] = next_state_after_approval
+
+            dependencies = generated_issue.get("dependencies")
+            if isinstance(dependencies, list):
+                normalized_generated_issue["dependencies"] = dependencies
+
     snapshot = {
         "outcome": outcome,
         "outcome_valid": bool(outcome_valid),
         "diagnostic": diagnostic,
         "implementation_plan": implementation_plan_path,
-        "generated_issues": generated_issues,
+        "generated_issues": merged_generated_issues,
         "source_recommendation_url": source_recommendation_url,
         "source_recommendation_comment_id": source_recommendation_comment_id,
         "roadmap_reference": roadmap_reference,

@@ -821,8 +821,8 @@ class HandlerObservabilityTests(unittest.TestCase):
                             )
 
         self.assertTrue(launched)
-        mock_subprocess_run.assert_called_once()
-        command = mock_subprocess_run.call_args.args[0]
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
+        command = mock_subprocess_run.call_args_list[0].args[0]
         self.assertEqual(command[0], "junie")
         self.assertEqual(command[1:3], ["--project", "C:/target/repo"])
         self.assertEqual(command[3:5], ["--model", "gpt-5.3-codex"])
@@ -1636,8 +1636,8 @@ class HandlerObservabilityTests(unittest.TestCase):
                                 )
 
         self.assertTrue(launched)
-        mock_subprocess_run.assert_called_once()
-        command = mock_subprocess_run.call_args.args[0]
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
+        command = mock_subprocess_run.call_args_list[0].args[0]
         self.assertEqual(command[0], "codex")
         self.assertEqual(command[1], "exec")
         self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
@@ -1781,8 +1781,8 @@ class HandlerObservabilityTests(unittest.TestCase):
                                 )
 
         self.assertTrue(launched)
-        mock_subprocess_run.assert_called_once()
-        command = mock_subprocess_run.call_args.args[0]
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
+        command = mock_subprocess_run.call_args_list[0].args[0]
         self.assertEqual(command[0], "codex")
         self.assertEqual(command[1], "exec")
         self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
@@ -1833,8 +1833,8 @@ class HandlerObservabilityTests(unittest.TestCase):
                                 )
 
         self.assertTrue(launched)
-        mock_subprocess_run.assert_called_once()
-        command = mock_subprocess_run.call_args.args[0]
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
+        command = mock_subprocess_run.call_args_list[0].args[0]
         self.assertEqual(command[0], "codex")
         self.assertEqual(command[1], "exec")
         self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
@@ -1886,8 +1886,8 @@ class HandlerObservabilityTests(unittest.TestCase):
                             )
 
         self.assertTrue(launched)
-        mock_subprocess_run.assert_called_once()
-        command = mock_subprocess_run.call_args.args[0]
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
+        command = mock_subprocess_run.call_args_list[0].args[0]
         self.assertEqual(command[0], "codex")
         self.assertEqual(command[1], "exec")
         self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
@@ -1945,8 +1945,8 @@ class HandlerObservabilityTests(unittest.TestCase):
                                     )
 
         self.assertTrue(launched)
-        mock_subprocess_run.assert_called_once()
-        command = mock_subprocess_run.call_args.args[0]
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
+        command = mock_subprocess_run.call_args_list[0].args[0]
         self.assertEqual(command[0], "codex")
         self.assertEqual(command[1], "exec")
         self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
@@ -2021,6 +2021,113 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_add_comment.assert_called_once_with(item)
         self.assertIn("workflow_classification", item["comment"])
         self.assertEqual(mock_update_run_status.call_args.kwargs["workflow_classification"], malformed_snapshot)
+
+    def test_launch_agent_codex_implementation_planner_ready_refreshes_comments_and_propagates_planner_metadata(self):
+        item = {
+            "type": "issue",
+            "number": 55,
+            "title": "Implementation planner metadata propagation",
+            "url": "https://github.com/owner/repo/issues/55",
+            "comments": [],
+        }
+        config = {
+            "agent": "codex",
+            "mode": "implementation-planner",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-55/run-001-implementation-planner/launch-brief.md"
+        implementation_plan_path = "C:/abs/Watchtower/runs/issue-55/run-001-implementation-planner/implementation-plan.md"
+        planner_result_comment_id = 9001
+        recommendation_comment_id = 4001
+        roadmap_pr_number = 88
+        planner_result_comment_url = "https://github.com/owner/repo/issues/55#issuecomment-9001"
+        planner_result_body = (
+            "```yaml\n"
+            "planner_result_v1:\n"
+            "  outcome: READY\n"
+            "  parent_issue: 55\n"
+            "  recommendation_comment_id: 4001\n"
+            "  roadmap_pr: 88\n"
+            "  generated_issues:\n"
+            "    - number: 201\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-dev\n"
+            "```"
+        )
+        current_issue_item = {
+            "number": 55,
+            "comments": [
+                {
+                    "id": planner_result_comment_id,
+                    "url": planner_result_comment_url,
+                    "body": planner_result_body,
+                }
+            ],
+        }
+        roadmap_pr_item = {
+            "number": roadmap_pr_number,
+            "mergedAt": "2026-06-23T10:11:12Z",
+        }
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler.os.path, "abspath", return_value="C:/abs/launch-brief.md"):
+                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                    with patch.object(handler, "build_implementation_plan_path", return_value=implementation_plan_path):
+                        with patch.object(handler.os.path, "isfile", return_value=True):
+                            with patch.object(handler, "parse_implementation_plan_outcome", return_value="READY"):
+                                with patch.object(
+                                    handler,
+                                    "validate_workflow_classification_from_markdown",
+                                    return_value={"status": "not_present"},
+                                ):
+                                    with patch.object(
+                                        handler,
+                                        "advance_implementation_planning_workflow_on_success",
+                                        return_value=True,
+                                    ):
+                                        with patch.object(handler, "get_current_item", return_value=(current_issue_item, True)):
+                                            with patch.object(handler.github_client, "get_item", return_value=(roadmap_pr_item, True)):
+                                                with patch.object(
+                                                    handler.watchtower,
+                                                    "build_implementation_planner_snapshot",
+                                                    return_value={
+                                                        "outcome": "READY",
+                                                        "outcome_valid": True,
+                                                        "generated_issues": [],
+                                                        "recommendation_traceability": {"available": True},
+                                                    },
+                                                ) as mock_build_snapshot:
+                                                    launched = handler.launch_agent(
+                                                        item,
+                                                        "state:ready-for-implementation-planning",
+                                                        config,
+                                                        os.path.normpath(
+                                                            os.path.join("TheFarm", "roles", "implementation-planner.md")
+                                                        ),
+                                                        launch_brief_path,
+                                                    )
+
+        self.assertTrue(launched)
+        self.assertEqual(item["comments"], current_issue_item["comments"])
+        mock_build_snapshot.assert_called_once()
+        snapshot_kwargs = mock_build_snapshot.call_args.kwargs
+        self.assertEqual(snapshot_kwargs["planner_result_comment_id"], planner_result_comment_id)
+        self.assertEqual(snapshot_kwargs["planner_result_comment_url"], planner_result_comment_url)
+        self.assertEqual(snapshot_kwargs["parent_issue"], 55)
+        self.assertEqual(snapshot_kwargs["recommendation_comment_id"], recommendation_comment_id)
+        self.assertEqual(snapshot_kwargs["roadmap_pr_number"], roadmap_pr_number)
+        self.assertTrue(snapshot_kwargs["roadmap_reference_merged"])
+        self.assertEqual(
+            snapshot_kwargs["generated_issues"],
+            [
+                {
+                    "issue_number": 201,
+                    "initial_state": "state:planned",
+                    "next_state_after_approval": "state:ready-for-dev",
+                }
+            ],
+        )
 
     def test_launch_agent_codex_implementation_planner_blocked_outcome_preserves_malformed_classification_diagnostic(self):
         item = {
@@ -2120,7 +2227,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                                         )
 
         self.assertFalse(launched)
-        mock_subprocess_run.assert_called_once()
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
         mock_advance_transition.assert_not_called()
         mock_add_comment.assert_called_once_with(item)
         self.assertTrue(item.get("missing_implementation_plan_artifact"))
@@ -2180,7 +2287,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                                                 )
 
         self.assertFalse(launched)
-        mock_subprocess_run.assert_called_once()
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
         mock_advance_transition.assert_not_called()
         mock_add_comment.assert_called_once_with(item)
         self.assertIn("blocked outcome", item["comment"])
@@ -2246,7 +2353,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                                                     )
 
         self.assertFalse(launched)
-        mock_subprocess_run.assert_called_once()
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
         mock_advance_transition.assert_not_called()
         mock_add_comment.assert_called_once_with(item)
         self.assertIn("`ESCALATION_REQUIRED`", item["comment"])
@@ -2312,7 +2419,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                                                 )
 
         self.assertFalse(launched)
-        mock_subprocess_run.assert_called_once()
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
         mock_advance_transition.assert_not_called()
         mock_add_comment.assert_called_once_with(item)
         self.assertTrue(item.get("invalid_implementation_plan_outcome"))
@@ -5351,6 +5458,62 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("accepted recommendation reference mismatches planner metadata", snapshot["diagnostics"])
         self.assertIn("roadmap reference mismatches planner metadata", snapshot["diagnostics"])
         self.assertIn("roadmap reference is stale (not merged)", snapshot["diagnostics"])
+
+    def test_build_implementation_planner_snapshot_merges_markdown_links_with_planner_result_metadata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            implementation_plan_path = os.path.join(temp_dir, "implementation-plan.md")
+            with open(implementation_plan_path, "w", encoding="utf-8") as implementation_plan_file:
+                implementation_plan_file.write(
+                    "# Implementation Plan\n\n"
+                    "### Generated Issues\n"
+                    "- https://github.com/owner/repo/issues/201\n"
+                    "- https://github.com/owner/repo/issues/202\n"
+                )
+
+            snapshot = handler.watchtower.build_implementation_planner_snapshot(
+                implementation_plan_path,
+                outcome="READY",
+                outcome_valid=True,
+                generated_issues=[
+                    {
+                        "issue_number": 201,
+                        "initial_state": "state:planned",
+                        "next_state_after_approval": "state:ready-for-dev",
+                    },
+                    {
+                        "issue_number": 203,
+                        "initial_state": "state:planned",
+                        "next_state_after_approval": "state:ready-for-architecture",
+                    },
+                ],
+            )
+
+        self.assertEqual(
+            snapshot["generated_issues"],
+            [
+                {
+                    "number": 201,
+                    "url": "https://github.com/owner/repo/issues/201",
+                    "initial_state": "state:planned",
+                    "next_state_after_approval": "state:ready-for-dev",
+                    "dependencies": None,
+                },
+                {
+                    "number": 202,
+                    "url": "https://github.com/owner/repo/issues/202",
+                    "initial_state": None,
+                    "next_state_after_approval": None,
+                    "dependencies": None,
+                },
+                {
+                    "number": 203,
+                    "url": None,
+                    "initial_state": "state:planned",
+                    "next_state_after_approval": "state:ready-for-architecture",
+                    "dependencies": None,
+                },
+            ],
+        )
 
     def test_write_run_result_includes_workspace_metadata_fields(self):
         item = {

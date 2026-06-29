@@ -2334,10 +2334,32 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             elif mode == "implementation-planner" and state_label in implementation_planner_state_labels:
                 implementation_plan_path = build_implementation_plan_path(launch_brief_path)
                 workflow_classification_snapshot = validate_workflow_classification_from_markdown(implementation_plan_path)
-                planner_result_metadata = extract_latest_planner_result_v1_metadata(item.get("comments"))
+                planner_comments = item.get("comments") if isinstance(item.get("comments"), list) else None
+                try:
+                    current_issue, current_issue_ok = get_current_item(item, fields="number,comments")
+                except Exception as refresh_error:
+                    current_issue = None
+                    current_issue_ok = False
+                    print(
+                        "[Dispatch] Warning: unable to refresh implementation planner comments for "
+                        f"{item['type']} #{number}: {refresh_error}"
+                    )
+
+                if current_issue_ok and isinstance(current_issue, dict):
+                    current_issue_comments = current_issue.get("comments")
+                    if isinstance(current_issue_comments, list):
+                        planner_comments = current_issue_comments
+                        item["comments"] = current_issue_comments
+
+                planner_result_metadata = extract_latest_planner_result_v1_metadata(planner_comments)
                 planner_result = (
                     planner_result_metadata.get("planner_result")
                     if isinstance(planner_result_metadata, dict)
+                    else None
+                )
+                planner_result_generated_issues = (
+                    planner_result.get("generated_issues")
+                    if isinstance(planner_result, dict) and isinstance(planner_result.get("generated_issues"), list)
                     else None
                 )
                 planner_result_parent_issue = (
@@ -2368,6 +2390,18 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     and isinstance(planner_result_metadata.get("planner_result_comment_url"), str)
                     else None
                 )
+                roadmap_reference_merged = None
+                if isinstance(planner_result_roadmap_pr, int) and planner_result_roadmap_pr > 0:
+                    roadmap_item, roadmap_ok = github_client.get_item(
+                        "pr",
+                        planner_result_roadmap_pr,
+                        repo=REPO,
+                        run_command_fn=run_command,
+                        fields="number,mergedAt",
+                    )
+                    if roadmap_ok and isinstance(roadmap_item, dict):
+                        roadmap_reference_merged = bool(roadmap_item.get("mergedAt"))
+
                 if not os.path.isfile(implementation_plan_path):
                     normalized_implementation_plan_path = normalize_path_for_display(implementation_plan_path)
                     print(
@@ -2394,6 +2428,8 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         parent_issue=planner_result_parent_issue,
                         recommendation_comment_id=planner_result_recommendation_comment_id,
                         roadmap_pr_number=planner_result_roadmap_pr,
+                        roadmap_reference_merged=roadmap_reference_merged,
+                        generated_issues=planner_result_generated_issues,
                     )
                     update_run_status(
                         item,
@@ -2520,6 +2556,8 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         parent_issue=planner_result_parent_issue,
                         recommendation_comment_id=planner_result_recommendation_comment_id,
                         roadmap_pr_number=planner_result_roadmap_pr,
+                        roadmap_reference_merged=roadmap_reference_merged,
+                        generated_issues=planner_result_generated_issues,
                     )
                     update_run_status(
                         item,
@@ -2559,6 +2597,8 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     parent_issue=planner_result_parent_issue,
                     recommendation_comment_id=planner_result_recommendation_comment_id,
                     roadmap_pr_number=planner_result_roadmap_pr,
+                    roadmap_reference_merged=roadmap_reference_merged,
+                    generated_issues=planner_result_generated_issues,
                 )
                 if not ready_snapshot.get("generated_issues"):
                     ready_snapshot["diagnostic"] = (
