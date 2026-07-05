@@ -274,14 +274,334 @@ class HandlerObservabilityTests(unittest.TestCase):
             }
         ]
 
-        with patch("builtins.print") as mock_print:
+        with patch.object(handler, "perform_locked_item_recovery") as mock_locked_recovery:
             dispatched = handler.process_one_item(items)
 
         self.assertEqual(dispatched, "no-dispatch")
-        printed_lines = [call.args[0] for call in mock_print.call_args_list]
+        mock_locked_recovery.assert_called_once_with(items[0], [handler.LOCK_LABEL])
+
+    def test_collect_workspace_lifecycle_for_item_for_recovery_filters_lock_label_and_forwards_run(self):
+        item = {
+            "type": "issue",
+            "number": 10,
+            "labels": [{"name": handler.LOCK_LABEL}, {"name": "state:ready-for-dev"}],
+        }
+
+        with patch.object(
+            handler,
+            "resolve_item_workspace_metadata",
+            return_value={"workspace_path": "C:/repo-worktrees/owner-repo/issue-10"},
+        ):
+            with patch.object(
+                handler,
+                "_load_latest_watchtower_run_for_item",
+                return_value={"status": "interrupted", "outcome": "interrupted"},
+            ):
+                with patch.object(
+                    handler.workspace_diagnostics,
+                    "collect_workspace_lifecycle_diagnostic",
+                    return_value={"lifecycle_classification": "ready", "ambiguous": False},
+                ) as mock_collect:
+                    result = handler.collect_workspace_lifecycle_for_item(item, for_recovery=True)
+
+        self.assertEqual(result["lifecycle_classification"], "ready")
+        self.assertEqual(item["labels"][0]["name"], handler.LOCK_LABEL)
+        call_kwargs = mock_collect.call_args.kwargs
+        self.assertEqual(call_kwargs["workspace_path"], "C:/repo-worktrees/owner-repo/issue-10")
+        self.assertEqual(call_kwargs["watchtower_run"], {"status": "interrupted", "outcome": "interrupted"})
+        self.assertEqual(call_kwargs["item"]["labels"], [{"name": "state:ready-for-dev"}])
+
+    def test_perform_locked_item_recovery_is_non_destructive_for_safe_resume(self):
+        item = {
+            "type": "issue",
+            "number": 10,
+            "title": "Locked candidate",
+            "labels": [{"name": handler.LOCK_LABEL}, {"name": "state:ready-for-dev"}],
+        }
+
+        with patch.object(
+            handler,
+            "collect_workspace_lifecycle_for_item",
+            return_value={"lifecycle_classification": "ready", "ambiguous": False},
+        ):
+            with patch.object(handler, "get_current_item", return_value=(item, True)):
+                with patch.object(
+                    handler,
+                    "evaluate_item_dependencies",
+                    return_value={"declared": False, "status": "not-declared", "diagnostic": "no dependencies declared"},
+                ):
+                    with patch.object(handler, "_ensure_locked_recovery_run_artifacts"):
+                        with patch.object(handler, "write_run_result"):
+                            with patch.object(handler, "update_run_status") as mock_update_run_status:
+                                with patch.object(handler, "unlock_item") as mock_unlock:
+                                    with patch.object(handler, "apply_dependency_block_transition") as mock_transition:
+                                        with patch.object(handler, "add_comment") as mock_add_comment:
+                                            handler.perform_locked_item_recovery(
+                                                item,
+                                                [handler.LOCK_LABEL, "state:ready-for-dev"],
+                                            )
+
+        mock_unlock.assert_not_called()
+        mock_transition.assert_not_called()
+        mock_add_comment.assert_not_called()
         self.assertTrue(
-            any("[Poll] Skipping issue #10" in line and "lock label" in line for line in printed_lines)
+            any(call.kwargs.get("recovery_decision") == "safe_resume" for call in mock_update_run_status.call_args_list)
         )
+        self.assertTrue(
+            any(call.kwargs.get("recovery_non_destructive") is True for call in mock_update_run_status.call_args_list)
+        )
+
+    def test_perform_locked_item_recovery_suppresses_duplicate_recovery_comment(self):
+        item = {
+            "type": "issue",
+            "number": 10,
+            "title": "Locked candidate",
+            "labels": [{"name": handler.LOCK_LABEL}, {"name": "state:ready-for-dev"}],
+        }
+        expected_signature = "blocked_unsafe|workspace lifecycle is ambiguous|workspace lifecycle is ambiguous"
+
+        with patch.object(
+            handler,
+            "collect_workspace_lifecycle_for_item",
+            return_value={"lifecycle_classification": "recoverable", "ambiguous": True},
+        ):
+            with patch.object(handler, "get_current_item", return_value=(item, True)):
+                with patch.object(
+                    handler,
+                    "evaluate_item_dependencies",
+                    return_value={"declared": True, "status": "resolved", "diagnostic": "all dependencies are resolved"},
+                ):
+                    with patch.object(handler, "get_run_state", return_value={"run_dir": "C:/tmp/run"}):
+                        with patch.object(
+                            handler,
+                            "read_run_status",
+                            side_effect=[{}, {"recovery_comment_signature": expected_signature}],
+                        ):
+                            with patch.object(handler, "update_run_status") as mock_update_run_status:
+                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                    handler.perform_locked_item_recovery(
+                                        item,
+                                        [handler.LOCK_LABEL, "state:ready-for-dev"],
+                                    )
+                                    handler.perform_locked_item_recovery(
+                                        item,
+                                        [handler.LOCK_LABEL, "state:ready-for-dev"],
+                                    )
+
+        self.assertEqual(mock_add_comment.call_count, 1)
+        self.assertIn("No lock labels or workflow labels were changed", item["comment"])
+        self.assertTrue(
+            any(call.kwargs.get("recovery_comment_signature") == expected_signature for call in mock_update_run_status.call_args_list)
+        )
+
+    def test_perform_locked_item_recovery_writes_diagnostic_artifact_without_run_state(self):
+        item = {
+            "type": "issue",
+            "number": 10,
+            "title": "Locked candidate",
+            "labels": [{"name": handler.LOCK_LABEL}],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(handler, "get_item_run_root", return_value=temp_dir):
+                with patch.object(handler, "ensure_shared_artifacts", return_value={}):
+                    with patch.object(
+                        handler,
+                        "collect_workspace_lifecycle_for_item",
+                        return_value={"lifecycle_classification": "recoverable", "ambiguous": True},
+                    ):
+                        with patch.object(handler, "get_current_item", return_value=(item, True)):
+                            with patch.object(
+                                handler,
+                                "evaluate_item_dependencies",
+                                return_value={
+                                    "declared": True,
+                                    "status": "blocked",
+                                    "diagnostic": "dependency metadata malformed",
+                                },
+                            ):
+                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                    handler.perform_locked_item_recovery(item, [handler.LOCK_LABEL])
+
+            artifact_path = os.path.join(temp_dir, "recovery-diagnostic.json")
+            self.assertTrue(os.path.isfile(artifact_path))
+            with open(artifact_path, "r", encoding="utf-8") as artifact_file:
+                payload = json.load(artifact_file)
+
+        self.assertEqual(payload["recovery_decision"], "blocked_unsafe")
+        self.assertEqual(payload["dependency_resolution"]["status"], "blocked")
+        self.assertTrue(payload["comment_posted"])
+        self.assertEqual(item["recovery_diagnostic_artifact_path"], handler.normalize_path_for_display(artifact_path))
+        run_state = handler.get_run_state(item)
+        self.assertIsNotNone(run_state)
+        self.assertIn("status_path", run_state)
+        self.assertIn("result_path", run_state)
+        mock_add_comment.assert_called_once_with(item)
+
+    def test_perform_locked_item_recovery_suppresses_duplicate_comment_across_fresh_poll_cycles(self):
+        first_item = {
+            "type": "issue",
+            "number": 10,
+            "title": "Locked candidate",
+            "labels": [{"name": handler.LOCK_LABEL}, {"name": "state:ready-for-dev"}],
+        }
+        second_item = {
+            "type": "issue",
+            "number": 10,
+            "title": "Locked candidate",
+            "labels": [{"name": handler.LOCK_LABEL}, {"name": "state:ready-for-dev"}],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(handler, "get_item_run_root", return_value=temp_dir):
+                with patch.object(handler, "ensure_shared_artifacts", return_value={}):
+                    with patch.object(handler, "get_run_state", return_value=None):
+                        with patch.object(handler, "_ensure_locked_recovery_run_artifacts"):
+                            with patch.object(
+                                handler,
+                                "collect_workspace_lifecycle_for_item",
+                                return_value={"lifecycle_classification": "recoverable", "ambiguous": True},
+                            ):
+                                with patch.object(
+                                    handler,
+                                    "evaluate_item_dependencies",
+                                    return_value={
+                                        "declared": True,
+                                        "status": "resolved",
+                                        "diagnostic": "all dependencies are resolved",
+                                    },
+                                ):
+                                    with patch.object(
+                                        handler,
+                                        "get_current_item",
+                                        side_effect=[(first_item, True), (second_item, True)],
+                                    ):
+                                        with patch.object(handler, "add_comment") as mock_add_comment:
+                                            handler.perform_locked_item_recovery(
+                                                first_item,
+                                                [handler.LOCK_LABEL, "state:ready-for-dev"],
+                                            )
+                                            handler.perform_locked_item_recovery(
+                                                second_item,
+                                                [handler.LOCK_LABEL, "state:ready-for-dev"],
+                                            )
+
+        self.assertEqual(mock_add_comment.call_count, 1)
+
+    def test_process_one_item_evaluates_locked_dependency_blocked_item_recovery(self):
+        items = [
+            {
+                "type": "issue",
+                "number": 14,
+                "title": "Dependency blocked and locked",
+                "labels": [{"name": "state:dependency-blocked"}, {"name": handler.LOCK_LABEL}],
+            }
+        ]
+
+        with patch.object(handler, "perform_locked_item_recovery") as mock_locked_recovery:
+            dispatched = handler.process_one_item(items)
+
+        self.assertEqual(dispatched, "no-dispatch")
+        mock_locked_recovery.assert_called_once_with(
+            items[0], ["state:dependency-blocked", handler.LOCK_LABEL]
+        )
+
+    def test_process_one_item_evaluates_non_locked_dependency_blocked_item_recovery(self):
+        item = {
+            "type": "issue",
+            "number": 15,
+            "title": "Dependency blocked",
+            "url": "https://github.com/owner/repo/issues/15",
+            "labels": [{"name": "state:dependency-blocked"}],
+            "body": "## Circus Dependencies\n<!-- circus:dependencies v1 -->",
+        }
+
+        with patch.object(handler, "get_current_item", return_value=(item, True)):
+            with patch.object(
+                handler,
+                "collect_workspace_lifecycle_for_item",
+                return_value={"lifecycle_classification": "ready", "ambiguous": False},
+            ):
+                with patch.object(
+                    handler,
+                    "evaluate_item_dependencies",
+                    return_value={
+                        "declared": True,
+                        "status": "resolved",
+                        "dependencies": [],
+                        "unresolved": [],
+                        "diagnostic": "all declared dependencies are in non-dispatch states",
+                        "resume_state": "state:ready-for-dev",
+                    },
+                ):
+                    with patch.object(handler, "_ensure_prelaunch_dependency_run_artifacts") as mock_ensure_run_artifacts:
+                        with patch.object(handler, "update_run_status") as mock_update_run_status:
+                            with patch.object(handler, "_persist_locked_recovery_diagnostic_artifact"):
+                                with patch.object(
+                                    handler,
+                                    "get_run_state",
+                                    return_value={
+                                        "status_path": "C:/tmp/status.json",
+                                        "result_path": "C:/tmp/result.md",
+                                        "launch_brief_path": "C:/tmp/launch-brief.md",
+                                    },
+                                ):
+                                    with patch.object(handler, "write_run_result") as mock_write_run_result:
+                                        with patch.object(handler, "add_comment") as mock_add_comment:
+                                            with patch.object(handler, "resolve_dispatch_config") as mock_resolve_dispatch:
+                                                dispatched = handler.process_one_item([item])
+
+        self.assertEqual(dispatched, "no-dispatch")
+        mock_resolve_dispatch.assert_not_called()
+        mock_ensure_run_artifacts.assert_called_once()
+        self.assertEqual(mock_ensure_run_artifacts.call_args.args[1], "state:dependency-blocked")
+        self.assertEqual(mock_ensure_run_artifacts.call_args.args[2]["agent"], "handler")
+        self.assertEqual(mock_ensure_run_artifacts.call_args.args[2]["mode"], "diagnostic")
+        self.assertTrue(
+            any(call.kwargs.get("recovery_decision") == "safe_resume" for call in mock_update_run_status.call_args_list)
+        )
+        mock_add_comment.assert_called_once()
+        mock_write_run_result.assert_called_once_with(item)
+
+    def test_process_one_item_writes_diagnostic_run_artifacts_when_prelaunch_dependencies_are_blocked(self):
+        items = [
+            {
+                "type": "issue",
+                "number": 21,
+                "title": "Blocked dependencies",
+                "url": "https://github.com/owner/repo/issues/21",
+                "labels": [{"name": "state:ready-for-dev"}],
+            }
+        ]
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with patch.object(handler, "resolve_dispatch_config", return_value=("state:ready-for-dev", config)):
+            with patch.object(handler, "lock_item", return_value=True):
+                with patch.object(handler, "revalidate_candidate_after_lock", return_value=(items[0], None)):
+                    with patch.object(
+                        handler,
+                        "evaluate_item_dependencies",
+                        return_value={
+                            "declared": True,
+                            "status": "blocked",
+                            "diagnostic": "dependency #4 is not completed",
+                        },
+                    ):
+                        with patch.object(handler, "update_run_status"):
+                            with patch.object(handler, "apply_dependency_block_transition") as mock_transition:
+                                with patch.object(handler, "initialize_run_status") as mock_initialize_run_status:
+                                    with patch.object(handler, "write_run_result") as mock_write_run_result:
+                                        dispatched = handler.process_one_item(items)
+
+        self.assertEqual(dispatched, "dependency-blocked")
+        mock_transition.assert_called_once()
+        mock_initialize_run_status.assert_called_once()
+        mock_write_run_result.assert_called_once_with(items[0])
 
     def test_process_one_item_releases_lock_when_launch_brief_generation_fails(self):
         item = {
@@ -6027,6 +6347,74 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("  - issue: `issue #62`", result_content)
         self.assertIn("  - PR: `PR #71 (open) https://github.com/owner/repo/pull/71`", result_content)
         self.assertIn("  - recommended action: Recover workspace before reassignment or cleanup.", result_content)
+
+    def test_write_run_result_renders_recovery_workspace_lifecycle_when_lifecycle_diagnostics_missing(self):
+        item = {
+            "type": "issue",
+            "number": 90,
+            "title": "Recovery lifecycle diagnostics",
+            "working_branch": "circus/issue-90-recovery-lifecycle-diagnostics",
+        }
+        config = {
+            "agent": "handler",
+            "mode": "diagnostic",
+            "model": "n/a",
+            "effort": "low",
+        }
+        workspace_lifecycle = {
+            "workspace_path": "C:/target/repo-worktrees/owner-repo/issue-90",
+            "issue_association": "issue #90",
+            "pr_association": "none",
+            "branch_name": "circus/issue-90-recovery-lifecycle-diagnostics",
+            "expected_branch": "circus/issue-90-recovery-lifecycle-diagnostics",
+            "current_branch": "circus/issue-90-recovery-lifecycle-diagnostics",
+            "lifecycle_classification": "ready",
+            "classification_reasons": ["workspace_clean"],
+            "ambiguous": False,
+            "ambiguity_indicators": [],
+            "recommended_operator_action": "Resume handler processing.",
+            "source": "workspace_inventory.classify_workspace",
+            "workspace": "C:/target/repo-worktrees/owner-repo/issue-90",
+            "state": "ready",
+            "branch": "circus/issue-90-recovery-lifecycle-diagnostics",
+            "issue": "issue #90",
+            "pr": "none",
+            "reasons": ["workspace_clean"],
+            "recommended_action": "Resume handler processing.",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            launch_brief_path = os.path.join(temp_dir, "owner-repo", "issue-90", "run-001-diagnostic", "launch-brief.md")
+            os.makedirs(os.path.dirname(launch_brief_path), exist_ok=True)
+            with open(launch_brief_path, "w", encoding="utf-8") as launch_brief_file:
+                launch_brief_file.write("# Launch Brief\n")
+
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                    handler.initialize_run_status(item, "state:dependency-blocked", config, launch_brief_path)
+                    handler.update_run_status(
+                        item,
+                        started_at="2026-07-05T18:00:00Z",
+                        completed_at="2026-07-05T18:00:30Z",
+                        exit_code=0,
+                        success=True,
+                        outcome="success",
+                        stop_reason=None,
+                        workspace_lifecycle=workspace_lifecycle,
+                        recovery_decision="safe_resume",
+                        recovery_reason="stale_lock_without_active_run",
+                    )
+                    handler.write_run_result(item)
+
+            result_path = os.path.join(os.path.dirname(launch_brief_path), "result.md")
+            with open(result_path, "r", encoding="utf-8") as result_file:
+                result_content = result_file.read()
+
+        lifecycle_section = result_content.split("## Lifecycle Diagnostics", 1)[1].split("## Recovery", 1)[0]
+        self.assertNotIn("- none", lifecycle_section)
+        self.assertIn("- workspace: `C:/target/repo-worktrees/owner-repo/issue-90`", lifecycle_section)
+        self.assertIn("  - state: `ready`", lifecycle_section)
+        self.assertIn("  - reasons: `workspace_clean`", lifecycle_section)
 
     def test_ensure_shared_artifacts_does_not_overwrite_existing_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:

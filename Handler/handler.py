@@ -10,15 +10,18 @@ from dotenv import load_dotenv
 
 from Handler import agents
 from Handler import config as handler_config
+from Handler import dependencies
 from Handler import developer_flow
 from Handler import git_workspace
 from Handler import github_client
 from Handler import paths as handler_paths
+from Handler import recovery
 from Handler import review_flow
 from Handler import target_instructions
 from Handler import watchtower
 from Handler import workflow
 from Handler import workflow_classification
+from Handler import workspace_diagnostics
 from Handler.workflow_states import (
     HUMAN_REVIEW_LABEL,
     IMPLEMENTATION_PLAN_REVIEW_LABEL,
@@ -65,6 +68,7 @@ EXECUTABLE_PATHS = {}
 
 RUN_STATUS_FILENAME = watchtower.RUN_STATUS_FILENAME
 RUN_RESULT_FILENAME = watchtower.RUN_RESULT_FILENAME
+RECOVERY_DIAGNOSTIC_FILENAME = "recovery-diagnostic.json"
 
 RUN_STATUS_FIELDS = watchtower.RUN_STATUS_FIELDS
 
@@ -276,6 +280,495 @@ def remove_label(item, label):
 
 def add_label(item, label):
     return github_client.add_label(item, label, repo=REPO, run_command_fn=run_command)
+
+
+def evaluate_item_dependencies(item):
+    return dependencies.evaluate_dependencies(
+        item.get("body"),
+        default_repo=REPO,
+        run_command_fn=run_command,
+    )
+
+
+def apply_dependency_block_transition(item, labels):
+    dispatchable_states = workflow.get_dispatchable_state_labels(labels)
+    transition_steps = [("remove", LOCK_LABEL)]
+    if dispatchable_states:
+        transition_steps.append(("remove", dispatchable_states[0]))
+    transition_steps.append(("add", "state:dependency-blocked"))
+
+    transition_ok = execute_label_transition(
+        item,
+        workflow_name="Dependency Recovery",
+        transition_steps=transition_steps,
+        success_message="[Dispatch] Item #{number} moved to dependency-blocked after stale-run recovery.",
+        failure_message=(
+            "[Dispatch] Dependency recovery transition encountered label update failures for issue #{number}; "
+            "manual inspection is required."
+        ),
+    )
+
+    return transition_ok
+
+
+def _normalize_watchtower_run_state(status_payload):
+    if not isinstance(status_payload, dict):
+        return None
+
+    status_value = status_payload.get("status")
+    if isinstance(status_value, str) and status_value.strip():
+        return {
+            "status": status_value.strip(),
+            "outcome": status_payload.get("outcome"),
+            "stop_reason": status_payload.get("stop_reason"),
+            "success": status_payload.get("success"),
+        }
+
+    outcome_value = status_payload.get("outcome")
+    if isinstance(outcome_value, str) and outcome_value.strip():
+        return {
+            "status": outcome_value.strip(),
+            "outcome": outcome_value.strip(),
+            "stop_reason": status_payload.get("stop_reason"),
+            "success": status_payload.get("success"),
+        }
+
+    return None
+
+
+def _load_latest_watchtower_run_for_item(item):
+    run_state = get_run_state(item)
+    if isinstance(run_state, dict) and run_state.get("status_path"):
+        try:
+            status_payload = read_run_status(run_state)
+        except (OSError, TypeError, ValueError):
+            status_payload = None
+
+        normalized_state = _normalize_watchtower_run_state(status_payload)
+        if normalized_state is not None:
+            return normalized_state
+
+    try:
+        item_run_root = get_item_run_root(item)
+    except (OSError, TypeError, ValueError):
+        return None
+
+    try:
+        run_directories = sorted(
+            [
+                entry
+                for entry in os.listdir(item_run_root)
+                if os.path.isdir(os.path.join(item_run_root, entry)) and entry.startswith("run-")
+            ],
+            reverse=True,
+        )
+    except OSError:
+        return None
+
+    for run_directory in run_directories:
+        status_path = os.path.join(item_run_root, run_directory, RUN_STATUS_FILENAME)
+        try:
+            with open(status_path, "r", encoding="utf-8") as status_file:
+                status_payload = json.load(status_file)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            continue
+
+        normalized_state = _normalize_watchtower_run_state(status_payload)
+        if normalized_state is not None:
+            return normalized_state
+
+    return None
+
+
+def _build_workspace_lifecycle_item_for_recovery(item):
+    labels = item.get("labels") if isinstance(item, dict) else None
+    if not isinstance(labels, list):
+        return item
+
+    normalized_labels = []
+    for label in labels:
+        if isinstance(label, dict):
+            label_name = str(label.get("name") or "").strip().lower()
+            if label_name == LOCK_LABEL:
+                continue
+        elif str(label).strip().lower() == LOCK_LABEL:
+            continue
+        normalized_labels.append(label)
+
+    normalized_item = dict(item)
+    normalized_item["labels"] = normalized_labels
+    return normalized_item
+
+
+def collect_workspace_lifecycle_for_item(item, *, for_recovery=False):
+    metadata = resolve_item_workspace_metadata(item)
+    workspace_path = metadata.get("workspace_path")
+    if not workspace_path:
+        return None
+
+    inventory_item = _build_workspace_lifecycle_item_for_recovery(item) if for_recovery else item
+    watchtower_run = _load_latest_watchtower_run_for_item(item) if for_recovery else None
+
+    return workspace_diagnostics.collect_workspace_lifecycle_diagnostic(
+        repo_path=TARGET_REPO_PATH,
+        workspace_path=workspace_path,
+        item=inventory_item,
+        watchtower_run=watchtower_run,
+        allow_cleanup=False,
+        dry_run=True,
+    )
+
+
+def _build_recovery_comment(item, recovery_resolution, *, condition_label="locked-item"):
+    decision = recovery_resolution.get("decision")
+    reason = recovery_resolution.get("reason")
+    recommended_action = recovery_resolution.get("recommended_action")
+    blockers = recovery_resolution.get("blockers") or []
+
+    lines = [
+        f"⚠️ Handler detected a {condition_label} recovery condition and stopped automatic recovery actions.",
+        "",
+        f"- decision: `{decision}`",
+        f"- reason: `{reason}`",
+        f"- non-destructive: `{recovery_resolution.get('non_destructive')}`",
+    ]
+
+    if blockers:
+        lines.append("- blockers:")
+        for blocker in blockers:
+            lines.append(f"  - {blocker}")
+
+    if isinstance(recommended_action, str) and recommended_action.strip():
+        lines.extend(["", "Recommended human action:", recommended_action.strip()])
+
+    lines.extend(["", "No lock labels or workflow labels were changed by Handler."])
+    return "\n".join(lines)
+
+
+def _build_recovery_comment_signature(recovery_resolution):
+    decision = recovery_resolution.get("decision")
+    reason = recovery_resolution.get("reason")
+    blockers = recovery_resolution.get("blockers") or []
+    normalized_blockers = [str(blocker).strip() for blocker in blockers if isinstance(blocker, str) and blocker.strip()]
+    return "|".join([str(decision), str(reason), "::".join(normalized_blockers)])
+
+
+def _is_duplicate_recovery_comment(item, signature):
+    run_state = get_run_state(item)
+    if run_state:
+        status_payload = read_run_status(run_state)
+        if status_payload.get("recovery_comment_signature") == signature:
+            return True
+
+    try:
+        item_run_root = get_item_run_root(item)
+        artifact_path = os.path.join(item_run_root, RECOVERY_DIAGNOSTIC_FILENAME)
+        with open(artifact_path, "r", encoding="utf-8") as artifact_file:
+            artifact_payload = json.load(artifact_file)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return False
+
+    return artifact_payload.get("comment_signature") == signature
+
+
+def _persist_locked_recovery_diagnostic_artifact(
+    item,
+    *,
+    workspace_lifecycle,
+    dependency_resolution,
+    recovery_resolution,
+    comment_posted,
+    comment_signature,
+):
+    try:
+        item_run_root = get_item_run_root(item)
+        ensure_shared_artifacts(item_run_root)
+        os.makedirs(item_run_root, exist_ok=True)
+    except Exception as exc:
+        print(
+            f"[Watchtower] Warning: failed to prepare recovery diagnostic artifact path for "
+            f"{item.get('type')} #{item.get('number')}: {exc}"
+        )
+        return None
+
+    artifact_path = os.path.join(item_run_root, RECOVERY_DIAGNOSTIC_FILENAME)
+    artifact_payload = {
+        "recorded_at": utc_timestamp_now(),
+        "item_type": item.get("type"),
+        "item_number": item.get("number"),
+        "item_title": item.get("title"),
+        "recovery_decision": recovery_resolution.get("decision"),
+        "recovery_reason": recovery_resolution.get("reason"),
+        "recovery_recommendation": recovery_resolution.get("recommended_action"),
+        "recovery_blockers": recovery_resolution.get("blockers") or [],
+        "recovery_non_destructive": bool(recovery_resolution.get("non_destructive", True)),
+        "workspace_lifecycle": workspace_lifecycle,
+        "dependency_resolution": dependency_resolution,
+        "comment_posted": bool(comment_posted),
+        "comment_signature": comment_signature,
+    }
+
+    try:
+        with open(artifact_path, "w", encoding="utf-8") as artifact_file:
+            json.dump(artifact_payload, artifact_file, indent=2)
+            artifact_file.write("\n")
+    except OSError as exc:
+        print(
+            f"[Watchtower] Warning: failed to write recovery diagnostic artifact for "
+            f"{item.get('type')} #{item.get('number')}: {exc}"
+        )
+        return None
+
+    artifact_path_for_display = normalize_path_for_display(artifact_path)
+    item["recovery_diagnostic_artifact_path"] = artifact_path_for_display
+    update_run_status(item, artifacts={"recovery_diagnostic": artifact_path_for_display})
+    return artifact_path_for_display
+
+
+def _ensure_locked_recovery_run_artifacts(item, labels):
+    if get_run_state(item):
+        return
+
+    state_labels = workflow.get_primary_workflow_state_labels(labels)
+    if len(state_labels) == 1:
+        state_label = state_labels[0]
+    elif state_labels:
+        state_label = state_labels[0]
+    else:
+        state_label = "state:unknown"
+
+    config = {
+        "agent": "handler",
+        "mode": "diagnostic",
+        "model": "n/a",
+        "effort": "low",
+    }
+
+    try:
+        launch_brief_path = build_launch_brief_path(item, "developer")
+        launch_brief_dir = os.path.dirname(launch_brief_path)
+        os.makedirs(launch_brief_dir, exist_ok=True)
+        if not os.path.exists(launch_brief_path):
+            with open(launch_brief_path, "w", encoding="utf-8") as launch_brief_file:
+                launch_brief_file.write(
+                    "# Recovery Diagnostic Launch Brief\n\n"
+                    "This run was generated by Handler to persist lock recovery diagnostics.\n"
+                )
+        initialize_run_status(item, state_label, config, launch_brief_path)
+    except OSError as exc:
+        print(
+            f"[Watchtower] Warning: failed to initialize recovery run artifacts for "
+            f"{item.get('type')} #{item.get('number')}: {exc}"
+        )
+
+
+def _ensure_prelaunch_dependency_run_artifacts(item, state_label, config):
+    if get_run_state(item):
+        return
+
+    try:
+        launch_brief_path = build_launch_brief_path(item, config.get("mode", "developer"))
+        launch_brief_dir = os.path.dirname(launch_brief_path)
+        os.makedirs(launch_brief_dir, exist_ok=True)
+        if not os.path.exists(launch_brief_path):
+            with open(launch_brief_path, "w", encoding="utf-8") as launch_brief_file:
+                launch_brief_file.write(
+                    "# Dependency Recovery Diagnostic Launch Brief\n\n"
+                    "This run was generated by Handler to persist dependency-blocked diagnostics.\n"
+                )
+        initialize_run_status(item, state_label, config, launch_brief_path)
+    except OSError as exc:
+        print(
+            f"[Watchtower] Warning: failed to initialize dependency recovery run artifacts for "
+            f"{item.get('type')} #{item.get('number')}: {exc}"
+        )
+
+
+def perform_locked_item_recovery(item, labels):
+    current_item, current_item_ok = get_current_item(item, fields="number,labels,title,url,body")
+    if not current_item_ok or not isinstance(current_item, dict):
+        print(f"[Poll] Skipping {item['type']} #{item['number']}: lock label '{LOCK_LABEL}' already present.")
+        return
+
+    item.update(current_item)
+    current_labels = [label["name"] for label in item.get("labels", [])]
+    if not is_locked(current_labels):
+        return
+
+    workspace_lifecycle = collect_workspace_lifecycle_for_item(item, for_recovery=True)
+    dependency_resolution = evaluate_item_dependencies(item)
+    workflow_state = {
+        "primary_state_labels": workflow.get_primary_workflow_state_labels(current_labels),
+        "unsupported_state_labels": workflow.get_unsupported_state_labels(current_labels),
+    }
+    recovery_resolution = recovery.classify_locked_item_recovery(
+        workspace_lifecycle=workspace_lifecycle,
+        dependency_resolution=dependency_resolution,
+        workflow_state=workflow_state,
+    )
+    recovery_decision = recovery_resolution["decision"]
+    recovery_reason = recovery_resolution["reason"]
+    recovery_recommendation = recovery_resolution.get("recommended_action")
+    recovery_blockers = recovery_resolution.get("blockers") or []
+    recovery_non_destructive = bool(recovery_resolution.get("non_destructive", True))
+
+    item["workspace_lifecycle"] = workspace_lifecycle
+    item["dependency_resolution"] = dependency_resolution
+    item["recovery_decision"] = recovery_decision
+    item["recovery_reason"] = recovery_reason
+    _ensure_locked_recovery_run_artifacts(item, current_labels)
+    update_run_status(
+        item,
+        workspace_lifecycle=workspace_lifecycle,
+        dependency_resolution=dependency_resolution,
+        recovery_decision=recovery_decision,
+        recovery_reason=recovery_reason,
+        recovery_recommendation=recovery_recommendation,
+        recovery_blockers=recovery_blockers,
+        recovery_non_destructive=recovery_non_destructive,
+    )
+    comment_required_decisions = {
+        "blocked_unsafe",
+        "interrupted_run_blocked",
+        "dependency_resume_blocked",
+        "stale_lock_needs_human",
+    }
+    recovery_comment_signature = _build_recovery_comment_signature(recovery_resolution)
+    should_post_comment = (
+        recovery_decision in comment_required_decisions
+        and not _is_duplicate_recovery_comment(item, recovery_comment_signature)
+    )
+
+    if should_post_comment:
+        item["comment"] = _build_recovery_comment(item, recovery_resolution)
+        add_comment(item)
+
+    update_run_status(
+        item,
+        recovery_comment_posted=should_post_comment,
+        recovery_comment_signature=recovery_comment_signature,
+    )
+
+    _persist_locked_recovery_diagnostic_artifact(
+        item,
+        workspace_lifecycle=workspace_lifecycle,
+        dependency_resolution=dependency_resolution,
+        recovery_resolution=recovery_resolution,
+        comment_posted=should_post_comment,
+        comment_signature=recovery_comment_signature,
+    )
+    run_state = get_run_state(item)
+    if isinstance(run_state, dict) and all(
+        run_state.get(field) for field in ("status_path", "result_path", "launch_brief_path")
+    ):
+        write_run_result(item)
+
+    print(
+        f"[Poll] Skipping {item['type']} #{item['number']}: lock label '{LOCK_LABEL}' already present "
+        f"({recovery_reason}); no labels were modified by recovery logic."
+    )
+    return
+
+
+def perform_dependency_blocked_item_recovery(item, labels):
+    current_item, current_item_ok = get_current_item(item, fields="number,labels,title,url,body")
+    if not current_item_ok or not isinstance(current_item, dict):
+        return False
+
+    item.update(current_item)
+    current_labels = [label["name"] for label in item.get("labels", [])]
+    if "state:dependency-blocked" not in current_labels:
+        return False
+
+    workspace_lifecycle = collect_workspace_lifecycle_for_item(item, for_recovery=True)
+    dependency_resolution = evaluate_item_dependencies(item)
+    workflow_state = {
+        "primary_state_labels": workflow.get_primary_workflow_state_labels(current_labels),
+        "unsupported_state_labels": workflow.get_unsupported_state_labels(current_labels),
+    }
+    recovery_resolution = recovery.classify_locked_item_recovery(
+        workspace_lifecycle=workspace_lifecycle,
+        dependency_resolution=dependency_resolution,
+        workflow_state=workflow_state,
+    )
+    recovery_decision = recovery_resolution["decision"]
+    recovery_reason = recovery_resolution["reason"]
+    recovery_recommendation = recovery_resolution.get("recommended_action")
+    recovery_blockers = recovery_resolution.get("blockers") or []
+    recovery_non_destructive = bool(recovery_resolution.get("non_destructive", True))
+
+    item["workspace_lifecycle"] = workspace_lifecycle
+    item["dependency_resolution"] = dependency_resolution
+    item["recovery_decision"] = recovery_decision
+    item["recovery_reason"] = recovery_reason
+    diagnostic_config = {
+        "agent": "handler",
+        "mode": "diagnostic",
+        "model": "n/a",
+        "effort": "n/a",
+    }
+    _ensure_prelaunch_dependency_run_artifacts(item, "state:dependency-blocked", diagnostic_config)
+    update_run_status(
+        item,
+        workspace_lifecycle=workspace_lifecycle,
+        dependency_resolution=dependency_resolution,
+        recovery_decision=recovery_decision,
+        recovery_reason=recovery_reason,
+        recovery_recommendation=recovery_recommendation,
+        recovery_blockers=recovery_blockers,
+        recovery_non_destructive=recovery_non_destructive,
+        completed_at=utc_timestamp_now(),
+        exit_code=None,
+        success=False,
+        outcome="dependency-blocked",
+        stop_reason=recovery_reason,
+    )
+    comment_required_decisions = {
+        "blocked_unsafe",
+        "interrupted_run_blocked",
+        "dependency_resume_blocked",
+        "stale_lock_needs_human",
+        "safe_resume",
+    }
+    recovery_comment_signature = _build_recovery_comment_signature(recovery_resolution)
+    should_post_comment = (
+        recovery_decision in comment_required_decisions
+        and not _is_duplicate_recovery_comment(item, recovery_comment_signature)
+    )
+
+    if should_post_comment:
+        item["comment"] = _build_recovery_comment(
+            item,
+            recovery_resolution,
+            condition_label="dependency-blocked-item",
+        )
+        add_comment(item)
+
+    update_run_status(
+        item,
+        recovery_comment_posted=should_post_comment,
+        recovery_comment_signature=recovery_comment_signature,
+    )
+
+    _persist_locked_recovery_diagnostic_artifact(
+        item,
+        workspace_lifecycle=workspace_lifecycle,
+        dependency_resolution=dependency_resolution,
+        recovery_resolution=recovery_resolution,
+        comment_posted=should_post_comment,
+        comment_signature=recovery_comment_signature,
+    )
+    run_state = get_run_state(item)
+    if isinstance(run_state, dict) and all(
+        run_state.get(field) for field in ("status_path", "result_path", "launch_brief_path")
+    ):
+        write_run_result(item)
+
+    print(
+        f"[Poll] Skipping {item['type']} #{item['number']}: state:dependency-blocked "
+        f"({recovery_reason}); no labels were modified by recovery logic."
+    )
+    return True
 
 
 def execute_label_transition(item, workflow_name, transition_steps, success_message, failure_message):
@@ -2779,8 +3272,12 @@ def process_one_item(
         labels = [label["name"] for label in item["labels"]]
 
         if is_locked(labels):
-            print(f"[Poll] Skipping {item['type']} #{item['number']}: lock label '{LOCK_LABEL}' already present.")
+            perform_locked_item_recovery(item, labels)
             continue
+
+        if "state:dependency-blocked" in labels:
+            if perform_dependency_blocked_item_recovery(item, labels):
+                continue
 
         dispatch_resolution = resolve_dispatch_config(item, labels)
         if not dispatch_resolution:
@@ -2823,6 +3320,28 @@ def process_one_item(
         if revalidation_result:
             return revalidation_result
         item = current_item
+
+        dependency_resolution = evaluate_item_dependencies(item)
+        item["dependency_resolution"] = dependency_resolution
+        if dependency_resolution.get("status") == "blocked":
+            _ensure_prelaunch_dependency_run_artifacts(item, state_label, config)
+            update_run_status(
+                item,
+                dependency_resolution=dependency_resolution,
+                completed_at=utc_timestamp_now(),
+                exit_code=None,
+                success=False,
+                outcome="dependency-blocked",
+                stop_reason="unresolved dependencies declared in issue body",
+            )
+            write_run_result(item)
+            print(
+                f"[Poll] Skipping {item['type']} #{item['number']}: unresolved dependencies declared in issue body."
+            )
+            apply_dependency_block_transition(item, [label["name"] for label in item.get("labels", [])])
+            return "dependency-blocked"
+
+        update_run_status(item, dependency_resolution=dependency_resolution)
 
         item.pop("working_branch", None)
         item.pop("execution_branch", None)

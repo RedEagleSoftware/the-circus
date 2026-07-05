@@ -61,6 +61,14 @@ RUN_STATUS_FIELDS = [
     "workflow_classification",
     "recommendation_traceability",
     "accepted_decision_traceability",
+    "recovery_decision",
+    "recovery_reason",
+    "recovery_recommendation",
+    "recovery_blockers",
+    "recovery_non_destructive",
+    "recovery_comment_posted",
+    "recovery_comment_signature",
+    "dependency_resolution",
 ]
 
 
@@ -958,6 +966,11 @@ def update_run_status(item, *, get_run_state_fn, read_run_status_fn, write_run_s
             continue
         status_payload[key] = value
 
+    if "workspace_lifecycle" in updates and "lifecycle_diagnostics" not in updates:
+        workspace_lifecycle = status_payload.get("workspace_lifecycle")
+        if isinstance(workspace_lifecycle, dict):
+            status_payload["lifecycle_diagnostics"] = [workspace_lifecycle]
+
     status_payload["linked_pr"] = item.get("review_pr", {}).get("url") or status_payload.get("linked_pr")
     status_payload["working_branch"] = item.get("working_branch") or status_payload.get("working_branch")
     if item.get("last_label_transition") is not None:
@@ -986,6 +999,10 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
     accepted_decision_traceability = status_payload.get("accepted_decision_traceability") or {}
     label_transition = status_payload.get("label_transition")
     lifecycle_diagnostics = status_payload.get("lifecycle_diagnostics")
+    if not lifecycle_diagnostics:
+        workspace_lifecycle = status_payload.get("workspace_lifecycle")
+        if isinstance(workspace_lifecycle, dict):
+            lifecycle_diagnostics = [workspace_lifecycle]
 
     lines = [
         "# Run Result",
@@ -1015,6 +1032,8 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
         f"- workspace branch: `{status_payload.get('workspace_branch')}`",
         f"- workspace lifecycle: `{status_payload.get('workspace_lifecycle')}`",
         f"- workspace item identity: `{status_payload.get('workspace_item_identity')}`",
+        f"- recovery decision: `{status_payload.get('recovery_decision')}`",
+        f"- recovery reason: `{status_payload.get('recovery_reason')}`",
         f"- run dir: `{status_payload.get('run_dir')}`",
         "",
         "## Lifecycle Diagnostics",
@@ -1023,6 +1042,17 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
     lines.extend(workspace_diagnostics.render_workspace_lifecycle_report(lifecycle_diagnostics).splitlines())
     lines.extend(
         [
+            "",
+            "## Recovery",
+            f"- decision: `{status_payload.get('recovery_decision')}`",
+            f"- reason: `{status_payload.get('recovery_reason')}`",
+            f"- recommendation: `{status_payload.get('recovery_recommendation')}`",
+            f"- blockers: `{'; '.join(status_payload.get('recovery_blockers')) if isinstance(status_payload.get('recovery_blockers'), list) else status_payload.get('recovery_blockers')}`",
+            f"- non-destructive: `{status_payload.get('recovery_non_destructive')}`",
+            f"- comment posted: `{status_payload.get('recovery_comment_posted')}`",
+            f"- locked by run id: `{(status_payload.get('workspace_lifecycle') if isinstance(status_payload.get('workspace_lifecycle'), dict) else {}).get('locked_by_run_id')}`",
+            f"- dependency resolution status: `{(status_payload.get('dependency_resolution') if isinstance(status_payload.get('dependency_resolution'), dict) else {}).get('status')}`",
+            f"- dependency diagnostic: `{(status_payload.get('dependency_resolution') if isinstance(status_payload.get('dependency_resolution'), dict) else {}).get('diagnostic')}`",
             "",
             "## Outcome",
             f"- linked PR: `{status_payload.get('linked_pr')}`",

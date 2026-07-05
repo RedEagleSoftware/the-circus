@@ -176,6 +176,62 @@ class WorkspaceDiagnosticsTests(unittest.TestCase):
         self.assertIn("open_pr_exists", diagnostic["reasons"])
         self.assertEqual(diagnostic["state"], "recoverable")
 
+    def test_collect_workspace_lifecycle_diagnostic_forwards_watchtower_run_context(self):
+        item = {"type": "issue", "number": 62, "state": "open"}
+        watchtower_run = {
+            "run_dir": "C:/watchtower/runs/owner-repo/issue-62/run-001-agent",
+            "status": "interrupted",
+        }
+
+        def collect_workspace_inventory(
+            repo_path,
+            workspace_path,
+            *,
+            item,
+            github_item,
+            watchtower_run,
+        ):
+            self.assertEqual(repo_path, "C:/repo")
+            self.assertEqual(workspace_path, "C:/worktree")
+            self.assertEqual(item, {"type": "issue", "number": 62, "state": "open"})
+            self.assertEqual(github_item, {"type": "issue", "number": 62, "state": "open"})
+            self.assertEqual(
+                watchtower_run,
+                {
+                    "run_dir": "C:/watchtower/runs/owner-repo/issue-62/run-001-agent",
+                    "status": "interrupted",
+                },
+            )
+            return {
+                "workspace_path": workspace_path,
+                "item_identity": {"type": item["type"], "number": item["number"]},
+                "expected_branch": "circus/issue-62-workspace-diagnostics",
+                "registered_workspace_entry": {"worktree": workspace_path},
+                "workspace_path_exists": True,
+                "current_branch": "circus/issue-62-workspace-diagnostics",
+                "detached_head": False,
+                "workspace_clean": True,
+                "missing_upstream_tracking": False,
+                "ambiguous_upstream": False,
+                "open_pr": None,
+                "workflow_labels": [],
+                "github_item": github_item,
+                "watchtower_run": watchtower_run,
+                "metadata_available": True,
+            }
+
+        diagnostic = workspace_diagnostics.collect_workspace_lifecycle_diagnostic(
+            repo_path="C:/repo",
+            workspace_path="C:/worktree",
+            item=item,
+            watchtower_run=watchtower_run,
+            collect_workspace_inventory_fn=collect_workspace_inventory,
+            classify_workspace_fn=workspace_diagnostics.workspace_inventory.classify_workspace,
+        )
+
+        self.assertEqual(diagnostic["state"], "suspended")
+        self.assertIn("watchtower_run_incomplete", diagnostic["reasons"])
+
 
 if __name__ == "__main__":
     unittest.main()

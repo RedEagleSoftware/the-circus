@@ -300,7 +300,7 @@ def classify_workspace(facts, *, allow_cleanup=False, dry_run=False):
     open_pr_exists = _has_open_pr_relationship(open_pr)
     merged_pr_relationship = _is_merged_pr_relationship(open_pr)
     watchtower_run = facts.get("watchtower_run") or {}
-    watchtower_state = str(watchtower_run.get("status") or "").lower()
+    watchtower_state = str(watchtower_run.get("status") or watchtower_run.get("outcome") or "").lower()
     workspace_clean = facts.get("workspace_clean")
     expected_branch = facts.get("expected_branch")
     current_branch = facts.get("current_branch")
