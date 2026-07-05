@@ -68,6 +68,7 @@ EXECUTABLE_PATHS = {}
 
 RUN_STATUS_FILENAME = watchtower.RUN_STATUS_FILENAME
 RUN_RESULT_FILENAME = watchtower.RUN_RESULT_FILENAME
+RECOVERY_DIAGNOSTIC_FILENAME = "recovery-diagnostic.json"
 
 RUN_STATUS_FIELDS = watchtower.RUN_STATUS_FIELDS
 
@@ -368,6 +369,60 @@ def _is_duplicate_recovery_comment(item, signature):
     return status_payload.get("recovery_comment_signature") == signature
 
 
+def _persist_locked_recovery_diagnostic_artifact(
+    item,
+    *,
+    workspace_lifecycle,
+    dependency_resolution,
+    recovery_resolution,
+    comment_posted,
+    comment_signature,
+):
+    try:
+        item_run_root = get_item_run_root(item)
+        ensure_shared_artifacts(item_run_root)
+        os.makedirs(item_run_root, exist_ok=True)
+    except Exception as exc:
+        print(
+            f"[Watchtower] Warning: failed to prepare recovery diagnostic artifact path for "
+            f"{item.get('type')} #{item.get('number')}: {exc}"
+        )
+        return None
+
+    artifact_path = os.path.join(item_run_root, RECOVERY_DIAGNOSTIC_FILENAME)
+    artifact_payload = {
+        "recorded_at": utc_timestamp_now(),
+        "item_type": item.get("type"),
+        "item_number": item.get("number"),
+        "item_title": item.get("title"),
+        "recovery_decision": recovery_resolution.get("decision"),
+        "recovery_reason": recovery_resolution.get("reason"),
+        "recovery_recommendation": recovery_resolution.get("recommended_action"),
+        "recovery_blockers": recovery_resolution.get("blockers") or [],
+        "recovery_non_destructive": bool(recovery_resolution.get("non_destructive", True)),
+        "workspace_lifecycle": workspace_lifecycle,
+        "dependency_resolution": dependency_resolution,
+        "comment_posted": bool(comment_posted),
+        "comment_signature": comment_signature,
+    }
+
+    try:
+        with open(artifact_path, "w", encoding="utf-8") as artifact_file:
+            json.dump(artifact_payload, artifact_file, indent=2)
+            artifact_file.write("\n")
+    except OSError as exc:
+        print(
+            f"[Watchtower] Warning: failed to write recovery diagnostic artifact for "
+            f"{item.get('type')} #{item.get('number')}: {exc}"
+        )
+        return None
+
+    artifact_path_for_display = normalize_path_for_display(artifact_path)
+    item["recovery_diagnostic_artifact_path"] = artifact_path_for_display
+    update_run_status(item, artifacts={"recovery_diagnostic": artifact_path_for_display})
+    return artifact_path_for_display
+
+
 def perform_locked_item_recovery(item, labels):
     current_item, current_item_ok = get_current_item(item, fields="number,labels,title,url,body")
     if not current_item_ok or not isinstance(current_item, dict):
@@ -425,6 +480,15 @@ def perform_locked_item_recovery(item, labels):
         item,
         recovery_comment_posted=should_post_comment,
         recovery_comment_signature=recovery_comment_signature,
+    )
+
+    _persist_locked_recovery_diagnostic_artifact(
+        item,
+        workspace_lifecycle=workspace_lifecycle,
+        dependency_resolution=dependency_resolution,
+        recovery_resolution=recovery_resolution,
+        comment_posted=should_post_comment,
+        comment_signature=recovery_comment_signature,
     )
 
     print(

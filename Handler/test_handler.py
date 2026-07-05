@@ -355,6 +355,46 @@ class HandlerObservabilityTests(unittest.TestCase):
             any(call.kwargs.get("recovery_comment_signature") == expected_signature for call in mock_update_run_status.call_args_list)
         )
 
+    def test_perform_locked_item_recovery_writes_diagnostic_artifact_without_run_state(self):
+        item = {
+            "type": "issue",
+            "number": 10,
+            "title": "Locked candidate",
+            "labels": [{"name": handler.LOCK_LABEL}],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(handler, "get_item_run_root", return_value=temp_dir):
+                with patch.object(handler, "ensure_shared_artifacts", return_value={}):
+                    with patch.object(
+                        handler,
+                        "collect_workspace_lifecycle_for_item",
+                        return_value={"lifecycle_classification": "recoverable", "ambiguous": True},
+                    ):
+                        with patch.object(handler, "get_current_item", return_value=(item, True)):
+                            with patch.object(
+                                handler,
+                                "evaluate_item_dependencies",
+                                return_value={
+                                    "declared": True,
+                                    "status": "blocked",
+                                    "diagnostic": "dependency metadata malformed",
+                                },
+                            ):
+                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                    handler.perform_locked_item_recovery(item, [handler.LOCK_LABEL])
+
+            artifact_path = os.path.join(temp_dir, "recovery-diagnostic.json")
+            self.assertTrue(os.path.isfile(artifact_path))
+            with open(artifact_path, "r", encoding="utf-8") as artifact_file:
+                payload = json.load(artifact_file)
+
+        self.assertEqual(payload["recovery_decision"], "blocked_unsafe")
+        self.assertEqual(payload["dependency_resolution"]["status"], "blocked")
+        self.assertTrue(payload["comment_posted"])
+        self.assertEqual(item["recovery_diagnostic_artifact_path"], handler.normalize_path_for_display(artifact_path))
+        mock_add_comment.assert_called_once_with(item)
+
     def test_process_one_item_releases_lock_when_launch_brief_generation_fails(self):
         item = {
             "type": "issue",
