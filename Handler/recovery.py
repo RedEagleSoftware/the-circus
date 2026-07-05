@@ -60,7 +60,7 @@ def classify_locked_item_recovery(*, workspace_lifecycle, dependency_resolution)
             "non_destructive": True,
         }
 
-    if lifecycle_state in {"ready", "planned", "recoverable", "cleanup-eligible", "stale-clean"}:
+    if lifecycle_state in {"ready", "planned"}:
         return {
             "decision": "safe_resume",
             "recommended_action": "Safe resume candidate identified. Human operator may restore an appropriate dispatchable state and rerun Handler.",

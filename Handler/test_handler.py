@@ -274,14 +274,11 @@ class HandlerObservabilityTests(unittest.TestCase):
             }
         ]
 
-        with patch("builtins.print") as mock_print:
+        with patch.object(handler, "perform_locked_item_recovery") as mock_locked_recovery:
             dispatched = handler.process_one_item(items)
 
         self.assertEqual(dispatched, "no-dispatch")
-        printed_lines = [call.args[0] for call in mock_print.call_args_list]
-        self.assertTrue(
-            any("[Poll] Skipping issue #10" in line and "lock label" in line for line in printed_lines)
-        )
+        mock_locked_recovery.assert_called_once_with(items[0], [handler.LOCK_LABEL])
 
     def test_perform_locked_item_recovery_is_non_destructive_for_safe_resume(self):
         item = {
@@ -294,7 +291,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         with patch.object(
             handler,
             "collect_workspace_lifecycle_for_item",
-            return_value={"lifecycle_classification": "recoverable", "ambiguous": False},
+            return_value={"lifecycle_classification": "ready", "ambiguous": False},
         ):
             with patch.object(handler, "get_current_item", return_value=(item, True)):
                 with patch.object(
@@ -302,11 +299,13 @@ class HandlerObservabilityTests(unittest.TestCase):
                     "evaluate_item_dependencies",
                     return_value={"declared": False, "status": "not-declared", "diagnostic": "no dependencies declared"},
                 ):
-                    with patch.object(handler, "update_run_status") as mock_update_run_status:
-                        with patch.object(handler, "unlock_item") as mock_unlock:
-                            with patch.object(handler, "apply_dependency_block_transition") as mock_transition:
-                                with patch.object(handler, "add_comment") as mock_add_comment:
-                                    handler.perform_locked_item_recovery(item, [handler.LOCK_LABEL])
+                    with patch.object(handler, "_ensure_locked_recovery_run_artifacts"):
+                        with patch.object(handler, "write_run_result"):
+                            with patch.object(handler, "update_run_status") as mock_update_run_status:
+                                with patch.object(handler, "unlock_item") as mock_unlock:
+                                    with patch.object(handler, "apply_dependency_block_transition") as mock_transition:
+                                        with patch.object(handler, "add_comment") as mock_add_comment:
+                                            handler.perform_locked_item_recovery(item, [handler.LOCK_LABEL])
 
         mock_unlock.assert_not_called()
         mock_transition.assert_not_called()
@@ -393,7 +392,29 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(payload["dependency_resolution"]["status"], "blocked")
         self.assertTrue(payload["comment_posted"])
         self.assertEqual(item["recovery_diagnostic_artifact_path"], handler.normalize_path_for_display(artifact_path))
+        run_state = handler.get_run_state(item)
+        self.assertIsNotNone(run_state)
+        self.assertIn("status_path", run_state)
+        self.assertIn("result_path", run_state)
         mock_add_comment.assert_called_once_with(item)
+
+    def test_process_one_item_evaluates_locked_dependency_blocked_item_recovery(self):
+        items = [
+            {
+                "type": "issue",
+                "number": 14,
+                "title": "Dependency blocked and locked",
+                "labels": [{"name": "state:dependency-blocked"}, {"name": handler.LOCK_LABEL}],
+            }
+        ]
+
+        with patch.object(handler, "perform_locked_item_recovery") as mock_locked_recovery:
+            dispatched = handler.process_one_item(items)
+
+        self.assertEqual(dispatched, "no-dispatch")
+        mock_locked_recovery.assert_called_once_with(
+            items[0], ["state:dependency-blocked", handler.LOCK_LABEL]
+        )
 
     def test_process_one_item_releases_lock_when_launch_brief_generation_fails(self):
         item = {

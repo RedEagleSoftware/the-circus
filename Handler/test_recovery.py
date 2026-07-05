@@ -26,12 +26,21 @@ class RecoveryClassificationTests(unittest.TestCase):
 
     def test_classify_locked_item_recovery_safe_resume(self):
         resolution = recovery.classify_locked_item_recovery(
-            workspace_lifecycle={"lifecycle_classification": "recoverable", "ambiguous": False},
+            workspace_lifecycle={"lifecycle_classification": "ready", "ambiguous": False},
             dependency_resolution={"declared": True, "status": "resolved"},
         )
 
         self.assertEqual(resolution["decision"], "safe_resume")
         self.assertEqual(resolution["blockers"], [])
+
+    def test_classify_locked_item_recovery_recoverable_requires_human(self):
+        resolution = recovery.classify_locked_item_recovery(
+            workspace_lifecycle={"lifecycle_classification": "recoverable", "ambiguous": False},
+            dependency_resolution={"declared": False, "status": "not-declared"},
+        )
+
+        self.assertEqual(resolution["decision"], "blocked_unsafe")
+        self.assertTrue(resolution["non_destructive"])
 
     def test_classify_locked_item_recovery_inconclusive_with_resolved_dependencies_needs_human(self):
         resolution = recovery.classify_locked_item_recovery(
