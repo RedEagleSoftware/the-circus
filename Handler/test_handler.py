@@ -407,6 +407,56 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("result_path", run_state)
         mock_add_comment.assert_called_once_with(item)
 
+    def test_perform_locked_item_recovery_suppresses_duplicate_comment_across_fresh_poll_cycles(self):
+        first_item = {
+            "type": "issue",
+            "number": 10,
+            "title": "Locked candidate",
+            "labels": [{"name": handler.LOCK_LABEL}, {"name": "state:ready-for-dev"}],
+        }
+        second_item = {
+            "type": "issue",
+            "number": 10,
+            "title": "Locked candidate",
+            "labels": [{"name": handler.LOCK_LABEL}, {"name": "state:ready-for-dev"}],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(handler, "get_item_run_root", return_value=temp_dir):
+                with patch.object(handler, "ensure_shared_artifacts", return_value={}):
+                    with patch.object(handler, "get_run_state", return_value=None):
+                        with patch.object(handler, "_ensure_locked_recovery_run_artifacts"):
+                            with patch.object(
+                                handler,
+                                "collect_workspace_lifecycle_for_item",
+                                return_value={"lifecycle_classification": "recoverable", "ambiguous": True},
+                            ):
+                                with patch.object(
+                                    handler,
+                                    "evaluate_item_dependencies",
+                                    return_value={
+                                        "declared": True,
+                                        "status": "resolved",
+                                        "diagnostic": "all dependencies are resolved",
+                                    },
+                                ):
+                                    with patch.object(
+                                        handler,
+                                        "get_current_item",
+                                        side_effect=[(first_item, True), (second_item, True)],
+                                    ):
+                                        with patch.object(handler, "add_comment") as mock_add_comment:
+                                            handler.perform_locked_item_recovery(
+                                                first_item,
+                                                [handler.LOCK_LABEL, "state:ready-for-dev"],
+                                            )
+                                            handler.perform_locked_item_recovery(
+                                                second_item,
+                                                [handler.LOCK_LABEL, "state:ready-for-dev"],
+                                            )
+
+        self.assertEqual(mock_add_comment.call_count, 1)
+
     def test_process_one_item_evaluates_locked_dependency_blocked_item_recovery(self):
         items = [
             {
@@ -424,6 +474,46 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_locked_recovery.assert_called_once_with(
             items[0], ["state:dependency-blocked", handler.LOCK_LABEL]
         )
+
+    def test_process_one_item_writes_diagnostic_run_artifacts_when_prelaunch_dependencies_are_blocked(self):
+        items = [
+            {
+                "type": "issue",
+                "number": 21,
+                "title": "Blocked dependencies",
+                "url": "https://github.com/owner/repo/issues/21",
+                "labels": [{"name": "state:ready-for-dev"}],
+            }
+        ]
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        with patch.object(handler, "resolve_dispatch_config", return_value=("state:ready-for-dev", config)):
+            with patch.object(handler, "lock_item", return_value=True):
+                with patch.object(handler, "revalidate_candidate_after_lock", return_value=(items[0], None)):
+                    with patch.object(
+                        handler,
+                        "evaluate_item_dependencies",
+                        return_value={
+                            "declared": True,
+                            "status": "blocked",
+                            "diagnostic": "dependency #4 is not completed",
+                        },
+                    ):
+                        with patch.object(handler, "update_run_status"):
+                            with patch.object(handler, "apply_dependency_block_transition") as mock_transition:
+                                with patch.object(handler, "initialize_run_status") as mock_initialize_run_status:
+                                    with patch.object(handler, "write_run_result") as mock_write_run_result:
+                                        dispatched = handler.process_one_item(items)
+
+        self.assertEqual(dispatched, "dependency-blocked")
+        mock_transition.assert_called_once()
+        mock_initialize_run_status.assert_called_once()
+        mock_write_run_result.assert_called_once_with(items[0])
 
     def test_process_one_item_releases_lock_when_launch_brief_generation_fails(self):
         item = {
