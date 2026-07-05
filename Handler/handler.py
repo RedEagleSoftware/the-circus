@@ -54,6 +54,7 @@ REVIEW_OUTCOME_MARKERS = workflow.REVIEW_OUTCOME_MARKERS
 IMPLEMENTATION_PLAN_OUTCOMES = {"READY", "BLOCKED", "ESCALATION_REQUIRED"}
 PLANNER_RESULT_V1_JSON_BLOCK_PATTERN = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 PLANNER_RESULT_V1_FENCED_BLOCK_PATTERN = re.compile(r"```(?:yaml|yml|json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+STATE_LABEL_PATTERN = re.compile(r"\b(state:[A-Za-z0-9][A-Za-z0-9-]*)\b")
 
 AGENT_EXECUTABLE_ENV_OVERRIDES = {
     "junie": "CIRCUS_JUNIE_EXECUTABLE",
@@ -872,6 +873,89 @@ def parse_planner_result_v1(body):
     return None
 
 
+def parse_planner_result_from_markdown_sections(body):
+    if not isinstance(body, str) or not body:
+        return None
+
+    outcome = None
+    outcome_lines = watchtower._extract_markdown_section_lines(body, "outcome")
+    for outcome_line in outcome_lines:
+        normalized_outcome = outcome_line.strip().upper()
+        if normalized_outcome in IMPLEMENTATION_PLAN_OUTCOMES:
+            outcome = normalized_outcome
+            break
+
+    source_lines = watchtower._extract_markdown_section_lines(body, "source")
+    source_fields = watchtower._extract_source_traceability_fields(source_lines)
+    recommendation_comment_id = source_fields.get("source_recommendation_comment_id")
+    roadmap_pr = watchtower._extract_pull_request_number_from_url(source_fields.get("roadmap_reference"))
+
+    parent_issue = None
+    for source_line in source_lines:
+        normalized_source_line = source_line.strip()
+        if not normalized_source_line:
+            continue
+
+        issue_url_match = watchtower.ISSUE_URL_PATTERN.search(normalized_source_line)
+        if issue_url_match:
+            parent_issue = int(issue_url_match.group(1))
+            break
+
+        issue_reference_match = watchtower.ISSUE_REFERENCE_PATTERN.search(normalized_source_line)
+        if issue_reference_match:
+            parent_issue = int(issue_reference_match.group(1))
+            break
+
+    generated_issue_lines = watchtower._extract_markdown_section_lines(body, "generated issues")
+    generated_issue_blocks = watchtower._parse_generated_issue_blocks(generated_issue_lines)
+
+    normalized_generated_issues = []
+    for generated_issue_block in generated_issue_blocks:
+        issue_number = generated_issue_block.get("number")
+        if not isinstance(issue_number, int) or issue_number <= 0:
+            continue
+
+        next_state_after_approval = None
+        for generated_issue_line in generated_issue_block.get("lines", []):
+            next_state_match = STATE_LABEL_PATTERN.search(generated_issue_line)
+            if not next_state_match:
+                continue
+
+            candidate_next_state_after_approval = next_state_match.group(1).lower()
+            if candidate_next_state_after_approval not in LABEL_MAP:
+                continue
+
+            next_state_after_approval = candidate_next_state_after_approval
+            break
+
+        if not isinstance(next_state_after_approval, str):
+            continue
+
+        normalized_generated_issues.append(
+            {
+                "issue_number": issue_number,
+                "next_state_after_approval": next_state_after_approval,
+            }
+        )
+
+    if (
+        outcome is None
+        and parent_issue is None
+        and recommendation_comment_id is None
+        and roadmap_pr is None
+        and not normalized_generated_issues
+    ):
+        return None
+
+    return {
+        "outcome": outcome,
+        "parent_issue": parent_issue,
+        "recommendation_comment_id": recommendation_comment_id,
+        "roadmap_pr": roadmap_pr,
+        "generated_issues": normalized_generated_issues,
+    }
+
+
 def _parse_yaml_scalar_value(raw_value):
     if raw_value is None:
         return None
@@ -1045,6 +1129,36 @@ def _extract_comment_id(comment):
     return None
 
 
+def extract_latest_planner_result_v1_metadata(comments):
+    if not isinstance(comments, list):
+        return None
+
+    candidate_results = []
+    for comment in comments:
+        if not isinstance(comment, dict):
+            continue
+
+        comment_body = comment.get("body")
+        planner_result = parse_planner_result_v1(comment_body)
+        if planner_result is None:
+            planner_result = parse_planner_result_from_markdown_sections(comment_body)
+        if planner_result is None:
+            continue
+
+        candidate_results.append(
+            {
+                "planner_result": planner_result,
+                "planner_result_comment_id": _extract_comment_id(comment),
+                "planner_result_comment_url": comment.get("url") if isinstance(comment.get("url"), str) else None,
+            }
+        )
+
+    if not candidate_results:
+        return None
+
+    return candidate_results[-1]
+
+
 def _label_names(item):
     return [label.get("name") for label in item.get("labels", []) if isinstance(label, dict)]
 
@@ -1166,23 +1280,25 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
         comment_body = comment.get("body")
         planner_result = parse_planner_result_v1(comment_body)
         if planner_result is None:
+            planner_result = parse_planner_result_from_markdown_sections(comment_body)
+        if planner_result is None:
             continue
 
         candidate_results.append((comment_identifier, planner_result))
 
     if not candidate_results:
         if plan_comment_id is None:
-            print(f"[Approval] Issue #{source_issue_number} is missing a valid planner_result_v1 payload.")
+            print(f"[Approval] Issue #{source_issue_number} is missing valid planner metadata.")
         else:
             print(
-                f"[Approval] Issue #{source_issue_number} is missing a valid planner_result_v1 payload in "
+                f"[Approval] Issue #{source_issue_number} is missing valid planner metadata in "
                 f"comment id {plan_comment_id}."
             )
         return False
 
     if plan_comment_id is None and len(candidate_results) > 1:
         print(
-            f"[Approval] Issue #{source_issue_number} has multiple planner_result_v1 payload candidates; "
+            f"[Approval] Issue #{source_issue_number} has multiple planner metadata candidates; "
             "specify --approve-implementation-plan-comment-id explicitly."
         )
         return False
@@ -1247,8 +1363,13 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
             _report_approval_failure(source_issue_number, reason, transitioned_issue_numbers)
         return False
 
+    planner_generated_issues = planner_result.get("generated_issues")
+    if not isinstance(planner_generated_issues, list) or not planner_generated_issues:
+        print("[Approval] planner_result_v1 generated_issues must contain at least one issue for READY approval.")
+        return False
+
     generated_issues = []
-    for generated_issue in planner_result["generated_issues"]:
+    for generated_issue in planner_generated_issues:
         generated_issue_number = generated_issue["issue_number"]
         initial_state = generated_issue.get("initial_state")
         target_state = generated_issue["next_state_after_approval"]
@@ -2307,6 +2428,74 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
             elif mode == "implementation-planner" and state_label in implementation_planner_state_labels:
                 implementation_plan_path = build_implementation_plan_path(launch_brief_path)
                 workflow_classification_snapshot = validate_workflow_classification_from_markdown(implementation_plan_path)
+                planner_comments = item.get("comments") if isinstance(item.get("comments"), list) else None
+                try:
+                    current_issue, current_issue_ok = get_current_item(item, fields="number,comments")
+                except Exception as refresh_error:
+                    current_issue = None
+                    current_issue_ok = False
+                    print(
+                        "[Dispatch] Warning: unable to refresh implementation planner comments for "
+                        f"{item['type']} #{number}: {refresh_error}"
+                    )
+
+                if current_issue_ok and isinstance(current_issue, dict):
+                    current_issue_comments = current_issue.get("comments")
+                    if isinstance(current_issue_comments, list):
+                        planner_comments = current_issue_comments
+                        item["comments"] = current_issue_comments
+
+                planner_result_metadata = extract_latest_planner_result_v1_metadata(planner_comments)
+                planner_result = (
+                    planner_result_metadata.get("planner_result")
+                    if isinstance(planner_result_metadata, dict)
+                    else None
+                )
+                planner_result_generated_issues = (
+                    planner_result.get("generated_issues")
+                    if isinstance(planner_result, dict) and isinstance(planner_result.get("generated_issues"), list)
+                    else None
+                )
+                planner_result_parent_issue = (
+                    planner_result.get("parent_issue")
+                    if isinstance(planner_result, dict) and isinstance(planner_result.get("parent_issue"), int)
+                    else None
+                )
+                planner_result_recommendation_comment_id = (
+                    planner_result.get("recommendation_comment_id")
+                    if isinstance(planner_result, dict)
+                    and isinstance(planner_result.get("recommendation_comment_id"), int)
+                    else None
+                )
+                planner_result_roadmap_pr = (
+                    planner_result.get("roadmap_pr")
+                    if isinstance(planner_result, dict) and isinstance(planner_result.get("roadmap_pr"), int)
+                    else None
+                )
+                planner_result_comment_id = (
+                    planner_result_metadata.get("planner_result_comment_id")
+                    if isinstance(planner_result_metadata, dict)
+                    and isinstance(planner_result_metadata.get("planner_result_comment_id"), int)
+                    else None
+                )
+                planner_result_comment_url = (
+                    planner_result_metadata.get("planner_result_comment_url")
+                    if isinstance(planner_result_metadata, dict)
+                    and isinstance(planner_result_metadata.get("planner_result_comment_url"), str)
+                    else None
+                )
+                roadmap_reference_merged = None
+                if isinstance(planner_result_roadmap_pr, int) and planner_result_roadmap_pr > 0:
+                    roadmap_item, roadmap_ok = github_client.get_item(
+                        "pr",
+                        planner_result_roadmap_pr,
+                        repo=REPO,
+                        run_command_fn=run_command,
+                        fields="number,mergedAt",
+                    )
+                    if roadmap_ok and isinstance(roadmap_item, dict):
+                        roadmap_reference_merged = bool(roadmap_item.get("mergedAt"))
+
                 if not os.path.isfile(implementation_plan_path):
                     normalized_implementation_plan_path = normalize_path_for_display(implementation_plan_path)
                     print(
@@ -2328,6 +2517,13 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         diagnostic=(
                             f"missing implementation plan artifact at {normalized_implementation_plan_path}"
                         ),
+                        planner_result_comment_id=planner_result_comment_id,
+                        planner_result_comment_url=planner_result_comment_url,
+                        parent_issue=planner_result_parent_issue,
+                        recommendation_comment_id=planner_result_recommendation_comment_id,
+                        roadmap_pr_number=planner_result_roadmap_pr,
+                        roadmap_reference_merged=roadmap_reference_merged,
+                        generated_issues=planner_result_generated_issues,
                     )
                     update_run_status(
                         item,
@@ -2449,6 +2645,13 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         outcome_valid=implementation_plan_outcome is not None,
                         diagnostic=implementation_planner_diagnostic,
                         recommended_route=recommended_route,
+                        planner_result_comment_id=planner_result_comment_id,
+                        planner_result_comment_url=planner_result_comment_url,
+                        parent_issue=planner_result_parent_issue,
+                        recommendation_comment_id=planner_result_recommendation_comment_id,
+                        roadmap_pr_number=planner_result_roadmap_pr,
+                        roadmap_reference_merged=roadmap_reference_merged,
+                        generated_issues=planner_result_generated_issues,
                     )
                     update_run_status(
                         item,
@@ -2483,6 +2686,13 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     normalized_implementation_plan_path,
                     outcome=implementation_plan_outcome,
                     outcome_valid=True,
+                    planner_result_comment_id=planner_result_comment_id,
+                    planner_result_comment_url=planner_result_comment_url,
+                    parent_issue=planner_result_parent_issue,
+                    recommendation_comment_id=planner_result_recommendation_comment_id,
+                    roadmap_pr_number=planner_result_roadmap_pr,
+                    roadmap_reference_merged=roadmap_reference_merged,
+                    generated_issues=planner_result_generated_issues,
                 )
                 if not ready_snapshot.get("generated_issues"):
                     ready_snapshot["diagnostic"] = (

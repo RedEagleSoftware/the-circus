@@ -821,8 +821,8 @@ class HandlerObservabilityTests(unittest.TestCase):
                             )
 
         self.assertTrue(launched)
-        mock_subprocess_run.assert_called_once()
-        command = mock_subprocess_run.call_args.args[0]
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
+        command = mock_subprocess_run.call_args_list[0].args[0]
         self.assertEqual(command[0], "junie")
         self.assertEqual(command[1:3], ["--project", "C:/target/repo"])
         self.assertEqual(command[3:5], ["--model", "gpt-5.3-codex"])
@@ -1636,8 +1636,8 @@ class HandlerObservabilityTests(unittest.TestCase):
                                 )
 
         self.assertTrue(launched)
-        mock_subprocess_run.assert_called_once()
-        command = mock_subprocess_run.call_args.args[0]
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
+        command = mock_subprocess_run.call_args_list[0].args[0]
         self.assertEqual(command[0], "codex")
         self.assertEqual(command[1], "exec")
         self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
@@ -1781,8 +1781,8 @@ class HandlerObservabilityTests(unittest.TestCase):
                                 )
 
         self.assertTrue(launched)
-        mock_subprocess_run.assert_called_once()
-        command = mock_subprocess_run.call_args.args[0]
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
+        command = mock_subprocess_run.call_args_list[0].args[0]
         self.assertEqual(command[0], "codex")
         self.assertEqual(command[1], "exec")
         self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
@@ -1833,8 +1833,8 @@ class HandlerObservabilityTests(unittest.TestCase):
                                 )
 
         self.assertTrue(launched)
-        mock_subprocess_run.assert_called_once()
-        command = mock_subprocess_run.call_args.args[0]
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
+        command = mock_subprocess_run.call_args_list[0].args[0]
         self.assertEqual(command[0], "codex")
         self.assertEqual(command[1], "exec")
         self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
@@ -1886,8 +1886,8 @@ class HandlerObservabilityTests(unittest.TestCase):
                             )
 
         self.assertTrue(launched)
-        mock_subprocess_run.assert_called_once()
-        command = mock_subprocess_run.call_args.args[0]
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
+        command = mock_subprocess_run.call_args_list[0].args[0]
         self.assertEqual(command[0], "codex")
         self.assertEqual(command[1], "exec")
         self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
@@ -1945,8 +1945,8 @@ class HandlerObservabilityTests(unittest.TestCase):
                                     )
 
         self.assertTrue(launched)
-        mock_subprocess_run.assert_called_once()
-        command = mock_subprocess_run.call_args.args[0]
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
+        command = mock_subprocess_run.call_args_list[0].args[0]
         self.assertEqual(command[0], "codex")
         self.assertEqual(command[1], "exec")
         self.assertEqual(command[2:4], ["--model", "gpt-5.3-codex"])
@@ -2021,6 +2021,113 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_add_comment.assert_called_once_with(item)
         self.assertIn("workflow_classification", item["comment"])
         self.assertEqual(mock_update_run_status.call_args.kwargs["workflow_classification"], malformed_snapshot)
+
+    def test_launch_agent_codex_implementation_planner_ready_refreshes_comments_and_propagates_planner_metadata(self):
+        item = {
+            "type": "issue",
+            "number": 55,
+            "title": "Implementation planner metadata propagation",
+            "url": "https://github.com/owner/repo/issues/55",
+            "comments": [],
+        }
+        config = {
+            "agent": "codex",
+            "mode": "implementation-planner",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+        launch_brief_path = "Watchtower/runs/issue-55/run-001-implementation-planner/launch-brief.md"
+        implementation_plan_path = "C:/abs/Watchtower/runs/issue-55/run-001-implementation-planner/implementation-plan.md"
+        planner_result_comment_id = 9001
+        recommendation_comment_id = 4001
+        roadmap_pr_number = 88
+        planner_result_comment_url = "https://github.com/owner/repo/issues/55#issuecomment-9001"
+        planner_result_body = (
+            "```yaml\n"
+            "planner_result_v1:\n"
+            "  outcome: READY\n"
+            "  parent_issue: 55\n"
+            "  recommendation_comment_id: 4001\n"
+            "  roadmap_pr: 88\n"
+            "  generated_issues:\n"
+            "    - number: 201\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-dev\n"
+            "```"
+        )
+        current_issue_item = {
+            "number": 55,
+            "comments": [
+                {
+                    "id": planner_result_comment_id,
+                    "url": planner_result_comment_url,
+                    "body": planner_result_body,
+                }
+            ],
+        }
+        roadmap_pr_item = {
+            "number": roadmap_pr_number,
+            "mergedAt": "2026-06-23T10:11:12Z",
+        }
+
+        with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+            with patch.object(handler.os.path, "abspath", return_value="C:/abs/launch-brief.md"):
+                with patch.object(handler.subprocess, "run", return_value=Mock(returncode=0)):
+                    with patch.object(handler, "build_implementation_plan_path", return_value=implementation_plan_path):
+                        with patch.object(handler.os.path, "isfile", return_value=True):
+                            with patch.object(handler, "parse_implementation_plan_outcome", return_value="READY"):
+                                with patch.object(
+                                    handler,
+                                    "validate_workflow_classification_from_markdown",
+                                    return_value={"status": "not_present"},
+                                ):
+                                    with patch.object(
+                                        handler,
+                                        "advance_implementation_planning_workflow_on_success",
+                                        return_value=True,
+                                    ):
+                                        with patch.object(handler, "get_current_item", return_value=(current_issue_item, True)):
+                                            with patch.object(handler.github_client, "get_item", return_value=(roadmap_pr_item, True)):
+                                                with patch.object(
+                                                    handler.watchtower,
+                                                    "build_implementation_planner_snapshot",
+                                                    return_value={
+                                                        "outcome": "READY",
+                                                        "outcome_valid": True,
+                                                        "generated_issues": [],
+                                                        "recommendation_traceability": {"available": True},
+                                                    },
+                                                ) as mock_build_snapshot:
+                                                    launched = handler.launch_agent(
+                                                        item,
+                                                        "state:ready-for-implementation-planning",
+                                                        config,
+                                                        os.path.normpath(
+                                                            os.path.join("TheFarm", "roles", "implementation-planner.md")
+                                                        ),
+                                                        launch_brief_path,
+                                                    )
+
+        self.assertTrue(launched)
+        self.assertEqual(item["comments"], current_issue_item["comments"])
+        mock_build_snapshot.assert_called_once()
+        snapshot_kwargs = mock_build_snapshot.call_args.kwargs
+        self.assertEqual(snapshot_kwargs["planner_result_comment_id"], planner_result_comment_id)
+        self.assertEqual(snapshot_kwargs["planner_result_comment_url"], planner_result_comment_url)
+        self.assertEqual(snapshot_kwargs["parent_issue"], 55)
+        self.assertEqual(snapshot_kwargs["recommendation_comment_id"], recommendation_comment_id)
+        self.assertEqual(snapshot_kwargs["roadmap_pr_number"], roadmap_pr_number)
+        self.assertTrue(snapshot_kwargs["roadmap_reference_merged"])
+        self.assertEqual(
+            snapshot_kwargs["generated_issues"],
+            [
+                {
+                    "issue_number": 201,
+                    "initial_state": "state:planned",
+                    "next_state_after_approval": "state:ready-for-dev",
+                }
+            ],
+        )
 
     def test_launch_agent_codex_implementation_planner_blocked_outcome_preserves_malformed_classification_diagnostic(self):
         item = {
@@ -2120,7 +2227,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                                         )
 
         self.assertFalse(launched)
-        mock_subprocess_run.assert_called_once()
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
         mock_advance_transition.assert_not_called()
         mock_add_comment.assert_called_once_with(item)
         self.assertTrue(item.get("missing_implementation_plan_artifact"))
@@ -2180,7 +2287,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                                                 )
 
         self.assertFalse(launched)
-        mock_subprocess_run.assert_called_once()
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
         mock_advance_transition.assert_not_called()
         mock_add_comment.assert_called_once_with(item)
         self.assertIn("blocked outcome", item["comment"])
@@ -2246,7 +2353,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                                                     )
 
         self.assertFalse(launched)
-        mock_subprocess_run.assert_called_once()
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
         mock_advance_transition.assert_not_called()
         mock_add_comment.assert_called_once_with(item)
         self.assertIn("`ESCALATION_REQUIRED`", item["comment"])
@@ -2312,7 +2419,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                                                 )
 
         self.assertFalse(launched)
-        mock_subprocess_run.assert_called_once()
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 1)
         mock_advance_transition.assert_not_called()
         mock_add_comment.assert_called_once_with(item)
         self.assertTrue(item.get("invalid_implementation_plan_outcome"))
@@ -3165,6 +3272,84 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         self.assertIsNone(planner_result)
 
+    def test_parse_planner_result_from_markdown_sections_extracts_ready_metadata(self):
+        body = (
+            "### Outcome\n"
+            "READY\n\n"
+            "### Source\n"
+            "Parent issue: https://github.com/RedEagleSoftware/the-circus/issues/143\n"
+            "Recommendation comment: https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-4001\n"
+            "Roadmap reference: https://github.com/RedEagleSoftware/the-circus/pull/88\n\n"
+            "### Generated Issues\n"
+            "- #201 — state:ready-for-dev\n"
+            "- #202 — state:ready-for-architecture\n"
+        )
+
+        planner_result = handler.parse_planner_result_from_markdown_sections(body)
+
+        self.assertEqual(
+            planner_result,
+            {
+                "outcome": "READY",
+                "parent_issue": 143,
+                "recommendation_comment_id": 4001,
+                "roadmap_pr": 88,
+                "generated_issues": [
+                    {
+                        "issue_number": 201,
+                        "next_state_after_approval": "state:ready-for-dev",
+                    },
+                    {
+                        "issue_number": 202,
+                        "next_state_after_approval": "state:ready-for-architecture",
+                    },
+                ],
+            },
+        )
+
+    def test_parse_planner_result_from_markdown_sections_extracts_grouped_generated_issue_blocks(self):
+        body = (
+            "### Outcome\n"
+            "READY\n\n"
+            "### Source\n"
+            "Parent issue: https://github.com/RedEagleSoftware/the-circus/issues/84\n"
+            "Recommendation comment: https://github.com/RedEagleSoftware/the-circus/issues/84#issuecomment-4817675158\n"
+            "Roadmap reference: https://github.com/RedEagleSoftware/the-circus/pull/85\n\n"
+            "### Generated Issues\n"
+            "- **Issue A**: https://github.com/RedEagleSoftware/the-circus/issues/89\n"
+            "  - Initial workflow state: state:planned\n"
+            "  - Suggested next workflow state after human approval: state:ready-for-architecture\n"
+            "  - Parent planning issue traceability: #84\n"
+            "  - Roadmap reference: https://github.com/RedEagleSoftware/the-circus/pull/85\n"
+            "- **Issue B**: https://github.com/RedEagleSoftware/the-circus/issues/90\n"
+            "  - Initial workflow state: state:planned\n"
+            "  - Suggested next workflow state after human approval: state:ready-for-dev\n"
+            "  - Parent planning issue traceability: #84\n"
+            "  - Roadmap reference: https://github.com/RedEagleSoftware/the-circus/pull/85\n"
+        )
+
+        planner_result = handler.parse_planner_result_from_markdown_sections(body)
+
+        self.assertEqual(
+            planner_result,
+            {
+                "outcome": "READY",
+                "parent_issue": 84,
+                "recommendation_comment_id": 4817675158,
+                "roadmap_pr": 85,
+                "generated_issues": [
+                    {
+                        "issue_number": 89,
+                        "next_state_after_approval": "state:ready-for-architecture",
+                    },
+                    {
+                        "issue_number": 90,
+                        "next_state_after_approval": "state:ready-for-dev",
+                    },
+                ],
+            },
+        )
+
     def test_extract_comment_id_accepts_issuecomment_url_fragment(self):
         comment = {
             "id": "IC_kwDOExampleNodeId",
@@ -3431,6 +3616,140 @@ class HandlerObservabilityTests(unittest.TestCase):
             ]
         )
         mock_add_comment.assert_called_once()
+
+    def test_approve_implementation_plan_review_transitions_using_markdown_sections_without_planner_result_v1(self):
+        source_issue_number = 143
+        planner_comment_id = 9001
+        recommendation_comment_id = 4001
+        roadmap_pr_number = 88
+        plan_body = (
+            "### Outcome\n"
+            "READY\n\n"
+            "### Source\n"
+            "Parent issue: https://github.com/RedEagleSoftware/the-circus/issues/143\n"
+            "Recommendation comment: https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-4001\n"
+            "Roadmap reference: https://github.com/RedEagleSoftware/the-circus/pull/88\n\n"
+            "### Generated Issues\n"
+            "- #201 — state:ready-for-dev\n"
+            "- #202 — state:ready-for-architecture\n"
+        )
+        source_item = {
+            "type": "issue",
+            "number": source_issue_number,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [
+                {"name": "state:ready-for-implementation-plan-review"},
+                {"name": "status:triage"},
+            ],
+            "comments": [
+                {"id": recommendation_comment_id, "body": "Recommendation details"},
+                {
+                    "id": planner_comment_id,
+                    "body": plan_body,
+                },
+            ],
+        }
+        roadmap_pr_item = {
+            "number": roadmap_pr_number,
+            "state": "MERGED",
+            "mergedAt": "2026-06-23T10:11:12Z",
+            "title": "Roadmap update",
+            "url": "https://github.com/owner/repo/pull/88",
+        }
+        generated_issue_201 = {
+            "type": "issue",
+            "number": 201,
+            "title": "Generated issue A",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:planned"}],
+            "body": "Parent #143\nRecommendation 4001\nRoadmap #88\nNext state: state:ready-for-dev",
+        }
+        generated_issue_202 = {
+            "type": "issue",
+            "number": 202,
+            "title": "Generated issue B",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:planned"}],
+            "body": "Parent #143\nRecommendation 4001\nRoadmap #88\nNext state: state:ready-for-architecture",
+        }
+        generated_issue_201_after = {
+            "type": "issue",
+            "number": 201,
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-dev"}],
+        }
+        generated_issue_202_after = {
+            "type": "issue",
+            "number": 202,
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-architecture"}],
+        }
+        source_item_after = {
+            "type": "issue",
+            "number": source_issue_number,
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-human-review"}],
+        }
+
+        with patch.object(handler.github_client, "get_item") as mock_get_item:
+            mock_get_item.side_effect = [
+                (source_item, True),
+                (roadmap_pr_item, True),
+                (generated_issue_201, True),
+                (generated_issue_202, True),
+                (generated_issue_201_after, True),
+                (generated_issue_202_after, True),
+                (source_item_after, True),
+            ]
+
+            with patch.object(handler.github_client, "replace_label", return_value=True) as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(
+                        source_issue_number,
+                        plan_comment_id=planner_comment_id,
+                    )
+
+        self.assertTrue(approved)
+        self.assertEqual(mock_get_item.call_count, 7)
+        mock_replace_label.assert_has_calls(
+            [
+                unittest.mock.call(
+                    generated_issue_201,
+                    remove_label_value="state:planned",
+                    add_label_value="state:ready-for-dev",
+                    repo=unittest.mock.ANY,
+                    run_command_fn=unittest.mock.ANY,
+                ),
+                unittest.mock.call(
+                    generated_issue_202,
+                    remove_label_value="state:planned",
+                    add_label_value="state:ready-for-architecture",
+                    repo=unittest.mock.ANY,
+                    run_command_fn=unittest.mock.ANY,
+                ),
+                unittest.mock.call(
+                    source_item,
+                    remove_label_value="state:ready-for-implementation-plan-review",
+                    add_label_value="state:ready-for-human-review",
+                    repo=unittest.mock.ANY,
+                    run_command_fn=unittest.mock.ANY,
+                ),
+            ]
+        )
+        mock_add_comment.assert_called_once()
         for call in mock_get_item.call_args_list:
             self.assertNotIn("locked", call.kwargs.get("fields", ""))
 
@@ -3574,6 +3893,53 @@ class HandlerObservabilityTests(unittest.TestCase):
                     approved = handler.approve_implementation_plan_review(143, plan_comment_id=9001, dry_run=True)
 
         self.assertTrue(approved)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
+
+    def test_approve_implementation_plan_review_rejects_markdown_ready_without_generated_issues(self):
+        source_item = {
+            "type": "issue",
+            "number": 143,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+            "comments": [
+                {"id": 4001, "body": "Recommendation details"},
+                {
+                    "id": 9001,
+                    "body": (
+                        "### Outcome\n"
+                        "READY\n\n"
+                        "### Source\n"
+                        "Parent issue: https://github.com/RedEagleSoftware/the-circus/issues/143\n"
+                        "Recommendation comment: https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-4001\n"
+                        "Roadmap reference: https://github.com/RedEagleSoftware/the-circus/pull/88\n\n"
+                        "### Generated Issues\n"
+                        "None\n"
+                    ),
+                },
+            ],
+        }
+        roadmap_pr_item = {
+            "number": 88,
+            "state": "MERGED",
+            "mergedAt": "2026-06-23T10:11:12Z",
+            "title": "Roadmap update",
+            "url": "https://github.com/owner/repo/pull/88",
+        }
+
+        with patch.object(handler.github_client, "get_item") as mock_get_item:
+            mock_get_item.side_effect = [
+                (source_item, True),
+                (roadmap_pr_item, True),
+            ]
+            with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(143, plan_comment_id=9001, dry_run=True)
+
+        self.assertFalse(approved)
         mock_replace_label.assert_not_called()
         mock_add_comment.assert_not_called()
 
@@ -5171,6 +5537,42 @@ class HandlerObservabilityTests(unittest.TestCase):
                 "diagnostic": "not provided",
             },
         )
+        self.assertEqual(
+            status_payload["accepted_decision_traceability"],
+            {
+                "version": 1,
+                "status": "missing",
+                "source_issue": {
+                    "repo": "owner/repo",
+                    "number": 3,
+                    "url": "https://github.com/owner/repo/issues/3",
+                },
+                "accepted_recommendation": {
+                    "url": None,
+                    "comment_id": None,
+                },
+                "roadmap_reference": {
+                    "url": None,
+                    "pr_number": None,
+                    "merged": None,
+                },
+                "planner": {
+                    "issue_number": 3,
+                    "result_comment_id": None,
+                    "outcome": None,
+                    "artifact": None,
+                },
+                "generated_issues": [],
+                "outcome_state": None,
+                "diagnostics": [
+                    "accepted recommendation missing",
+                    "roadmap reference missing",
+                    "generated issues missing",
+                    "planner outcome missing",
+                    "generated issue next-state references missing",
+                ],
+            },
+        )
         self.assertEqual(status_payload["worktree_root"], "C:/target/repo-worktrees")
         self.assertEqual(status_payload["worktree_root_source"], "derived-default")
         self.assertEqual(status_payload["workspace_name"], "issue-3")
@@ -5212,6 +5614,205 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(
             decision_log_content,
             "# Decision Log\n\nNo decisions have been recorded yet.\n",
+        )
+
+    def test_build_accepted_decision_traceability_snapshot_requires_outcome_state_for_available_status(self):
+        snapshot = handler.watchtower.build_accepted_decision_traceability_snapshot(
+            repository="owner/repo",
+            source_issue=69,
+            recommendation_traceability={
+                "recommendation_url": "https://github.com/owner/repo/issues/69#issuecomment-50001",
+                "recommendation_comment_id": 50001,
+                "roadmap_reference": "https://github.com/owner/repo/pull/90",
+                "diagnostic": None,
+            },
+            implementation_planner={
+                "outcome": "READY",
+                "implementation_plan": "C:/target/repo/Watchtower/runs/issue-69/run-001/implementation-plan.md",
+                "generated_issues": [
+                    {
+                        "number": 70,
+                        "url": "https://github.com/owner/repo/issues/70",
+                        "initial_state": "state:changes-requested",
+                        "next_state_after_approval": None,
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(snapshot["status"], "partial")
+        self.assertIsNone(snapshot["outcome_state"])
+        self.assertIn("generated issue next-state references missing", snapshot["diagnostics"])
+
+    def test_build_accepted_decision_traceability_snapshot_normalizes_planner_and_roadmap_metadata(self):
+        snapshot = handler.watchtower.build_accepted_decision_traceability_snapshot(
+            repository="owner/repo",
+            source_issue=69,
+            recommendation_traceability={
+                "recommendation_url": "https://github.com/owner/repo/issues/69#issuecomment-50001",
+                "source_issue": 84,
+                "roadmap_reference": "https://github.com/owner/repo/pull/90",
+                "diagnostic": None,
+            },
+            implementation_planner={
+                "outcome": "READY",
+                "implementation_plan": "C:/target/repo/Watchtower/runs/issue-69/run-001/implementation-plan.md",
+                "generated_issues": [
+                    {
+                        "number": 70,
+                        "url": "https://github.com/owner/repo/issues/70",
+                        "initial_state": "state:changes-requested",
+                        "next_state_after_approval": "state:ready-for-dev",
+                    }
+                ],
+                "planner_result_comment_url": "https://github.com/owner/repo/issues/69#issuecomment-70002",
+                "parent_issue": 84,
+                "recommendation_comment_id": 50001,
+                "roadmap_pr_number": 90,
+                "roadmap_reference_merged": True,
+            },
+        )
+
+        self.assertEqual(snapshot["status"], "available")
+        self.assertEqual(snapshot["accepted_recommendation"]["comment_id"], 50001)
+        self.assertEqual(snapshot["source_issue"]["number"], 84)
+        self.assertEqual(snapshot["planner"]["result_comment_id"], 70002)
+        self.assertEqual(snapshot["planner"]["issue_number"], 84)
+        self.assertEqual(snapshot["roadmap_reference"]["pr_number"], 90)
+        self.assertTrue(snapshot["roadmap_reference"]["merged"])
+        self.assertEqual(snapshot["outcome_state"], "state:ready-for-dev")
+
+    def test_build_accepted_decision_traceability_snapshot_reports_reference_mismatch_diagnostics(self):
+        snapshot = handler.watchtower.build_accepted_decision_traceability_snapshot(
+            repository="owner/repo",
+            source_issue=89,
+            recommendation_traceability={
+                "recommendation_url": "https://github.com/owner/repo/issues/84#issuecomment-50001",
+                "recommendation_comment_id": 50001,
+                "source_issue": 89,
+                "roadmap_reference": "https://github.com/owner/repo/pull/91",
+                "diagnostic": None,
+            },
+            implementation_planner={
+                "outcome": "READY",
+                "implementation_plan": "C:/target/repo/Watchtower/runs/issue-89/run-001/implementation-plan.md",
+                "parent_issue": 84,
+                "recommendation_comment_id": 50002,
+                "roadmap_pr_number": 90,
+                "roadmap_reference_merged": False,
+                "generated_issues": [
+                    {
+                        "number": 90,
+                        "url": "https://github.com/owner/repo/issues/90",
+                        "initial_state": "state:planned",
+                        "next_state_after_approval": "state:ready-for-dev",
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(snapshot["status"], "reference_mismatch")
+        self.assertEqual(snapshot["source_issue"]["number"], 84)
+        self.assertIn("source issue reference mismatches planner metadata", snapshot["diagnostics"])
+        self.assertIn("accepted recommendation reference mismatches planner metadata", snapshot["diagnostics"])
+        self.assertIn("roadmap reference mismatches planner metadata", snapshot["diagnostics"])
+        self.assertIn("roadmap reference is stale (not merged)", snapshot["diagnostics"])
+
+    def test_build_implementation_planner_snapshot_merges_markdown_links_with_planner_result_metadata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            implementation_plan_path = os.path.join(temp_dir, "implementation-plan.md")
+            with open(implementation_plan_path, "w", encoding="utf-8") as implementation_plan_file:
+                implementation_plan_file.write(
+                    "# Implementation Plan\n\n"
+                    "### Generated Issues\n"
+                    "- https://github.com/owner/repo/issues/201\n"
+                    "- https://github.com/owner/repo/issues/202\n"
+                )
+
+            snapshot = handler.watchtower.build_implementation_planner_snapshot(
+                implementation_plan_path,
+                outcome="READY",
+                outcome_valid=True,
+                generated_issues=[
+                    {
+                        "issue_number": 201,
+                        "initial_state": "state:planned",
+                        "next_state_after_approval": "state:ready-for-dev",
+                    },
+                    {
+                        "issue_number": 203,
+                        "initial_state": "state:planned",
+                        "next_state_after_approval": "state:ready-for-architecture",
+                    },
+                ],
+            )
+
+        self.assertEqual(
+            snapshot["generated_issues"],
+            [
+                {
+                    "number": 201,
+                    "url": "https://github.com/owner/repo/issues/201",
+                    "initial_state": "state:planned",
+                    "next_state_after_approval": "state:ready-for-dev",
+                    "dependencies": None,
+                },
+                {
+                    "number": 202,
+                    "url": "https://github.com/owner/repo/issues/202",
+                    "initial_state": None,
+                    "next_state_after_approval": None,
+                    "dependencies": None,
+                },
+                {
+                    "number": 203,
+                    "url": None,
+                    "initial_state": "state:planned",
+                    "next_state_after_approval": "state:ready-for-architecture",
+                    "dependencies": None,
+                },
+            ],
+        )
+
+    def test_build_implementation_planner_snapshot_ignores_non_generated_references_inside_generated_issue_blocks(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            implementation_plan_path = os.path.join(temp_dir, "implementation-plan.md")
+            with open(implementation_plan_path, "w", encoding="utf-8") as implementation_plan_file:
+                implementation_plan_file.write(
+                    "# Implementation Plan\n\n"
+                    "### Generated Issues\n"
+                    "- https://github.com/owner/repo/issues/201\n"
+                    "  - Parent planning issue traceability: #84\n"
+                    "  - Roadmap reference: https://github.com/owner/repo/pull/90\n"
+                    "- #202\n"
+                    "  - Parent planning issue traceability: #84\n"
+                    "  - Roadmap reference: https://github.com/owner/repo/pull/90\n"
+                )
+
+            snapshot = handler.watchtower.build_implementation_planner_snapshot(
+                implementation_plan_path,
+                outcome="READY",
+                outcome_valid=True,
+            )
+
+        self.assertEqual(
+            snapshot["generated_issues"],
+            [
+                {
+                    "number": 201,
+                    "url": "https://github.com/owner/repo/issues/201",
+                    "initial_state": None,
+                    "next_state_after_approval": None,
+                    "dependencies": None,
+                },
+                {
+                    "number": 202,
+                    "url": None,
+                    "initial_state": None,
+                    "next_state_after_approval": None,
+                    "dependencies": None,
+                },
+            ],
         )
 
     def test_write_run_result_includes_workspace_metadata_fields(self):
@@ -5315,6 +5916,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                                 {
                                     "number": 69,
                                     "url": "https://github.com/owner/repo/issues/69",
+                                    "next_state_after_approval": "state:ready-for-dev",
                                 }
                             ],
                             "source_recommendation_url": None,
@@ -5343,6 +5945,13 @@ class HandlerObservabilityTests(unittest.TestCase):
         traceability_section = result_content.split("## Recommendation Traceability", 1)[1].split("## Implementation Planner", 1)[0]
         self.assertIn("- available: `True`", traceability_section)
         self.assertIn("- recommendation comment ID: `50001`", traceability_section)
+        accepted_traceability_section = result_content.split("## Accepted Decision Traceability", 1)[1].split(
+            "## Implementation Planner", 1
+        )[0]
+        self.assertIn("- version: `1`", accepted_traceability_section)
+        self.assertIn("- status: `available`", accepted_traceability_section)
+        self.assertIn("- recommendation comment ID: `50001`", accepted_traceability_section)
+        self.assertIn("- planner outcome: `READY`", accepted_traceability_section)
 
     def test_write_run_result_includes_workspace_lifecycle_diagnostics(self):
         item = {

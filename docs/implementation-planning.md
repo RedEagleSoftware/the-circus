@@ -205,7 +205,7 @@ The first implementation should build the smallest useful Implementation Planner
 6. For `ESCALATION_REQUIRED`, leave an architecture escalation request and do not create generated issues.
 7. For `READY`, include acceptance criteria and suggested next workflow state in generated issues.
 8. For `READY`, include `## Circus Dependencies` metadata when generated issue ordering matters.
-9. Record generated issue numbers, outcome, and planning artifacts in Watchtower run history only.
+9. Record generated issue numbers, outcome, planning artifacts, and accepted-decision traceability references (recommendation comment linkage, roadmap reference metadata, and normalized outcome state diagnostics) in Watchtower run history only.
 
 Runtime follow-on work after documentation merge should:
 

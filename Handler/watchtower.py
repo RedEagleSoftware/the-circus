@@ -60,6 +60,7 @@ RUN_STATUS_FIELDS = [
     "implementation_planner",
     "workflow_classification",
     "recommendation_traceability",
+    "accepted_decision_traceability",
 ]
 
 
@@ -92,31 +93,80 @@ def _extract_markdown_section_lines(markdown_text, section_heading):
 
 
 def _parse_generated_issue_references(generated_issue_section_lines):
+    generated_issue_blocks = _parse_generated_issue_blocks(generated_issue_section_lines)
     ordered_issue_numbers = []
     generated_issues_by_number = {}
 
-    for section_line in generated_issue_section_lines:
-        normalized_line = _trim_trailing_markdown_punctuation(section_line.strip())
-        if not normalized_line:
+    for generated_issue in generated_issue_blocks:
+        issue_number = generated_issue["number"]
+        existing_issue = generated_issues_by_number.get(issue_number)
+        if existing_issue is None:
+            generated_issues_by_number[issue_number] = {
+                "number": issue_number,
+                "url": generated_issue.get("url"),
+            }
+            ordered_issue_numbers.append(issue_number)
             continue
 
-        for match in ISSUE_URL_PATTERN.finditer(normalized_line):
-            issue_number = int(match.group(1))
-            issue_url = _trim_trailing_markdown_punctuation(match.group(0))
-            existing_issue = generated_issues_by_number.get(issue_number)
-            if existing_issue is None:
-                generated_issues_by_number[issue_number] = {"number": issue_number, "url": issue_url}
-                ordered_issue_numbers.append(issue_number)
-            elif not existing_issue.get("url"):
-                existing_issue["url"] = issue_url
-
-        for match in ISSUE_REFERENCE_PATTERN.finditer(normalized_line):
-            issue_number = int(match.group(1))
-            if issue_number not in generated_issues_by_number:
-                generated_issues_by_number[issue_number] = {"number": issue_number}
-                ordered_issue_numbers.append(issue_number)
+        if not existing_issue.get("url") and generated_issue.get("url"):
+            existing_issue["url"] = generated_issue.get("url")
 
     return [generated_issues_by_number[number] for number in ordered_issue_numbers]
+
+
+def _parse_generated_issue_blocks(generated_issue_section_lines):
+    generated_issue_blocks = []
+    current_block = None
+
+    for section_line in generated_issue_section_lines:
+        raw_line = section_line.rstrip()
+        normalized_line = _trim_trailing_markdown_punctuation(raw_line.strip())
+        if not raw_line.strip():
+            continue
+
+        line_indentation = len(raw_line) - len(raw_line.lstrip())
+        stripped_line = raw_line.lstrip()
+        bullet_prefix_match = re.match(r"^(?:[-*+]\s+|\d+[.)]\s+)(.*)$", stripped_line)
+
+        heading_payload = None
+        if line_indentation == 0 and bullet_prefix_match:
+            heading_payload = bullet_prefix_match.group(1).strip()
+        elif line_indentation == 0 and current_block is None:
+            heading_payload = normalized_line
+
+        issue_reference = _extract_first_issue_reference(heading_payload) if heading_payload else None
+
+        if issue_reference is not None:
+            current_block = {
+                "number": issue_reference["number"],
+                "url": issue_reference.get("url"),
+                "lines": [normalized_line],
+            }
+            generated_issue_blocks.append(current_block)
+            continue
+
+        if current_block is not None:
+            current_block["lines"].append(normalized_line)
+
+    return generated_issue_blocks
+
+
+def _extract_first_issue_reference(line):
+    issue_url_match = ISSUE_URL_PATTERN.search(line)
+    if issue_url_match:
+        return {
+            "number": int(issue_url_match.group(1)),
+            "url": _trim_trailing_markdown_punctuation(issue_url_match.group(0)),
+        }
+
+    issue_reference_match = ISSUE_REFERENCE_PATTERN.search(line)
+    if issue_reference_match:
+        return {
+            "number": int(issue_reference_match.group(1)),
+            "url": None,
+        }
+
+    return None
 
 
 def _extract_source_traceability_fields(source_section_lines):
@@ -148,6 +198,30 @@ def _extract_source_traceability_fields(source_section_lines):
         "source_recommendation_comment_id": source_recommendation_comment_id,
         "roadmap_reference": roadmap_reference,
     }
+
+
+def _extract_issue_comment_id_from_url(value):
+    if not isinstance(value, str):
+        return None
+
+    issue_comment_match = ISSUE_COMMENT_URL_PATTERN.search(value)
+    if issue_comment_match:
+        return int(issue_comment_match.group(1))
+
+    return None
+
+
+def _extract_pull_request_number_from_url(value):
+    if not isinstance(value, str):
+        return None
+
+    pull_request_match = PULL_REQUEST_URL_PATTERN.search(value)
+    if pull_request_match:
+        pull_request_number_match = re.search(r"/pull/(\d+)", pull_request_match.group(0), re.IGNORECASE)
+        if pull_request_number_match:
+            return int(pull_request_number_match.group(1))
+
+    return None
 
 
 def build_recommendation_traceability_snapshot(
@@ -333,8 +407,15 @@ def build_implementation_planner_snapshot(
     outcome_valid,
     diagnostic=None,
     recommended_route=None,
+    planner_result_comment_id=None,
+    planner_result_comment_url=None,
+    parent_issue=None,
+    recommendation_comment_id=None,
+    roadmap_pr_number=None,
+    roadmap_reference_merged=None,
+    generated_issues=None,
 ):
-    generated_issues = []
+    generated_issue_links = []
     source_recommendation_url = None
     source_recommendation_comment_id = None
     roadmap_reference = None
@@ -344,7 +425,7 @@ def build_implementation_planner_snapshot(
             with open(implementation_plan_path, "r", encoding="utf-8") as implementation_plan_file:
                 implementation_plan_markdown = implementation_plan_file.read()
             generated_issue_section_lines = _extract_markdown_section_lines(implementation_plan_markdown, "generated issues")
-            generated_issues = _parse_generated_issue_references(generated_issue_section_lines)
+            generated_issue_links = _parse_generated_issue_references(generated_issue_section_lines)
             source_section_lines = _extract_markdown_section_lines(implementation_plan_markdown, "source")
             source_traceability_fields = _extract_source_traceability_fields(source_section_lines)
             source_recommendation_url = source_traceability_fields["source_recommendation_url"]
@@ -353,20 +434,295 @@ def build_implementation_planner_snapshot(
         except OSError:
             pass
 
+    merged_generated_issues = []
+    generated_issues_by_number = {}
+    for generated_issue_link in generated_issue_links:
+        issue_number = generated_issue_link.get("number")
+        if not isinstance(issue_number, int) or issue_number <= 0:
+            continue
+        normalized_generated_issue = {
+            "number": issue_number,
+            "url": generated_issue_link.get("url") if isinstance(generated_issue_link.get("url"), str) else None,
+            "initial_state": None,
+            "next_state_after_approval": None,
+            "dependencies": None,
+        }
+        generated_issues_by_number[issue_number] = normalized_generated_issue
+        merged_generated_issues.append(normalized_generated_issue)
+
+    if isinstance(generated_issues, list):
+        for generated_issue in generated_issues:
+            if not isinstance(generated_issue, dict):
+                continue
+
+            issue_number = generated_issue.get("issue_number")
+            if issue_number is None:
+                issue_number = generated_issue.get("number")
+            if not isinstance(issue_number, int) or issue_number <= 0:
+                continue
+
+            normalized_generated_issue = generated_issues_by_number.get(issue_number)
+            if normalized_generated_issue is None:
+                normalized_generated_issue = {
+                    "number": issue_number,
+                    "url": generated_issue.get("url") if isinstance(generated_issue.get("url"), str) else None,
+                    "initial_state": None,
+                    "next_state_after_approval": None,
+                    "dependencies": None,
+                }
+                generated_issues_by_number[issue_number] = normalized_generated_issue
+                merged_generated_issues.append(normalized_generated_issue)
+
+            initial_state = generated_issue.get("initial_state")
+            if isinstance(initial_state, str) and initial_state:
+                normalized_generated_issue["initial_state"] = initial_state
+
+            next_state_after_approval = generated_issue.get("next_state_after_approval")
+            if isinstance(next_state_after_approval, str) and next_state_after_approval:
+                normalized_generated_issue["next_state_after_approval"] = next_state_after_approval
+
+            dependencies = generated_issue.get("dependencies")
+            if isinstance(dependencies, list):
+                normalized_generated_issue["dependencies"] = dependencies
+
     snapshot = {
         "outcome": outcome,
         "outcome_valid": bool(outcome_valid),
         "diagnostic": diagnostic,
         "implementation_plan": implementation_plan_path,
-        "generated_issues": generated_issues,
+        "generated_issues": merged_generated_issues,
         "source_recommendation_url": source_recommendation_url,
         "source_recommendation_comment_id": source_recommendation_comment_id,
         "roadmap_reference": roadmap_reference,
         "recommended_route": recommended_route,
+        "planner_result_comment_id": planner_result_comment_id,
+        "planner_result_comment_url": planner_result_comment_url,
+        "parent_issue": parent_issue,
+        "recommendation_comment_id": recommendation_comment_id,
+        "roadmap_pr_number": roadmap_pr_number,
+        "roadmap_reference_merged": roadmap_reference_merged,
     }
 
     snapshot["recommendation_traceability"] = build_implementation_planner_recommendation_traceability_snapshot(snapshot)
     return snapshot
+
+
+def _normalize_traceability_generated_issue(generated_issue, repository):
+    if not isinstance(generated_issue, dict):
+        return None
+
+    issue_number = generated_issue.get("number")
+    if not isinstance(issue_number, int):
+        issue_number = generated_issue.get("issue_number")
+    if not isinstance(issue_number, int) or issue_number <= 0:
+        return None
+
+    normalized_generated_issue = {
+        "repo": repository,
+        "number": issue_number,
+        "url": generated_issue.get("url") if isinstance(generated_issue.get("url"), str) else None,
+        "initial_state": generated_issue.get("initial_state") if isinstance(generated_issue.get("initial_state"), str) else None,
+        "suggested_next_state": (
+            generated_issue.get("next_state_after_approval")
+            if isinstance(generated_issue.get("next_state_after_approval"), str)
+            else None
+        ),
+        "dependencies": generated_issue.get("dependencies") if isinstance(generated_issue.get("dependencies"), list) else None,
+    }
+    return normalized_generated_issue
+
+
+def build_accepted_decision_traceability_snapshot(
+    *,
+    repository,
+    source_issue,
+    recommendation_traceability=None,
+    implementation_planner=None,
+):
+    diagnostics = []
+    status = "missing"
+
+    recommendation_traceability = recommendation_traceability if isinstance(recommendation_traceability, dict) else {}
+    implementation_planner = implementation_planner if isinstance(implementation_planner, dict) else {}
+
+    recommendation_url = recommendation_traceability.get("recommendation_url")
+    recommendation_comment_id = recommendation_traceability.get("recommendation_comment_id")
+    recommendation_source_issue = recommendation_traceability.get("source_issue")
+    recommendation_diagnostic = recommendation_traceability.get("diagnostic")
+    roadmap_reference = recommendation_traceability.get("roadmap_reference")
+
+    planner_source_issue = implementation_planner.get("parent_issue")
+    if not isinstance(planner_source_issue, int) or planner_source_issue <= 0:
+        planner_source_issue = source_issue if isinstance(source_issue, int) and source_issue > 0 else None
+
+    planner_recommendation_comment_id = implementation_planner.get("recommendation_comment_id")
+    if not isinstance(planner_recommendation_comment_id, int) or planner_recommendation_comment_id <= 0:
+        planner_recommendation_comment_id = None
+
+    planner_roadmap_pr = implementation_planner.get("roadmap_pr_number")
+    if not isinstance(planner_roadmap_pr, int) or planner_roadmap_pr <= 0:
+        planner_roadmap_pr = None
+
+    if not isinstance(recommendation_url, str) or not recommendation_url:
+        recommendation_url = implementation_planner.get("source_recommendation_url")
+    if not isinstance(recommendation_comment_id, int):
+        recommendation_comment_id = implementation_planner.get("source_recommendation_comment_id")
+    if not isinstance(roadmap_reference, str) or not roadmap_reference:
+        roadmap_reference = implementation_planner.get("roadmap_reference")
+
+    if not isinstance(recommendation_comment_id, int) or recommendation_comment_id <= 0:
+        recommendation_comment_id = _extract_issue_comment_id_from_url(recommendation_url)
+
+    observed_roadmap_pr = _extract_pull_request_number_from_url(roadmap_reference)
+    roadmap_pr_number = implementation_planner.get("roadmap_pr_number")
+    if not isinstance(roadmap_pr_number, int) or roadmap_pr_number <= 0:
+        roadmap_pr_number = observed_roadmap_pr
+
+    roadmap_reference_merged = implementation_planner.get("roadmap_reference_merged")
+    if not isinstance(roadmap_reference_merged, bool):
+        roadmap_reference_merged = None
+
+    planner_result_comment_id = implementation_planner.get("planner_result_comment_id")
+    if not isinstance(planner_result_comment_id, int) or planner_result_comment_id <= 0:
+        planner_result_comment_id = _extract_issue_comment_id_from_url(
+            implementation_planner.get("planner_result_comment_url")
+        )
+
+    recommendation_available = bool(
+        isinstance(recommendation_url, str)
+        and recommendation_url
+        and isinstance(recommendation_comment_id, int)
+        and recommendation_comment_id > 0
+    )
+    if recommendation_available:
+        status = "partial"
+    elif isinstance(recommendation_diagnostic, str) and "ambiguous" in recommendation_diagnostic.lower():
+        status = "ambiguous"
+        diagnostics.append("accepted recommendation ambiguous")
+    elif recommendation_url or recommendation_comment_id:
+        status = "partial"
+        diagnostics.append("accepted recommendation reference incomplete")
+    else:
+        diagnostics.append("accepted recommendation missing")
+
+    if not roadmap_reference:
+        diagnostics.append("roadmap reference missing")
+    else:
+        status = "partial" if status == "missing" else status
+
+    if isinstance(recommendation_source_issue, int) and recommendation_source_issue > 0:
+        if planner_source_issue is not None and recommendation_source_issue != planner_source_issue:
+            diagnostics.append("source issue reference mismatches planner metadata")
+            status = "reference_mismatch"
+
+    if recommendation_available and planner_recommendation_comment_id is not None:
+        if recommendation_comment_id != planner_recommendation_comment_id:
+            diagnostics.append("accepted recommendation reference mismatches planner metadata")
+            status = "reference_mismatch"
+
+    if observed_roadmap_pr is not None and planner_roadmap_pr is not None:
+        if observed_roadmap_pr != planner_roadmap_pr:
+            diagnostics.append("roadmap reference mismatches planner metadata")
+            status = "reference_mismatch"
+
+    if roadmap_reference_merged is False:
+        diagnostics.append("roadmap reference is stale (not merged)")
+        status = "reference_mismatch"
+
+    generated_issues = []
+    generated_issues_raw = implementation_planner.get("generated_issues")
+    if isinstance(generated_issues_raw, list):
+        for generated_issue in generated_issues_raw:
+            normalized_generated_issue = _normalize_traceability_generated_issue(generated_issue, repository)
+            if normalized_generated_issue is not None:
+                generated_issues.append(normalized_generated_issue)
+
+    if not generated_issues:
+        diagnostics.append("generated issues missing")
+    else:
+        status = "partial" if status == "missing" else status
+
+    planner_outcome = implementation_planner.get("outcome") if isinstance(implementation_planner.get("outcome"), str) else None
+    if not planner_outcome:
+        diagnostics.append("planner outcome missing")
+    else:
+        status = "partial" if status == "missing" else status
+
+    planner_artifact = implementation_planner.get("implementation_plan")
+    if not isinstance(planner_artifact, str):
+        planner_artifact = None
+
+    outcome_states = [
+        generated_issue.get("suggested_next_state")
+        for generated_issue in generated_issues
+        if isinstance(generated_issue.get("suggested_next_state"), str)
+    ]
+    unique_outcome_states = sorted(set(outcome_states))
+    if len(unique_outcome_states) == 1:
+        outcome_state = unique_outcome_states[0]
+    elif len(unique_outcome_states) > 1:
+        outcome_state = None
+        diagnostics.append("generated issue next-state references are inconsistent")
+        status = "reference_mismatch"
+    else:
+        outcome_state = None
+        diagnostics.append("generated issue next-state references missing")
+
+    if (
+        status not in {"ambiguous", "reference_mismatch"}
+        and recommendation_available
+        and roadmap_reference
+        and planner_outcome
+        and generated_issues
+        and outcome_state
+    ):
+        status = "available"
+
+    if isinstance(recommendation_diagnostic, str) and recommendation_diagnostic and recommendation_diagnostic not in {
+        "not provided",
+        "accepted recommendation unavailable",
+    }:
+        diagnostics.append(recommendation_diagnostic)
+
+    unique_diagnostics = []
+    for diagnostic in diagnostics:
+        if diagnostic not in unique_diagnostics:
+            unique_diagnostics.append(diagnostic)
+
+    return {
+        "version": 1,
+        "status": status,
+        "source_issue": {
+            "repo": repository,
+            "number": planner_source_issue,
+            "url": (
+                f"https://github.com/{repository}/issues/{planner_source_issue}"
+                if isinstance(repository, str)
+                and repository
+                and isinstance(planner_source_issue, int)
+                and planner_source_issue > 0
+                else None
+            ),
+        },
+        "accepted_recommendation": {
+            "url": recommendation_url if recommendation_available else None,
+            "comment_id": recommendation_comment_id if recommendation_available else None,
+        },
+        "roadmap_reference": {
+            "url": roadmap_reference,
+            "pr_number": roadmap_pr_number,
+            "merged": roadmap_reference_merged,
+        },
+        "planner": {
+            "issue_number": planner_source_issue,
+            "result_comment_id": planner_result_comment_id,
+            "outcome": planner_outcome,
+            "artifact": planner_artifact,
+        },
+        "generated_issues": generated_issues,
+        "outcome_state": outcome_state,
+        "diagnostics": unique_diagnostics,
+    }
 
 
 def append_reviewer_feedback_note(
@@ -521,6 +877,12 @@ def initialize_run_status(
         },
         "recommendation_traceability": build_unavailable_recommendation_traceability_snapshot(),
     }
+    status_payload["accepted_decision_traceability"] = build_accepted_decision_traceability_snapshot(
+        repository=status_payload.get("repository"),
+        source_issue=status_payload.get("item_number"),
+        recommendation_traceability=status_payload.get("recommendation_traceability"),
+        implementation_planner=status_payload.get("implementation_planner"),
+    )
 
     for field in run_status_fields:
         status_payload.setdefault(field, None)
@@ -565,6 +927,16 @@ def read_run_status(run_state, *, run_status_fields=RUN_STATUS_FIELDS, normalize
         recommendation_traceability = build_unavailable_recommendation_traceability_snapshot()
         status_payload["recommendation_traceability"] = recommendation_traceability
 
+    accepted_decision_traceability = status_payload.get("accepted_decision_traceability")
+    if not isinstance(accepted_decision_traceability, dict):
+        accepted_decision_traceability = build_accepted_decision_traceability_snapshot(
+            repository=status_payload.get("repository"),
+            source_issue=status_payload.get("item_number"),
+            recommendation_traceability=recommendation_traceability,
+            implementation_planner=status_payload.get("implementation_planner"),
+        )
+        status_payload["accepted_decision_traceability"] = accepted_decision_traceability
+
     return status_payload
 
 
@@ -591,6 +963,13 @@ def update_run_status(item, *, get_run_state_fn, read_run_status_fn, write_run_s
     if item.get("last_label_transition") is not None:
         status_payload["label_transition"] = item.get("last_label_transition")
 
+    status_payload["accepted_decision_traceability"] = build_accepted_decision_traceability_snapshot(
+        repository=status_payload.get("repository"),
+        source_issue=status_payload.get("item_number"),
+        recommendation_traceability=status_payload.get("recommendation_traceability"),
+        implementation_planner=status_payload.get("implementation_planner"),
+    )
+
     write_run_status_fn(run_state, status_payload)
 
 
@@ -604,6 +983,7 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
     implementation_planner = status_payload.get("implementation_planner") or {}
     workflow_classification = status_payload.get("workflow_classification") or {}
     recommendation_traceability = status_payload.get("recommendation_traceability") or {}
+    accepted_decision_traceability = status_payload.get("accepted_decision_traceability") or {}
     label_transition = status_payload.get("label_transition")
     lifecycle_diagnostics = status_payload.get("lifecycle_diagnostics")
 
@@ -656,6 +1036,32 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
             f"- roadmap reference: `{recommendation_traceability.get('roadmap_reference')}`",
             f"- source: `{recommendation_traceability.get('source')}`",
             f"- diagnostic: `{recommendation_traceability.get('diagnostic')}`",
+            "",
+            "## Accepted Decision Traceability",
+            f"- version: `{accepted_decision_traceability.get('version')}`",
+            f"- status: `{accepted_decision_traceability.get('status')}`",
+            f"- source issue repo: `{(accepted_decision_traceability.get('source_issue') or {}).get('repo')}`",
+            f"- source issue number: `{(accepted_decision_traceability.get('source_issue') or {}).get('number')}`",
+            f"- source issue url: `{(accepted_decision_traceability.get('source_issue') or {}).get('url')}`",
+            f"- recommendation url: `{(accepted_decision_traceability.get('accepted_recommendation') or {}).get('url')}`",
+            f"- recommendation comment ID: `{(accepted_decision_traceability.get('accepted_recommendation') or {}).get('comment_id')}`",
+            f"- roadmap reference: `{(accepted_decision_traceability.get('roadmap_reference') or {}).get('url')}`",
+            f"- planner outcome: `{(accepted_decision_traceability.get('planner') or {}).get('outcome')}`",
+            f"- planner artifact: `{(accepted_decision_traceability.get('planner') or {}).get('artifact')}`",
+            f"- outcome state: `{accepted_decision_traceability.get('outcome_state')}`",
+            "- diagnostics:",
+        ]
+    )
+
+    accepted_decision_diagnostics = accepted_decision_traceability.get("diagnostics")
+    if isinstance(accepted_decision_diagnostics, list) and accepted_decision_diagnostics:
+        for accepted_decision_diagnostic in accepted_decision_diagnostics:
+            lines.append(f"  - {accepted_decision_diagnostic}")
+    else:
+        lines.append("  - none")
+
+    lines.extend(
+        [
             "",
             "## Implementation Planner",
             f"- outcome: `{implementation_planner.get('outcome')}`",
