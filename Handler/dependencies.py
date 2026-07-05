@@ -373,6 +373,42 @@ def evaluate_dependencies(body, *, default_repo, run_command_fn, get_item_fn=git
             "resume_state": metadata["resume_state"],
         }
 
+    resume_state = metadata.get("resume_state")
+    if metadata.get("version") == "v1":
+        if not isinstance(resume_state, str) or not resume_state.strip():
+            return {
+                "declared": True,
+                "status": "blocked",
+                "dependencies": [],
+                "unresolved": ["resume_state"],
+                "diagnostic": "dependency metadata malformed: resume_state must be a supported dispatchable state label",
+                "resume_state": resume_state,
+            }
+
+        normalized_resume_state = resume_state.strip()
+        if normalized_resume_state not in workflow.WORKFLOW_STATES:
+            return {
+                "declared": True,
+                "status": "blocked",
+                "dependencies": [],
+                "unresolved": ["resume_state"],
+                "diagnostic": f"dependency metadata malformed: unsupported resume_state '{normalized_resume_state}'",
+                "resume_state": resume_state,
+            }
+
+        if normalized_resume_state not in workflow.LABEL_MAP:
+            return {
+                "declared": True,
+                "status": "blocked",
+                "dependencies": [],
+                "unresolved": ["resume_state"],
+                "diagnostic": (
+                    "dependency metadata malformed: "
+                    f"resume_state '{normalized_resume_state}' is not dispatchable"
+                ),
+                "resume_state": resume_state,
+            }
+
     resolution_entries = []
     unresolved = []
 

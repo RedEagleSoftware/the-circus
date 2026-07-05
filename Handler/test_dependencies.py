@@ -183,6 +183,56 @@ blocked_by:
         self.assertEqual(resolution["declared"], True)
         self.assertIn("metadata", resolution["diagnostic"])
 
+    def test_evaluate_dependencies_blocks_v1_metadata_with_unsupported_resume_state(self):
+        body = """
+## Circus Dependencies
+<!-- circus:dependencies v1 -->
+```yaml
+resume_state: state:not-a-real-state
+blocked_by:
+  - type: issue
+    repo: RedEagleSoftware/the-circus
+    number: 99
+    satisfies_on: closed_completed
+```
+"""
+
+        resolution = dependencies.evaluate_dependencies(
+            body,
+            default_repo="RedEagleSoftware/the-circus",
+            run_command_fn=Mock(),
+            get_item_fn=Mock(),
+        )
+
+        self.assertEqual(resolution["status"], "blocked")
+        self.assertIn("resume_state", resolution["unresolved"])
+        self.assertIn("unsupported resume_state", resolution["diagnostic"])
+
+    def test_evaluate_dependencies_blocks_v1_metadata_with_non_dispatch_resume_state(self):
+        body = """
+## Circus Dependencies
+<!-- circus:dependencies v1 -->
+```yaml
+resume_state: state:dependency-blocked
+blocked_by:
+  - type: issue
+    repo: RedEagleSoftware/the-circus
+    number: 99
+    satisfies_on: closed_completed
+```
+"""
+
+        resolution = dependencies.evaluate_dependencies(
+            body,
+            default_repo="RedEagleSoftware/the-circus",
+            run_command_fn=Mock(),
+            get_item_fn=Mock(),
+        )
+
+        self.assertEqual(resolution["status"], "blocked")
+        self.assertIn("resume_state", resolution["unresolved"])
+        self.assertIn("not dispatchable", resolution["diagnostic"])
+
 
 if __name__ == "__main__":
     unittest.main()

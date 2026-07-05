@@ -473,9 +473,14 @@ def perform_locked_item_recovery(item, labels):
 
     workspace_lifecycle = collect_workspace_lifecycle_for_item(item)
     dependency_resolution = evaluate_item_dependencies(item)
+    workflow_state = {
+        "primary_state_labels": workflow.get_primary_workflow_state_labels(current_labels),
+        "unsupported_state_labels": workflow.get_unsupported_state_labels(current_labels),
+    }
     recovery_resolution = recovery.classify_locked_item_recovery(
         workspace_lifecycle=workspace_lifecycle,
         dependency_resolution=dependency_resolution,
+        workflow_state=workflow_state,
     )
     recovery_decision = recovery_resolution["decision"]
     recovery_reason = recovery_resolution["reason"]

@@ -285,7 +285,7 @@ class HandlerObservabilityTests(unittest.TestCase):
             "type": "issue",
             "number": 10,
             "title": "Locked candidate",
-            "labels": [{"name": handler.LOCK_LABEL}],
+            "labels": [{"name": handler.LOCK_LABEL}, {"name": "state:ready-for-dev"}],
         }
 
         with patch.object(
@@ -305,7 +305,10 @@ class HandlerObservabilityTests(unittest.TestCase):
                                 with patch.object(handler, "unlock_item") as mock_unlock:
                                     with patch.object(handler, "apply_dependency_block_transition") as mock_transition:
                                         with patch.object(handler, "add_comment") as mock_add_comment:
-                                            handler.perform_locked_item_recovery(item, [handler.LOCK_LABEL])
+                                            handler.perform_locked_item_recovery(
+                                                item,
+                                                [handler.LOCK_LABEL, "state:ready-for-dev"],
+                                            )
 
         mock_unlock.assert_not_called()
         mock_transition.assert_not_called()
@@ -322,7 +325,7 @@ class HandlerObservabilityTests(unittest.TestCase):
             "type": "issue",
             "number": 10,
             "title": "Locked candidate",
-            "labels": [{"name": handler.LOCK_LABEL}],
+            "labels": [{"name": handler.LOCK_LABEL}, {"name": "state:ready-for-dev"}],
         }
         expected_signature = "blocked_unsafe|workspace lifecycle is ambiguous|workspace lifecycle is ambiguous"
 
@@ -345,8 +348,14 @@ class HandlerObservabilityTests(unittest.TestCase):
                         ):
                             with patch.object(handler, "update_run_status") as mock_update_run_status:
                                 with patch.object(handler, "add_comment") as mock_add_comment:
-                                    handler.perform_locked_item_recovery(item, [handler.LOCK_LABEL])
-                                    handler.perform_locked_item_recovery(item, [handler.LOCK_LABEL])
+                                    handler.perform_locked_item_recovery(
+                                        item,
+                                        [handler.LOCK_LABEL, "state:ready-for-dev"],
+                                    )
+                                    handler.perform_locked_item_recovery(
+                                        item,
+                                        [handler.LOCK_LABEL, "state:ready-for-dev"],
+                                    )
 
         self.assertEqual(mock_add_comment.call_count, 1)
         self.assertIn("No lock labels or workflow labels were changed", item["comment"])
