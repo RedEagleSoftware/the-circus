@@ -3896,6 +3896,53 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_replace_label.assert_not_called()
         mock_add_comment.assert_not_called()
 
+    def test_approve_implementation_plan_review_rejects_markdown_ready_without_generated_issues(self):
+        source_item = {
+            "type": "issue",
+            "number": 143,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+            "comments": [
+                {"id": 4001, "body": "Recommendation details"},
+                {
+                    "id": 9001,
+                    "body": (
+                        "### Outcome\n"
+                        "READY\n\n"
+                        "### Source\n"
+                        "Parent issue: https://github.com/RedEagleSoftware/the-circus/issues/143\n"
+                        "Recommendation comment: https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-4001\n"
+                        "Roadmap reference: https://github.com/RedEagleSoftware/the-circus/pull/88\n\n"
+                        "### Generated Issues\n"
+                        "None\n"
+                    ),
+                },
+            ],
+        }
+        roadmap_pr_item = {
+            "number": 88,
+            "state": "MERGED",
+            "mergedAt": "2026-06-23T10:11:12Z",
+            "title": "Roadmap update",
+            "url": "https://github.com/owner/repo/pull/88",
+        }
+
+        with patch.object(handler.github_client, "get_item") as mock_get_item:
+            mock_get_item.side_effect = [
+                (source_item, True),
+                (roadmap_pr_item, True),
+            ]
+            with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(143, plan_comment_id=9001, dry_run=True)
+
+        self.assertFalse(approved)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
+
     def test_approve_implementation_plan_review_rejects_missing_review_state_label(self):
         source_item = {
             "type": "issue",

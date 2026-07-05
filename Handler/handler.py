@@ -1363,8 +1363,13 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
             _report_approval_failure(source_issue_number, reason, transitioned_issue_numbers)
         return False
 
+    planner_generated_issues = planner_result.get("generated_issues")
+    if not isinstance(planner_generated_issues, list) or not planner_generated_issues:
+        print("[Approval] planner_result_v1 generated_issues must contain at least one issue for READY approval.")
+        return False
+
     generated_issues = []
-    for generated_issue in planner_result["generated_issues"]:
+    for generated_issue in planner_generated_issues:
         generated_issue_number = generated_issue["issue_number"]
         initial_state = generated_issue.get("initial_state")
         target_state = generated_issue["next_state_after_approval"]
