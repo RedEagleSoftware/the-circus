@@ -75,15 +75,24 @@ blocked_by:
             )
         )
 
+        run_command_fn = Mock()
+
         resolution = dependencies.evaluate_dependencies(
             body,
             default_repo="RedEagleSoftware/the-circus",
-            run_command_fn=Mock(),
+            run_command_fn=run_command_fn,
             get_item_fn=get_item_fn,
         )
 
         self.assertEqual(resolution["status"], "resolved")
         self.assertFalse(resolution["unresolved"])
+        get_item_fn.assert_called_once_with(
+            "issue",
+            99,
+            repo="RedEagleSoftware/the-circus",
+            run_command_fn=run_command_fn,
+            fields="number,title,url,state,closed,stateReason",
+        )
 
     def test_evaluate_dependencies_blocks_closed_not_completed_issue(self):
         body = """
@@ -150,15 +159,24 @@ blocked_by:
             )
         )
 
+        run_command_fn = Mock()
+
         resolution = dependencies.evaluate_dependencies(
             body,
             default_repo="RedEagleSoftware/the-circus",
-            run_command_fn=Mock(),
+            run_command_fn=run_command_fn,
             get_item_fn=get_item_fn,
         )
 
         self.assertEqual(resolution["status"], "blocked")
         self.assertTrue(resolution["dependencies"][0]["blocking"])
+        get_item_fn.assert_called_once_with(
+            "pr",
+            100,
+            repo="RedEagleSoftware/the-circus",
+            run_command_fn=run_command_fn,
+            fields="number,title,url,state,closed,merged",
+        )
 
     def test_evaluate_dependencies_blocks_malformed_v1_metadata(self):
         body = """

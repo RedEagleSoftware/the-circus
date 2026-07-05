@@ -350,6 +350,23 @@ def _build_dependency_resolution_entry(dependency, dependency_item):
     }
 
 
+def _dependency_lookup_request(dependency):
+    dependency_type = dependency.get("type")
+    if dependency_type == "issue":
+        return {
+            "item_type": "issue",
+            "fields": "number,title,url,state,closed,stateReason",
+        }
+
+    if dependency_type == "pull_request":
+        return {
+            "item_type": "pr",
+            "fields": "number,title,url,state,closed,merged",
+        }
+
+    return None
+
+
 def evaluate_dependencies(body, *, default_repo, run_command_fn, get_item_fn=github_client.get_item):
     metadata = parse_dependency_metadata(body, default_repo=default_repo)
     dependencies = metadata["dependencies"]
@@ -413,12 +430,27 @@ def evaluate_dependencies(body, *, default_repo, run_command_fn, get_item_fn=git
     unresolved = []
 
     for dependency in dependencies:
+        lookup_request = _dependency_lookup_request(dependency)
+        if lookup_request is None:
+            unresolved.append(dependency["url"])
+            resolution_entries.append(
+                {
+                    "type": dependency["type"],
+                    "repo": dependency["repo"],
+                    "number": dependency["number"],
+                    "url": dependency.get("url"),
+                    "blocking": True,
+                    "resolution_reason": "unsupported dependency type",
+                }
+            )
+            continue
+
         dependency_item, dependency_ok = get_item_fn(
-            dependency["type"],
+            lookup_request["item_type"],
             dependency["number"],
             repo=dependency["repo"],
             run_command_fn=run_command_fn,
-            fields="number,title,url,state,closed,stateReason,merged",
+            fields=lookup_request["fields"],
         )
         if not dependency_ok or not isinstance(dependency_item, dict):
             unresolved.append(dependency["url"])
