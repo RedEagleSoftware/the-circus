@@ -157,16 +157,21 @@ def collect_workspace_lifecycle_diagnostic(
     repo_path,
     workspace_path,
     item,
+    watchtower_run=None,
     allow_cleanup=False,
     dry_run=False,
     collect_workspace_inventory_fn=workspace_inventory.collect_workspace_inventory,
     classify_workspace_fn=workspace_inventory.classify_workspace,
 ):
+    inventory_context = _inventory_context_from_item(item)
+    if watchtower_run is not None:
+        inventory_context["watchtower_run"] = watchtower_run
+
     facts = collect_workspace_inventory_fn(
         repo_path,
         workspace_path,
         item=item,
-        **_inventory_context_from_item(item),
+        **inventory_context,
     )
     classification_result = classify_workspace_fn(facts, allow_cleanup=allow_cleanup, dry_run=dry_run)
     return build_workspace_lifecycle_diagnostic(classification_result)
