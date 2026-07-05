@@ -93,31 +93,80 @@ def _extract_markdown_section_lines(markdown_text, section_heading):
 
 
 def _parse_generated_issue_references(generated_issue_section_lines):
+    generated_issue_blocks = _parse_generated_issue_blocks(generated_issue_section_lines)
     ordered_issue_numbers = []
     generated_issues_by_number = {}
 
-    for section_line in generated_issue_section_lines:
-        normalized_line = _trim_trailing_markdown_punctuation(section_line.strip())
-        if not normalized_line:
+    for generated_issue in generated_issue_blocks:
+        issue_number = generated_issue["number"]
+        existing_issue = generated_issues_by_number.get(issue_number)
+        if existing_issue is None:
+            generated_issues_by_number[issue_number] = {
+                "number": issue_number,
+                "url": generated_issue.get("url"),
+            }
+            ordered_issue_numbers.append(issue_number)
             continue
 
-        for match in ISSUE_URL_PATTERN.finditer(normalized_line):
-            issue_number = int(match.group(1))
-            issue_url = _trim_trailing_markdown_punctuation(match.group(0))
-            existing_issue = generated_issues_by_number.get(issue_number)
-            if existing_issue is None:
-                generated_issues_by_number[issue_number] = {"number": issue_number, "url": issue_url}
-                ordered_issue_numbers.append(issue_number)
-            elif not existing_issue.get("url"):
-                existing_issue["url"] = issue_url
-
-        for match in ISSUE_REFERENCE_PATTERN.finditer(normalized_line):
-            issue_number = int(match.group(1))
-            if issue_number not in generated_issues_by_number:
-                generated_issues_by_number[issue_number] = {"number": issue_number}
-                ordered_issue_numbers.append(issue_number)
+        if not existing_issue.get("url") and generated_issue.get("url"):
+            existing_issue["url"] = generated_issue.get("url")
 
     return [generated_issues_by_number[number] for number in ordered_issue_numbers]
+
+
+def _parse_generated_issue_blocks(generated_issue_section_lines):
+    generated_issue_blocks = []
+    current_block = None
+
+    for section_line in generated_issue_section_lines:
+        raw_line = section_line.rstrip()
+        normalized_line = _trim_trailing_markdown_punctuation(raw_line.strip())
+        if not raw_line.strip():
+            continue
+
+        line_indentation = len(raw_line) - len(raw_line.lstrip())
+        stripped_line = raw_line.lstrip()
+        bullet_prefix_match = re.match(r"^(?:[-*+]\s+|\d+[.)]\s+)(.*)$", stripped_line)
+
+        heading_payload = None
+        if line_indentation == 0 and bullet_prefix_match:
+            heading_payload = bullet_prefix_match.group(1).strip()
+        elif line_indentation == 0 and current_block is None:
+            heading_payload = normalized_line
+
+        issue_reference = _extract_first_issue_reference(heading_payload) if heading_payload else None
+
+        if issue_reference is not None:
+            current_block = {
+                "number": issue_reference["number"],
+                "url": issue_reference.get("url"),
+                "lines": [normalized_line],
+            }
+            generated_issue_blocks.append(current_block)
+            continue
+
+        if current_block is not None:
+            current_block["lines"].append(normalized_line)
+
+    return generated_issue_blocks
+
+
+def _extract_first_issue_reference(line):
+    issue_url_match = ISSUE_URL_PATTERN.search(line)
+    if issue_url_match:
+        return {
+            "number": int(issue_url_match.group(1)),
+            "url": _trim_trailing_markdown_punctuation(issue_url_match.group(0)),
+        }
+
+    issue_reference_match = ISSUE_REFERENCE_PATTERN.search(line)
+    if issue_reference_match:
+        return {
+            "number": int(issue_reference_match.group(1)),
+            "url": None,
+        }
+
+    return None
 
 
 def _extract_source_traceability_fields(source_section_lines):

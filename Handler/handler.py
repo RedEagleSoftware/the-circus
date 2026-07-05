@@ -907,40 +907,27 @@ def parse_planner_result_from_markdown_sections(body):
             break
 
     generated_issue_lines = watchtower._extract_markdown_section_lines(body, "generated issues")
-    generated_issue_references = watchtower._parse_generated_issue_references(generated_issue_lines)
-    next_state_by_issue_number = {}
-    for generated_issue_line in generated_issue_lines:
-        normalized_generated_issue_line = generated_issue_line.strip()
-        if not normalized_generated_issue_line:
-            continue
-
-        next_state_match = STATE_LABEL_PATTERN.search(normalized_generated_issue_line)
-        if not next_state_match:
-            continue
-
-        next_state_after_approval = next_state_match.group(1).lower()
-        if next_state_after_approval not in LABEL_MAP:
-            continue
-
-        issue_numbers = []
-        for issue_url_match in watchtower.ISSUE_URL_PATTERN.finditer(normalized_generated_issue_line):
-            issue_numbers.append(int(issue_url_match.group(1)))
-
-        if not issue_numbers:
-            for issue_reference_match in watchtower.ISSUE_REFERENCE_PATTERN.finditer(normalized_generated_issue_line):
-                issue_numbers.append(int(issue_reference_match.group(1)))
-
-        for issue_number in issue_numbers:
-            if issue_number not in next_state_by_issue_number:
-                next_state_by_issue_number[issue_number] = next_state_after_approval
+    generated_issue_blocks = watchtower._parse_generated_issue_blocks(generated_issue_lines)
 
     normalized_generated_issues = []
-    for generated_issue_reference in generated_issue_references:
-        issue_number = generated_issue_reference.get("number")
+    for generated_issue_block in generated_issue_blocks:
+        issue_number = generated_issue_block.get("number")
         if not isinstance(issue_number, int) or issue_number <= 0:
             continue
 
-        next_state_after_approval = next_state_by_issue_number.get(issue_number)
+        next_state_after_approval = None
+        for generated_issue_line in generated_issue_block.get("lines", []):
+            next_state_match = STATE_LABEL_PATTERN.search(generated_issue_line)
+            if not next_state_match:
+                continue
+
+            candidate_next_state_after_approval = next_state_match.group(1).lower()
+            if candidate_next_state_after_approval not in LABEL_MAP:
+                continue
+
+            next_state_after_approval = candidate_next_state_after_approval
+            break
+
         if not isinstance(next_state_after_approval, str):
             continue
 

@@ -3307,6 +3307,49 @@ class HandlerObservabilityTests(unittest.TestCase):
             },
         )
 
+    def test_parse_planner_result_from_markdown_sections_extracts_grouped_generated_issue_blocks(self):
+        body = (
+            "### Outcome\n"
+            "READY\n\n"
+            "### Source\n"
+            "Parent issue: https://github.com/RedEagleSoftware/the-circus/issues/84\n"
+            "Recommendation comment: https://github.com/RedEagleSoftware/the-circus/issues/84#issuecomment-4817675158\n"
+            "Roadmap reference: https://github.com/RedEagleSoftware/the-circus/pull/85\n\n"
+            "### Generated Issues\n"
+            "- **Issue A**: https://github.com/RedEagleSoftware/the-circus/issues/89\n"
+            "  - Initial workflow state: state:planned\n"
+            "  - Suggested next workflow state after human approval: state:ready-for-architecture\n"
+            "  - Parent planning issue traceability: #84\n"
+            "  - Roadmap reference: https://github.com/RedEagleSoftware/the-circus/pull/85\n"
+            "- **Issue B**: https://github.com/RedEagleSoftware/the-circus/issues/90\n"
+            "  - Initial workflow state: state:planned\n"
+            "  - Suggested next workflow state after human approval: state:ready-for-dev\n"
+            "  - Parent planning issue traceability: #84\n"
+            "  - Roadmap reference: https://github.com/RedEagleSoftware/the-circus/pull/85\n"
+        )
+
+        planner_result = handler.parse_planner_result_from_markdown_sections(body)
+
+        self.assertEqual(
+            planner_result,
+            {
+                "outcome": "READY",
+                "parent_issue": 84,
+                "recommendation_comment_id": 4817675158,
+                "roadmap_pr": 85,
+                "generated_issues": [
+                    {
+                        "issue_number": 89,
+                        "next_state_after_approval": "state:ready-for-architecture",
+                    },
+                    {
+                        "issue_number": 90,
+                        "next_state_after_approval": "state:ready-for-dev",
+                    },
+                ],
+            },
+        )
+
     def test_extract_comment_id_accepts_issuecomment_url_fragment(self):
         comment = {
             "id": "IC_kwDOExampleNodeId",
@@ -5679,6 +5722,47 @@ class HandlerObservabilityTests(unittest.TestCase):
                     "url": None,
                     "initial_state": "state:planned",
                     "next_state_after_approval": "state:ready-for-architecture",
+                    "dependencies": None,
+                },
+            ],
+        )
+
+    def test_build_implementation_planner_snapshot_ignores_non_generated_references_inside_generated_issue_blocks(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            implementation_plan_path = os.path.join(temp_dir, "implementation-plan.md")
+            with open(implementation_plan_path, "w", encoding="utf-8") as implementation_plan_file:
+                implementation_plan_file.write(
+                    "# Implementation Plan\n\n"
+                    "### Generated Issues\n"
+                    "- https://github.com/owner/repo/issues/201\n"
+                    "  - Parent planning issue traceability: #84\n"
+                    "  - Roadmap reference: https://github.com/owner/repo/pull/90\n"
+                    "- #202\n"
+                    "  - Parent planning issue traceability: #84\n"
+                    "  - Roadmap reference: https://github.com/owner/repo/pull/90\n"
+                )
+
+            snapshot = handler.watchtower.build_implementation_planner_snapshot(
+                implementation_plan_path,
+                outcome="READY",
+                outcome_valid=True,
+            )
+
+        self.assertEqual(
+            snapshot["generated_issues"],
+            [
+                {
+                    "number": 201,
+                    "url": "https://github.com/owner/repo/issues/201",
+                    "initial_state": None,
+                    "next_state_after_approval": None,
+                    "dependencies": None,
+                },
+                {
+                    "number": 202,
+                    "url": None,
+                    "initial_state": None,
+                    "next_state_after_approval": None,
                     "dependencies": None,
                 },
             ],
