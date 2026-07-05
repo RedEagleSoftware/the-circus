@@ -280,6 +280,37 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertEqual(dispatched, "no-dispatch")
         mock_locked_recovery.assert_called_once_with(items[0], [handler.LOCK_LABEL])
 
+    def test_collect_workspace_lifecycle_for_item_for_recovery_filters_lock_label_and_forwards_run(self):
+        item = {
+            "type": "issue",
+            "number": 10,
+            "labels": [{"name": handler.LOCK_LABEL}, {"name": "state:ready-for-dev"}],
+        }
+
+        with patch.object(
+            handler,
+            "resolve_item_workspace_metadata",
+            return_value={"workspace_path": "C:/repo-worktrees/owner-repo/issue-10"},
+        ):
+            with patch.object(
+                handler,
+                "_load_latest_watchtower_run_for_item",
+                return_value={"status": "interrupted", "outcome": "interrupted"},
+            ):
+                with patch.object(
+                    handler.workspace_diagnostics,
+                    "collect_workspace_lifecycle_diagnostic",
+                    return_value={"lifecycle_classification": "ready", "ambiguous": False},
+                ) as mock_collect:
+                    result = handler.collect_workspace_lifecycle_for_item(item, for_recovery=True)
+
+        self.assertEqual(result["lifecycle_classification"], "ready")
+        self.assertEqual(item["labels"][0]["name"], handler.LOCK_LABEL)
+        call_kwargs = mock_collect.call_args.kwargs
+        self.assertEqual(call_kwargs["workspace_path"], "C:/repo-worktrees/owner-repo/issue-10")
+        self.assertEqual(call_kwargs["watchtower_run"], {"status": "interrupted", "outcome": "interrupted"})
+        self.assertEqual(call_kwargs["item"]["labels"], [{"name": "state:ready-for-dev"}])
+
     def test_perform_locked_item_recovery_is_non_destructive_for_safe_resume(self):
         item = {
             "type": "issue",

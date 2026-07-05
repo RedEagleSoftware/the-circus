@@ -83,6 +83,13 @@ class ClassifyWorkspaceTests(unittest.TestCase):
         self.assertEqual(result["lifecycle_state"], "suspended")
         self.assertIn("watchtower_run_incomplete", result["reasons"])
 
+    def test_classifies_suspended_from_watchtower_outcome_when_status_missing(self):
+        result = workspace_inventory.classify_workspace(
+            self._facts(watchtower_run={"outcome": "interrupted"})
+        )
+        self.assertEqual(result["lifecycle_state"], "suspended")
+        self.assertIn("watchtower_run_incomplete", result["reasons"])
+
     def test_classifies_recoverable_for_dirty_workspace_and_open_pr(self):
         result = workspace_inventory.classify_workspace(
             self._facts(workspace_clean=False, open_pr={"url": "https://example/pr/1", "state": "open"})

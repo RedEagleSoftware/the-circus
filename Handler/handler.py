@@ -311,16 +311,109 @@ def apply_dependency_block_transition(item, labels):
     return transition_ok
 
 
-def collect_workspace_lifecycle_for_item(item):
+def _normalize_watchtower_run_state(status_payload):
+    if not isinstance(status_payload, dict):
+        return None
+
+    status_value = status_payload.get("status")
+    if isinstance(status_value, str) and status_value.strip():
+        return {
+            "status": status_value.strip(),
+            "outcome": status_payload.get("outcome"),
+            "stop_reason": status_payload.get("stop_reason"),
+            "success": status_payload.get("success"),
+        }
+
+    outcome_value = status_payload.get("outcome")
+    if isinstance(outcome_value, str) and outcome_value.strip():
+        return {
+            "status": outcome_value.strip(),
+            "outcome": outcome_value.strip(),
+            "stop_reason": status_payload.get("stop_reason"),
+            "success": status_payload.get("success"),
+        }
+
+    return None
+
+
+def _load_latest_watchtower_run_for_item(item):
+    run_state = get_run_state(item)
+    if isinstance(run_state, dict) and run_state.get("status_path"):
+        try:
+            status_payload = read_run_status(run_state)
+        except (OSError, TypeError, ValueError):
+            status_payload = None
+
+        normalized_state = _normalize_watchtower_run_state(status_payload)
+        if normalized_state is not None:
+            return normalized_state
+
+    try:
+        item_run_root = get_item_run_root(item)
+    except (OSError, TypeError, ValueError):
+        return None
+
+    try:
+        run_directories = sorted(
+            [
+                entry
+                for entry in os.listdir(item_run_root)
+                if os.path.isdir(os.path.join(item_run_root, entry)) and entry.startswith("run-")
+            ],
+            reverse=True,
+        )
+    except OSError:
+        return None
+
+    for run_directory in run_directories:
+        status_path = os.path.join(item_run_root, run_directory, RUN_STATUS_FILENAME)
+        try:
+            with open(status_path, "r", encoding="utf-8") as status_file:
+                status_payload = json.load(status_file)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            continue
+
+        normalized_state = _normalize_watchtower_run_state(status_payload)
+        if normalized_state is not None:
+            return normalized_state
+
+    return None
+
+
+def _build_workspace_lifecycle_item_for_recovery(item):
+    labels = item.get("labels") if isinstance(item, dict) else None
+    if not isinstance(labels, list):
+        return item
+
+    normalized_labels = []
+    for label in labels:
+        if isinstance(label, dict):
+            label_name = str(label.get("name") or "").strip().lower()
+            if label_name == LOCK_LABEL:
+                continue
+        elif str(label).strip().lower() == LOCK_LABEL:
+            continue
+        normalized_labels.append(label)
+
+    normalized_item = dict(item)
+    normalized_item["labels"] = normalized_labels
+    return normalized_item
+
+
+def collect_workspace_lifecycle_for_item(item, *, for_recovery=False):
     metadata = resolve_item_workspace_metadata(item)
     workspace_path = metadata.get("workspace_path")
     if not workspace_path:
         return None
 
+    inventory_item = _build_workspace_lifecycle_item_for_recovery(item) if for_recovery else item
+    watchtower_run = _load_latest_watchtower_run_for_item(item) if for_recovery else None
+
     return workspace_diagnostics.collect_workspace_lifecycle_diagnostic(
         repo_path=TARGET_REPO_PATH,
         workspace_path=workspace_path,
-        item=item,
+        item=inventory_item,
+        watchtower_run=watchtower_run,
         allow_cleanup=False,
         dry_run=True,
     )
@@ -502,7 +595,7 @@ def perform_locked_item_recovery(item, labels):
     if not is_locked(current_labels):
         return
 
-    workspace_lifecycle = collect_workspace_lifecycle_for_item(item)
+    workspace_lifecycle = collect_workspace_lifecycle_for_item(item, for_recovery=True)
     dependency_resolution = evaluate_item_dependencies(item)
     workflow_state = {
         "primary_state_labels": workflow.get_primary_workflow_state_labels(current_labels),
@@ -587,7 +680,7 @@ def perform_dependency_blocked_item_recovery(item, labels):
     if "state:dependency-blocked" not in current_labels:
         return False
 
-    workspace_lifecycle = collect_workspace_lifecycle_for_item(item)
+    workspace_lifecycle = collect_workspace_lifecycle_for_item(item, for_recovery=True)
     dependency_resolution = evaluate_item_dependencies(item)
     workflow_state = {
         "primary_state_labels": workflow.get_primary_workflow_state_labels(current_labels),
