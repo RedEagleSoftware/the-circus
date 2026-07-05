@@ -326,14 +326,14 @@ def collect_workspace_lifecycle_for_item(item):
     )
 
 
-def _build_recovery_comment(item, recovery_resolution):
+def _build_recovery_comment(item, recovery_resolution, *, condition_label="locked-item"):
     decision = recovery_resolution.get("decision")
     reason = recovery_resolution.get("reason")
     recommended_action = recovery_resolution.get("recommended_action")
     blockers = recovery_resolution.get("blockers") or []
 
     lines = [
-        "⚠️ Handler detected a locked-item recovery condition and stopped automatic recovery actions.",
+        f"⚠️ Handler detected a {condition_label} recovery condition and stopped automatic recovery actions.",
         "",
         f"- decision: `{decision}`",
         f"- reason: `{reason}`",
@@ -575,6 +575,107 @@ def perform_locked_item_recovery(item, labels):
         f"({recovery_reason}); no labels were modified by recovery logic."
     )
     return
+
+
+def perform_dependency_blocked_item_recovery(item, labels):
+    current_item, current_item_ok = get_current_item(item, fields="number,labels,title,url,body")
+    if not current_item_ok or not isinstance(current_item, dict):
+        return False
+
+    item.update(current_item)
+    current_labels = [label["name"] for label in item.get("labels", [])]
+    if "state:dependency-blocked" not in current_labels:
+        return False
+
+    workspace_lifecycle = collect_workspace_lifecycle_for_item(item)
+    dependency_resolution = evaluate_item_dependencies(item)
+    workflow_state = {
+        "primary_state_labels": workflow.get_primary_workflow_state_labels(current_labels),
+        "unsupported_state_labels": workflow.get_unsupported_state_labels(current_labels),
+    }
+    recovery_resolution = recovery.classify_locked_item_recovery(
+        workspace_lifecycle=workspace_lifecycle,
+        dependency_resolution=dependency_resolution,
+        workflow_state=workflow_state,
+    )
+    recovery_decision = recovery_resolution["decision"]
+    recovery_reason = recovery_resolution["reason"]
+    recovery_recommendation = recovery_resolution.get("recommended_action")
+    recovery_blockers = recovery_resolution.get("blockers") or []
+    recovery_non_destructive = bool(recovery_resolution.get("non_destructive", True))
+
+    item["workspace_lifecycle"] = workspace_lifecycle
+    item["dependency_resolution"] = dependency_resolution
+    item["recovery_decision"] = recovery_decision
+    item["recovery_reason"] = recovery_reason
+    diagnostic_config = {
+        "agent": "handler",
+        "mode": "diagnostic",
+        "model": "n/a",
+        "effort": "n/a",
+    }
+    _ensure_prelaunch_dependency_run_artifacts(item, "state:dependency-blocked", diagnostic_config)
+    update_run_status(
+        item,
+        workspace_lifecycle=workspace_lifecycle,
+        dependency_resolution=dependency_resolution,
+        recovery_decision=recovery_decision,
+        recovery_reason=recovery_reason,
+        recovery_recommendation=recovery_recommendation,
+        recovery_blockers=recovery_blockers,
+        recovery_non_destructive=recovery_non_destructive,
+        completed_at=utc_timestamp_now(),
+        exit_code=None,
+        success=False,
+        outcome="dependency-blocked",
+        stop_reason=recovery_reason,
+    )
+    comment_required_decisions = {
+        "blocked_unsafe",
+        "interrupted_run_blocked",
+        "dependency_resume_blocked",
+        "stale_lock_needs_human",
+        "safe_resume",
+    }
+    recovery_comment_signature = _build_recovery_comment_signature(recovery_resolution)
+    should_post_comment = (
+        recovery_decision in comment_required_decisions
+        and not _is_duplicate_recovery_comment(item, recovery_comment_signature)
+    )
+
+    if should_post_comment:
+        item["comment"] = _build_recovery_comment(
+            item,
+            recovery_resolution,
+            condition_label="dependency-blocked-item",
+        )
+        add_comment(item)
+
+    update_run_status(
+        item,
+        recovery_comment_posted=should_post_comment,
+        recovery_comment_signature=recovery_comment_signature,
+    )
+
+    _persist_locked_recovery_diagnostic_artifact(
+        item,
+        workspace_lifecycle=workspace_lifecycle,
+        dependency_resolution=dependency_resolution,
+        recovery_resolution=recovery_resolution,
+        comment_posted=should_post_comment,
+        comment_signature=recovery_comment_signature,
+    )
+    run_state = get_run_state(item)
+    if isinstance(run_state, dict) and all(
+        run_state.get(field) for field in ("status_path", "result_path", "launch_brief_path")
+    ):
+        write_run_result(item)
+
+    print(
+        f"[Poll] Skipping {item['type']} #{item['number']}: state:dependency-blocked "
+        f"({recovery_reason}); no labels were modified by recovery logic."
+    )
+    return True
 
 
 def execute_label_transition(item, workflow_name, transition_steps, success_message, failure_message):
@@ -3080,6 +3181,10 @@ def process_one_item(
         if is_locked(labels):
             perform_locked_item_recovery(item, labels)
             continue
+
+        if "state:dependency-blocked" in labels:
+            if perform_dependency_blocked_item_recovery(item, labels):
+                continue
 
         dispatch_resolution = resolve_dispatch_config(item, labels)
         if not dispatch_resolution:

@@ -475,6 +475,63 @@ class HandlerObservabilityTests(unittest.TestCase):
             items[0], ["state:dependency-blocked", handler.LOCK_LABEL]
         )
 
+    def test_process_one_item_evaluates_non_locked_dependency_blocked_item_recovery(self):
+        item = {
+            "type": "issue",
+            "number": 15,
+            "title": "Dependency blocked",
+            "url": "https://github.com/owner/repo/issues/15",
+            "labels": [{"name": "state:dependency-blocked"}],
+            "body": "## Circus Dependencies\n<!-- circus:dependencies v1 -->",
+        }
+
+        with patch.object(handler, "get_current_item", return_value=(item, True)):
+            with patch.object(
+                handler,
+                "collect_workspace_lifecycle_for_item",
+                return_value={"lifecycle_classification": "ready", "ambiguous": False},
+            ):
+                with patch.object(
+                    handler,
+                    "evaluate_item_dependencies",
+                    return_value={
+                        "declared": True,
+                        "status": "resolved",
+                        "dependencies": [],
+                        "unresolved": [],
+                        "diagnostic": "all declared dependencies are in non-dispatch states",
+                        "resume_state": "state:ready-for-dev",
+                    },
+                ):
+                    with patch.object(handler, "_ensure_prelaunch_dependency_run_artifacts") as mock_ensure_run_artifacts:
+                        with patch.object(handler, "update_run_status") as mock_update_run_status:
+                            with patch.object(handler, "_persist_locked_recovery_diagnostic_artifact"):
+                                with patch.object(
+                                    handler,
+                                    "get_run_state",
+                                    return_value={
+                                        "status_path": "C:/tmp/status.json",
+                                        "result_path": "C:/tmp/result.md",
+                                        "launch_brief_path": "C:/tmp/launch-brief.md",
+                                    },
+                                ):
+                                    with patch.object(handler, "write_run_result") as mock_write_run_result:
+                                        with patch.object(handler, "add_comment") as mock_add_comment:
+                                            with patch.object(handler, "resolve_dispatch_config") as mock_resolve_dispatch:
+                                                dispatched = handler.process_one_item([item])
+
+        self.assertEqual(dispatched, "no-dispatch")
+        mock_resolve_dispatch.assert_not_called()
+        mock_ensure_run_artifacts.assert_called_once()
+        self.assertEqual(mock_ensure_run_artifacts.call_args.args[1], "state:dependency-blocked")
+        self.assertEqual(mock_ensure_run_artifacts.call_args.args[2]["agent"], "handler")
+        self.assertEqual(mock_ensure_run_artifacts.call_args.args[2]["mode"], "diagnostic")
+        self.assertTrue(
+            any(call.kwargs.get("recovery_decision") == "safe_resume" for call in mock_update_run_status.call_args_list)
+        )
+        mock_add_comment.assert_called_once()
+        mock_write_run_result.assert_called_once_with(item)
+
     def test_process_one_item_writes_diagnostic_run_artifacts_when_prelaunch_dependencies_are_blocked(self):
         items = [
             {
