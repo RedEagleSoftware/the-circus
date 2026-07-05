@@ -153,7 +153,7 @@ blocked_by:
                     "title": "Review in progress",
                     "state": "OPEN",
                     "closed": False,
-                    "merged": False,
+                    "mergedAt": None,
                 },
                 True,
             )
@@ -175,7 +175,53 @@ blocked_by:
             100,
             repo="RedEagleSoftware/the-circus",
             run_command_fn=run_command_fn,
-            fields="number,title,url,state,closed,merged",
+            fields="number,title,url,state,closed,mergedAt",
+        )
+
+    def test_evaluate_dependencies_accepts_merged_pull_request_from_merged_at_field(self):
+        body = """
+## Circus Dependencies
+<!-- circus:dependencies v1 -->
+```yaml
+resume_state: state:ready-for-architecture
+blocked_by:
+  - type: pull_request
+    repo: RedEagleSoftware/the-circus
+    number: 100
+    satisfies_on: merged
+```
+"""
+
+        get_item_fn = Mock(
+            return_value=(
+                {
+                    "number": 100,
+                    "title": "Merged PR",
+                    "state": "CLOSED",
+                    "closed": True,
+                    "mergedAt": "2026-07-05T12:00:00Z",
+                },
+                True,
+            )
+        )
+
+        run_command_fn = Mock()
+
+        resolution = dependencies.evaluate_dependencies(
+            body,
+            default_repo="RedEagleSoftware/the-circus",
+            run_command_fn=run_command_fn,
+            get_item_fn=get_item_fn,
+        )
+
+        self.assertEqual(resolution["status"], "resolved")
+        self.assertFalse(resolution["dependencies"][0]["blocking"])
+        get_item_fn.assert_called_once_with(
+            "pr",
+            100,
+            repo="RedEagleSoftware/the-circus",
+            run_command_fn=run_command_fn,
+            fields="number,title,url,state,closed,mergedAt",
         )
 
     def test_evaluate_dependencies_blocks_malformed_v1_metadata(self):

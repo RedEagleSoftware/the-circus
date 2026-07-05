@@ -328,6 +328,9 @@ def _build_dependency_resolution_entry(dependency, dependency_item):
             resolution_reason = "issue dependency is closed with COMPLETED"
     else:
         merged = bool(dependency_item.get("merged"))
+        if not merged:
+            merged_at = dependency_item.get("mergedAt") or dependency_item.get("merged_at")
+            merged = bool(merged_at)
         dependency_blocking = not merged
         if dependency_blocking:
             resolution_reason = "pull request dependency is not merged"
@@ -361,7 +364,7 @@ def _dependency_lookup_request(dependency):
     if dependency_type == "pull_request":
         return {
             "item_type": "pr",
-            "fields": "number,title,url,state,closed,merged",
+            "fields": "number,title,url,state,closed,mergedAt",
         }
 
     return None
