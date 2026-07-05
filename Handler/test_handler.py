@@ -283,6 +283,78 @@ class HandlerObservabilityTests(unittest.TestCase):
             any("[Poll] Skipping issue #10" in line and "lock label" in line for line in printed_lines)
         )
 
+    def test_perform_locked_item_recovery_is_non_destructive_for_safe_resume(self):
+        item = {
+            "type": "issue",
+            "number": 10,
+            "title": "Locked candidate",
+            "labels": [{"name": handler.LOCK_LABEL}],
+        }
+
+        with patch.object(
+            handler,
+            "collect_workspace_lifecycle_for_item",
+            return_value={"lifecycle_classification": "recoverable", "ambiguous": False},
+        ):
+            with patch.object(handler, "get_current_item", return_value=(item, True)):
+                with patch.object(
+                    handler,
+                    "evaluate_item_dependencies",
+                    return_value={"declared": False, "status": "not-declared", "diagnostic": "no dependencies declared"},
+                ):
+                    with patch.object(handler, "update_run_status") as mock_update_run_status:
+                        with patch.object(handler, "unlock_item") as mock_unlock:
+                            with patch.object(handler, "apply_dependency_block_transition") as mock_transition:
+                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                    handler.perform_locked_item_recovery(item, [handler.LOCK_LABEL])
+
+        mock_unlock.assert_not_called()
+        mock_transition.assert_not_called()
+        mock_add_comment.assert_not_called()
+        self.assertTrue(
+            any(call.kwargs.get("recovery_decision") == "safe_resume" for call in mock_update_run_status.call_args_list)
+        )
+        self.assertTrue(
+            any(call.kwargs.get("recovery_non_destructive") is True for call in mock_update_run_status.call_args_list)
+        )
+
+    def test_perform_locked_item_recovery_suppresses_duplicate_recovery_comment(self):
+        item = {
+            "type": "issue",
+            "number": 10,
+            "title": "Locked candidate",
+            "labels": [{"name": handler.LOCK_LABEL}],
+        }
+        expected_signature = "blocked_unsafe|workspace lifecycle is ambiguous|workspace lifecycle is ambiguous"
+
+        with patch.object(
+            handler,
+            "collect_workspace_lifecycle_for_item",
+            return_value={"lifecycle_classification": "recoverable", "ambiguous": True},
+        ):
+            with patch.object(handler, "get_current_item", return_value=(item, True)):
+                with patch.object(
+                    handler,
+                    "evaluate_item_dependencies",
+                    return_value={"declared": True, "status": "resolved", "diagnostic": "all dependencies are resolved"},
+                ):
+                    with patch.object(handler, "get_run_state", return_value={"run_dir": "C:/tmp/run"}):
+                        with patch.object(
+                            handler,
+                            "read_run_status",
+                            side_effect=[{}, {"recovery_comment_signature": expected_signature}],
+                        ):
+                            with patch.object(handler, "update_run_status") as mock_update_run_status:
+                                with patch.object(handler, "add_comment") as mock_add_comment:
+                                    handler.perform_locked_item_recovery(item, [handler.LOCK_LABEL])
+                                    handler.perform_locked_item_recovery(item, [handler.LOCK_LABEL])
+
+        self.assertEqual(mock_add_comment.call_count, 1)
+        self.assertIn("No lock labels or workflow labels were changed", item["comment"])
+        self.assertTrue(
+            any(call.kwargs.get("recovery_comment_signature") == expected_signature for call in mock_update_run_status.call_args_list)
+        )
+
     def test_process_one_item_releases_lock_when_launch_brief_generation_fails(self):
         item = {
             "type": "issue",

@@ -325,6 +325,49 @@ def collect_workspace_lifecycle_for_item(item):
     )
 
 
+def _build_recovery_comment(item, recovery_resolution):
+    decision = recovery_resolution.get("decision")
+    reason = recovery_resolution.get("reason")
+    recommended_action = recovery_resolution.get("recommended_action")
+    blockers = recovery_resolution.get("blockers") or []
+
+    lines = [
+        "⚠️ Handler detected a locked-item recovery condition and stopped automatic recovery actions.",
+        "",
+        f"- decision: `{decision}`",
+        f"- reason: `{reason}`",
+        f"- non-destructive: `{recovery_resolution.get('non_destructive')}`",
+    ]
+
+    if blockers:
+        lines.append("- blockers:")
+        for blocker in blockers:
+            lines.append(f"  - {blocker}")
+
+    if isinstance(recommended_action, str) and recommended_action.strip():
+        lines.extend(["", "Recommended human action:", recommended_action.strip()])
+
+    lines.extend(["", "No lock labels or workflow labels were changed by Handler."])
+    return "\n".join(lines)
+
+
+def _build_recovery_comment_signature(recovery_resolution):
+    decision = recovery_resolution.get("decision")
+    reason = recovery_resolution.get("reason")
+    blockers = recovery_resolution.get("blockers") or []
+    normalized_blockers = [str(blocker).strip() for blocker in blockers if isinstance(blocker, str) and blocker.strip()]
+    return "|".join([str(decision), str(reason), "::".join(normalized_blockers)])
+
+
+def _is_duplicate_recovery_comment(item, signature):
+    run_state = get_run_state(item)
+    if not run_state:
+        return False
+
+    status_payload = read_run_status(run_state)
+    return status_payload.get("recovery_comment_signature") == signature
+
+
 def perform_locked_item_recovery(item, labels):
     current_item, current_item_ok = get_current_item(item, fields="number,labels,title,url,body")
     if not current_item_ok or not isinstance(current_item, dict):
@@ -342,8 +385,11 @@ def perform_locked_item_recovery(item, labels):
         workspace_lifecycle=workspace_lifecycle,
         dependency_resolution=dependency_resolution,
     )
-    recovery_decision = recovery_resolution["recovery_decision"]
-    recovery_reason = recovery_resolution["recovery_reason"]
+    recovery_decision = recovery_resolution["decision"]
+    recovery_reason = recovery_resolution["reason"]
+    recovery_recommendation = recovery_resolution.get("recommended_action")
+    recovery_blockers = recovery_resolution.get("blockers") or []
+    recovery_non_destructive = bool(recovery_resolution.get("non_destructive", True))
 
     item["workspace_lifecycle"] = workspace_lifecycle
     item["dependency_resolution"] = dependency_resolution
@@ -355,29 +401,37 @@ def perform_locked_item_recovery(item, labels):
         dependency_resolution=dependency_resolution,
         recovery_decision=recovery_decision,
         recovery_reason=recovery_reason,
+        recovery_recommendation=recovery_recommendation,
+        recovery_blockers=recovery_blockers,
+        recovery_non_destructive=recovery_non_destructive,
+    )
+    comment_required_decisions = {
+        "blocked_unsafe",
+        "interrupted_run_blocked",
+        "dependency_resume_blocked",
+        "stale_lock_needs_human",
+    }
+    recovery_comment_signature = _build_recovery_comment_signature(recovery_resolution)
+    should_post_comment = (
+        recovery_decision in comment_required_decisions
+        and not _is_duplicate_recovery_comment(item, recovery_comment_signature)
     )
 
-    if not recovery_resolution.get("should_unlock"):
-        print(
-            f"[Poll] Skipping {item['type']} #{item['number']}: lock label '{LOCK_LABEL}' already present "
-            f"({recovery_reason})."
-        )
-        return
+    if should_post_comment:
+        item["comment"] = _build_recovery_comment(item, recovery_resolution)
+        add_comment(item)
 
-    if recovery_resolution.get("should_dependency_block"):
-        apply_dependency_block_transition(item, current_labels)
-        return
+    update_run_status(
+        item,
+        recovery_comment_posted=should_post_comment,
+        recovery_comment_signature=recovery_comment_signature,
+    )
 
-    if unlock_item(item):
-        print(
-            f"[Recovery] Unlocked stale {item['type']} #{item['number']} after lifecycle review "
-            f"({recovery_reason})."
-        )
-    else:
-        print(
-            f"[Recovery] Failed to unlock stale {item['type']} #{item['number']} after lifecycle review; "
-            "manual cleanup may be required."
-        )
+    print(
+        f"[Poll] Skipping {item['type']} #{item['number']}: lock label '{LOCK_LABEL}' already present "
+        f"({recovery_reason}); no labels were modified by recovery logic."
+    )
+    return
 
 
 def execute_label_transition(item, workflow_name, transition_steps, success_message, failure_message):
