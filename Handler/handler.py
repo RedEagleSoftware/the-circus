@@ -10,15 +10,18 @@ from dotenv import load_dotenv
 
 from Handler import agents
 from Handler import config as handler_config
+from Handler import dependencies
 from Handler import developer_flow
 from Handler import git_workspace
 from Handler import github_client
 from Handler import paths as handler_paths
+from Handler import recovery
 from Handler import review_flow
 from Handler import target_instructions
 from Handler import watchtower
 from Handler import workflow
 from Handler import workflow_classification
+from Handler import workspace_diagnostics
 from Handler.workflow_states import (
     HUMAN_REVIEW_LABEL,
     IMPLEMENTATION_PLAN_REVIEW_LABEL,
@@ -276,6 +279,105 @@ def remove_label(item, label):
 
 def add_label(item, label):
     return github_client.add_label(item, label, repo=REPO, run_command_fn=run_command)
+
+
+def evaluate_item_dependencies(item):
+    return dependencies.evaluate_dependencies(
+        item.get("body"),
+        default_repo=REPO,
+        run_command_fn=run_command,
+    )
+
+
+def apply_dependency_block_transition(item, labels):
+    dispatchable_states = workflow.get_dispatchable_state_labels(labels)
+    transition_steps = [("remove", LOCK_LABEL)]
+    if dispatchable_states:
+        transition_steps.append(("remove", dispatchable_states[0]))
+    transition_steps.append(("add", "state:dependency-blocked"))
+
+    transition_ok = execute_label_transition(
+        item,
+        workflow_name="Dependency Recovery",
+        transition_steps=transition_steps,
+        success_message="[Dispatch] Item #{number} moved to dependency-blocked after stale-run recovery.",
+        failure_message=(
+            "[Dispatch] Dependency recovery transition encountered label update failures for issue #{number}; "
+            "manual inspection is required."
+        ),
+    )
+
+    return transition_ok
+
+
+def collect_workspace_lifecycle_for_item(item):
+    metadata = resolve_item_workspace_metadata(item)
+    workspace_path = metadata.get("workspace_path")
+    if not workspace_path:
+        return None
+
+    return workspace_diagnostics.collect_workspace_lifecycle_diagnostic(
+        repo_path=TARGET_REPO_PATH,
+        workspace_path=workspace_path,
+        item=item,
+        allow_cleanup=False,
+        dry_run=True,
+    )
+
+
+def perform_locked_item_recovery(item, labels):
+    current_item, current_item_ok = get_current_item(item, fields="number,labels,title,url,body")
+    if not current_item_ok or not isinstance(current_item, dict):
+        print(f"[Poll] Skipping {item['type']} #{item['number']}: lock label '{LOCK_LABEL}' already present.")
+        return
+
+    item.update(current_item)
+    current_labels = [label["name"] for label in item.get("labels", [])]
+    if not is_locked(current_labels):
+        return
+
+    workspace_lifecycle = collect_workspace_lifecycle_for_item(item)
+    dependency_resolution = evaluate_item_dependencies(item)
+    recovery_resolution = recovery.classify_locked_item_recovery(
+        workspace_lifecycle=workspace_lifecycle,
+        dependency_resolution=dependency_resolution,
+    )
+    recovery_decision = recovery_resolution["recovery_decision"]
+    recovery_reason = recovery_resolution["recovery_reason"]
+
+    item["workspace_lifecycle"] = workspace_lifecycle
+    item["dependency_resolution"] = dependency_resolution
+    item["recovery_decision"] = recovery_decision
+    item["recovery_reason"] = recovery_reason
+    update_run_status(
+        item,
+        workspace_lifecycle=workspace_lifecycle,
+        dependency_resolution=dependency_resolution,
+        recovery_decision=recovery_decision,
+        recovery_reason=recovery_reason,
+    )
+
+    if not recovery_resolution.get("should_unlock"):
+        print(
+            f"[Poll] Skipping {item['type']} #{item['number']}: lock label '{LOCK_LABEL}' already present "
+            f"({recovery_reason})."
+        )
+        return
+
+    if recovery_resolution.get("should_dependency_block"):
+        apply_dependency_block_transition(item, current_labels)
+        return
+
+    if unlock_item(item):
+        print(
+            f"[Recovery] Unlocked stale {item['type']} #{item['number']} after lifecycle review "
+            f"({recovery_reason})."
+        )
+    else:
+        print(
+            f"[Recovery] Failed to unlock stale {item['type']} #{item['number']} after lifecycle review; "
+            "manual cleanup may be required."
+        )
 
 
 def execute_label_transition(item, workflow_name, transition_steps, success_message, failure_message):
@@ -2779,7 +2881,11 @@ def process_one_item(
         labels = [label["name"] for label in item["labels"]]
 
         if is_locked(labels):
-            print(f"[Poll] Skipping {item['type']} #{item['number']}: lock label '{LOCK_LABEL}' already present.")
+            dispatchable_states = workflow.get_dispatchable_state_labels(labels)
+            if not dispatchable_states:
+                print(f"[Poll] Skipping {item['type']} #{item['number']}: lock label '{LOCK_LABEL}' already present.")
+                continue
+            perform_locked_item_recovery(item, labels)
             continue
 
         dispatch_resolution = resolve_dispatch_config(item, labels)
@@ -2823,6 +2929,16 @@ def process_one_item(
         if revalidation_result:
             return revalidation_result
         item = current_item
+
+        dependency_resolution = evaluate_item_dependencies(item)
+        item["dependency_resolution"] = dependency_resolution
+        update_run_status(item, dependency_resolution=dependency_resolution)
+        if dependency_resolution.get("status") == "blocked":
+            print(
+                f"[Poll] Skipping {item['type']} #{item['number']}: unresolved dependencies declared in issue body."
+            )
+            apply_dependency_block_transition(item, [label["name"] for label in item.get("labels", [])])
+            return "dependency-blocked"
 
         item.pop("working_branch", None)
         item.pop("execution_branch", None)
