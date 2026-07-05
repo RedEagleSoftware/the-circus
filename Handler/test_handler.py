@@ -6348,6 +6348,74 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("  - PR: `PR #71 (open) https://github.com/owner/repo/pull/71`", result_content)
         self.assertIn("  - recommended action: Recover workspace before reassignment or cleanup.", result_content)
 
+    def test_write_run_result_renders_recovery_workspace_lifecycle_when_lifecycle_diagnostics_missing(self):
+        item = {
+            "type": "issue",
+            "number": 90,
+            "title": "Recovery lifecycle diagnostics",
+            "working_branch": "circus/issue-90-recovery-lifecycle-diagnostics",
+        }
+        config = {
+            "agent": "handler",
+            "mode": "diagnostic",
+            "model": "n/a",
+            "effort": "low",
+        }
+        workspace_lifecycle = {
+            "workspace_path": "C:/target/repo-worktrees/owner-repo/issue-90",
+            "issue_association": "issue #90",
+            "pr_association": "none",
+            "branch_name": "circus/issue-90-recovery-lifecycle-diagnostics",
+            "expected_branch": "circus/issue-90-recovery-lifecycle-diagnostics",
+            "current_branch": "circus/issue-90-recovery-lifecycle-diagnostics",
+            "lifecycle_classification": "ready",
+            "classification_reasons": ["workspace_clean"],
+            "ambiguous": False,
+            "ambiguity_indicators": [],
+            "recommended_operator_action": "Resume handler processing.",
+            "source": "workspace_inventory.classify_workspace",
+            "workspace": "C:/target/repo-worktrees/owner-repo/issue-90",
+            "state": "ready",
+            "branch": "circus/issue-90-recovery-lifecycle-diagnostics",
+            "issue": "issue #90",
+            "pr": "none",
+            "reasons": ["workspace_clean"],
+            "recommended_action": "Resume handler processing.",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            launch_brief_path = os.path.join(temp_dir, "owner-repo", "issue-90", "run-001-diagnostic", "launch-brief.md")
+            os.makedirs(os.path.dirname(launch_brief_path), exist_ok=True)
+            with open(launch_brief_path, "w", encoding="utf-8") as launch_brief_file:
+                launch_brief_file.write("# Launch Brief\n")
+
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                    handler.initialize_run_status(item, "state:dependency-blocked", config, launch_brief_path)
+                    handler.update_run_status(
+                        item,
+                        started_at="2026-07-05T18:00:00Z",
+                        completed_at="2026-07-05T18:00:30Z",
+                        exit_code=0,
+                        success=True,
+                        outcome="success",
+                        stop_reason=None,
+                        workspace_lifecycle=workspace_lifecycle,
+                        recovery_decision="safe_resume",
+                        recovery_reason="stale_lock_without_active_run",
+                    )
+                    handler.write_run_result(item)
+
+            result_path = os.path.join(os.path.dirname(launch_brief_path), "result.md")
+            with open(result_path, "r", encoding="utf-8") as result_file:
+                result_content = result_file.read()
+
+        lifecycle_section = result_content.split("## Lifecycle Diagnostics", 1)[1].split("## Recovery", 1)[0]
+        self.assertNotIn("- none", lifecycle_section)
+        self.assertIn("- workspace: `C:/target/repo-worktrees/owner-repo/issue-90`", lifecycle_section)
+        self.assertIn("  - state: `ready`", lifecycle_section)
+        self.assertIn("  - reasons: `workspace_clean`", lifecycle_section)
+
     def test_ensure_shared_artifacts_does_not_overwrite_existing_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             item_run_root = os.path.join(temp_dir, "issue-7")
