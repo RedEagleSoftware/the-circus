@@ -1363,6 +1363,9 @@ def parse_planner_result_v1(body):
             planner_result.get("human_decision_ledger_v1"),
             recommendation_comment_id=recommendation_comment_id,
             generated_issue_numbers=[issue.get("issue_number") for issue in normalized_generated_issues],
+            generated_issue_transition_targets=[
+                issue.get("next_state_after_approval") for issue in normalized_generated_issues
+            ],
         )
 
         return {
@@ -1427,7 +1430,14 @@ def parse_planner_result_from_markdown_sections(body):
         next_state_after_approval = None
         for generated_issue_line in generated_issue_block.get("lines", []):
             normalized_generated_issue_line = generated_issue_line.strip().lower()
-            if "next workflow state after human approval" not in normalized_generated_issue_line:
+            has_explicit_next_state_marker = (
+                "next workflow state after human approval" in normalized_generated_issue_line
+                or "suggested next workflow state after human approval" in normalized_generated_issue_line
+            )
+            has_compact_next_state_format = bool(
+                re.search(r"^[-*+]?\s*#?\d+\s*[—-]\s*state:[a-z0-9-]+", normalized_generated_issue_line)
+            )
+            if not has_explicit_next_state_marker and not has_compact_next_state_format:
                 continue
 
             next_state_match = STATE_LABEL_PATTERN.search(generated_issue_line)
@@ -1470,6 +1480,9 @@ def parse_planner_result_from_markdown_sections(body):
             None,
             recommendation_comment_id=recommendation_comment_id,
             generated_issue_numbers=[issue.get("issue_number") for issue in normalized_generated_issues],
+            generated_issue_transition_targets=[
+                issue.get("next_state_after_approval") for issue in normalized_generated_issues
+            ],
         ),
     }
 
@@ -1687,6 +1700,9 @@ def parse_planner_result_v1_yaml_block(block_text):
             planner_fields.get("human_decision_ledger_v1"),
             recommendation_comment_id=planner_fields.get("recommendation_comment_id"),
             generated_issue_numbers=[issue.get("issue_number") for issue in normalized_generated_issues],
+            generated_issue_transition_targets=[
+                issue.get("next_state_after_approval") for issue in normalized_generated_issues
+            ],
         ),
     }
 

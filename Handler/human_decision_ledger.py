@@ -97,13 +97,173 @@ def _normalize_recommendation_comment_ids(raw_human_decision_ledger, diagnostics
     return fallback_recommendation_comment_ids
 
 
+def _normalize_human_decision_source(source_value, diagnostics):
+    if source_value is None:
+        return {
+            "repo": None,
+            "number": None,
+            "url": None,
+        }
+
+    if not isinstance(source_value, dict):
+        diagnostics.append("source must be an object")
+        return {
+            "repo": None,
+            "number": None,
+            "url": None,
+        }
+
+    source_repo = _normalize_non_empty_string(source_value.get("repo"), diagnostics, field_name="source.repo")
+    source_number = _coerce_positive_int(source_value.get("number"))
+    if source_value.get("number") is not None and source_number is None:
+        diagnostics.append("source.number must be a positive integer")
+    source_url = _normalize_non_empty_string(source_value.get("url"), diagnostics, field_name="source.url")
+
+    return {
+        "repo": source_repo,
+        "number": source_number,
+        "url": source_url,
+    }
+
+
+def _normalize_human_decision_accepted_recommendation(recommendation_value, diagnostics):
+    if recommendation_value is None:
+        return {
+            "comment_ids": [],
+            "comment_urls": [],
+        }
+
+    if not isinstance(recommendation_value, dict):
+        diagnostics.append("accepted_recommendation must be an object")
+        return {
+            "comment_ids": [],
+            "comment_urls": [],
+        }
+
+    normalized_comment_ids = _normalize_positive_int_list(
+        recommendation_value.get("comment_ids"),
+        diagnostics,
+        field_name="accepted_recommendation.comment_ids",
+    )
+    normalized_comment_urls = _normalize_string_list(
+        recommendation_value.get("comment_urls"),
+        diagnostics,
+        field_name="accepted_recommendation.comment_urls",
+    )
+    return {
+        "comment_ids": normalized_comment_ids or [],
+        "comment_urls": normalized_comment_urls or [],
+    }
+
+
+def _normalize_human_decision_selection(selection_value, diagnostics):
+    if selection_value is None:
+        return {
+            "generated_issues": [],
+        }
+
+    if not isinstance(selection_value, dict):
+        diagnostics.append("selection must be an object")
+        return {
+            "generated_issues": [],
+        }
+
+    generated_issues = selection_value.get("generated_issues")
+    if generated_issues is None:
+        return {
+            "generated_issues": [],
+        }
+
+    if not isinstance(generated_issues, list):
+        diagnostics.append("selection.generated_issues must be a list")
+        return {
+            "generated_issues": [],
+        }
+
+    normalized_generated_issues = []
+    seen_issue_numbers = set()
+    for generated_issue in generated_issues:
+        if not isinstance(generated_issue, dict):
+            diagnostics.append("selection.generated_issues contains an invalid entry")
+            return {
+                "generated_issues": [],
+            }
+
+        issue_number = _coerce_positive_int(generated_issue.get("issue_number"))
+        if issue_number is None:
+            issue_number = _coerce_positive_int(generated_issue.get("number"))
+        if issue_number is None:
+            diagnostics.append("selection.generated_issues contains an invalid issue number")
+            return {
+                "generated_issues": [],
+            }
+
+        issue_url = _normalize_non_empty_string(
+            generated_issue.get("issue_url"),
+            diagnostics,
+            field_name="selection.generated_issues.issue_url",
+        )
+        if issue_url is None:
+            issue_url = _normalize_non_empty_string(
+                generated_issue.get("url"),
+                diagnostics,
+                field_name="selection.generated_issues.url",
+            )
+
+        transition_target = _normalize_non_empty_string(
+            generated_issue.get("next_state_after_approval"),
+            diagnostics,
+            field_name="selection.generated_issues.next_state_after_approval",
+        )
+        if transition_target is not None:
+            transition_target = transition_target.lower()
+
+        if issue_number in seen_issue_numbers:
+            continue
+
+        seen_issue_numbers.add(issue_number)
+        normalized_generated_issues.append(
+            {
+                "issue_number": issue_number,
+                "issue_url": issue_url,
+                "next_state_after_approval": transition_target,
+            }
+        )
+
+    return {
+        "generated_issues": normalized_generated_issues,
+    }
+
+
+def _normalize_human_decision_applied_transitions(applied_transitions_value, diagnostics):
+    if applied_transitions_value is None:
+        return {
+            "targets": [],
+        }
+
+    if not isinstance(applied_transitions_value, dict):
+        diagnostics.append("applied_transitions must be an object")
+        return {
+            "targets": [],
+        }
+
+    normalized_targets = _normalize_string_list(
+        applied_transitions_value.get("targets"),
+        diagnostics,
+        field_name="applied_transitions.targets",
+    )
+    return {
+        "targets": normalized_targets or [],
+    }
+
+
 def normalize_human_decision_ledger(
     raw_human_decision_ledger,
     *,
     recommendation_comment_id=None,
     generated_issue_numbers=None,
     generated_issue_transition_targets=None,
-):
+): 
     diagnostics = []
     status = "missing"
 
@@ -147,30 +307,66 @@ def normalize_human_decision_ledger(
         diagnostics.append("unsupported human decision ledger version")
         status = "invalid"
 
-    recommendation_comment_ids = _normalize_recommendation_comment_ids(raw_human_decision_ledger, diagnostics)
+    raw_human_decision_payload = raw_human_decision_ledger
+    if isinstance(raw_human_decision_ledger.get("human_decision_v1"), dict):
+        raw_human_decision_payload = raw_human_decision_ledger.get("human_decision_v1")
+
+    source = _normalize_human_decision_source(raw_human_decision_payload.get("source"), diagnostics)
+    accepted_recommendation = _normalize_human_decision_accepted_recommendation(
+        raw_human_decision_payload.get("accepted_recommendation"),
+        diagnostics,
+    )
+    selection = _normalize_human_decision_selection(raw_human_decision_payload.get("selection"), diagnostics)
+    applied_transitions = _normalize_human_decision_applied_transitions(
+        raw_human_decision_payload.get("applied_transitions"),
+        diagnostics,
+    )
+
+    approval_payload = raw_human_decision_payload.get("approval")
+    if approval_payload is not None and not isinstance(approval_payload, dict):
+        diagnostics.append("approval must be an object")
+        approval_payload = {}
+    if approval_payload is None:
+        approval_payload = {}
+
+    recommendation_comment_ids = _normalize_recommendation_comment_ids(raw_human_decision_payload, diagnostics)
+    if not recommendation_comment_ids:
+        recommendation_comment_ids = accepted_recommendation.get("comment_ids", [])
+        if recommendation_comment_ids:
+            diagnostics.append("recommendation_comment_ids defaulted from accepted_recommendation.comment_ids")
+
     selected_generated_issue_numbers = _normalize_positive_int_list(
-        raw_human_decision_ledger.get("selected_generated_issue_numbers"),
+        raw_human_decision_payload.get("selected_generated_issue_numbers"),
         diagnostics,
         field_name="selected_generated_issue_numbers",
     )
+    if not selected_generated_issue_numbers:
+        selected_generated_issue_numbers = [
+            generated_issue.get("issue_number")
+            for generated_issue in selection.get("generated_issues", [])
+            if isinstance(generated_issue, dict) and generated_issue.get("issue_number") is not None
+        ]
+        if selected_generated_issue_numbers:
+            diagnostics.append("selected_generated_issue_numbers defaulted from selection.generated_issues")
+
     decision_type = _normalize_non_empty_string(
-        raw_human_decision_ledger.get("decision_type"),
+        raw_human_decision_payload.get("decision_type"),
         diagnostics,
         field_name="decision_type",
     )
     approved_by = _normalize_non_empty_string(
-        raw_human_decision_ledger.get("approved_by"),
+        raw_human_decision_payload.get("approved_by") or approval_payload.get("approved_by"),
         diagnostics,
         field_name="approved_by",
     )
     decision_summary = _normalize_non_empty_string(
-        raw_human_decision_ledger.get("decision_summary"),
+        raw_human_decision_payload.get("decision_summary") or approval_payload.get("decision_summary"),
         diagnostics,
         field_name="decision_summary",
     )
     if decision_summary is None:
         decision_summary = _normalize_non_empty_string(
-            raw_human_decision_ledger.get("rationale_summary"),
+            raw_human_decision_payload.get("rationale_summary") or approval_payload.get("rationale_summary"),
             diagnostics,
             field_name="rationale_summary",
         )
@@ -178,15 +374,36 @@ def normalize_human_decision_ledger(
             diagnostics.append("decision_summary defaulted from rationale_summary")
 
     selected_generated_issue_urls = _normalize_string_list(
-        raw_human_decision_ledger.get("selected_generated_issue_urls"),
+        raw_human_decision_payload.get("selected_generated_issue_urls"),
         diagnostics,
         field_name="selected_generated_issue_urls",
     )
+    if not selected_generated_issue_urls:
+        selected_generated_issue_urls = [
+            generated_issue.get("issue_url")
+            for generated_issue in selection.get("generated_issues", [])
+            if isinstance(generated_issue, dict) and generated_issue.get("issue_url")
+        ]
+        if selected_generated_issue_urls:
+            diagnostics.append("selected_generated_issue_urls defaulted from selection.generated_issues")
+
     applied_transition_targets = _normalize_string_list(
-        raw_human_decision_ledger.get("applied_transition_targets"),
+        raw_human_decision_payload.get("applied_transition_targets"),
         diagnostics,
         field_name="applied_transition_targets",
     )
+    if not applied_transition_targets:
+        applied_transition_targets = applied_transitions.get("targets", [])
+        if applied_transition_targets:
+            diagnostics.append("applied_transition_targets defaulted from applied_transitions.targets")
+    if not applied_transition_targets:
+        applied_transition_targets = [
+            generated_issue.get("next_state_after_approval")
+            for generated_issue in selection.get("generated_issues", [])
+            if isinstance(generated_issue, dict) and generated_issue.get("next_state_after_approval")
+        ]
+        if applied_transition_targets:
+            diagnostics.append("applied_transition_targets defaulted from selection.generated_issues")
 
     if (
         recommendation_comment_ids is None

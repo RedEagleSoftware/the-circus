@@ -4188,7 +4188,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                     )
 
         self.assertFalse(approved)
-        self.assertEqual(mock_get_item.call_count, 2)
+        self.assertEqual(mock_get_item.call_count, 1)
         mock_replace_label.assert_not_called()
         mock_add_comment.assert_not_called()
         for call in mock_get_item.call_args_list:

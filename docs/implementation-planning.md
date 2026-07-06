@@ -170,6 +170,11 @@ Optional sections may be included when needed:
 - `### Risks And Open Questions`
 - `### Deferred Work`
 
+Parser compatibility notes for `READY` planner artifacts:
+
+- In `### Generated Issues`, compact bullets like `- #201 — state:ready-for-dev` are accepted when the issue reference and target workflow state are present.
+- In `planner_result_v1.human_decision_ledger_v1`, planners may provide either the flat v1 fields (`recommendation_comment_ids`, `selected_generated_issue_numbers`, `applied_transition_targets`, etc.) or a nested `human_decision_v1` payload; runtime normalization maps nested values into the canonical flat contract.
+
 If the planner cannot produce a valid plan, it should still write `implementation-plan.md` with blocker or escalation context, but the GitHub comment should not use `## Implementation Plan` as if a valid plan exists.
 
 For `BLOCKED`, the planner should publish a clearly titled blocker comment, such as `## Implementation Planning Blocked`, and include:
