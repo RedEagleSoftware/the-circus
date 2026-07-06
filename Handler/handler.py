@@ -2021,6 +2021,14 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
         )
         return False
 
+    stale_check_status = normalized_human_decision_ledger.get("stale_check", {}).get("status")
+    if not human_decision_ledger.is_dispatch_approval_stale_check_fresh(normalized_human_decision_ledger):
+        print(
+            "[Approval] planner_result_v1 human_decision_ledger_v1 stale_check.status must be "
+            f"'fresh' before approval (found: {stale_check_status!r})."
+        )
+        return False
+
     if outcome != "READY":
         print(f"[Approval] planner_result_v1 outcome must be READY before approval (found: {outcome!r}).")
         return False

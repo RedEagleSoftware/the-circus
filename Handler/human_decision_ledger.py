@@ -437,6 +437,18 @@ def _normalize_human_decision_stale_check(stale_check_value, diagnostics):
     }
 
 
+def is_dispatch_approval_stale_check_fresh(human_decision_ledger):
+    if not isinstance(human_decision_ledger, dict):
+        return False
+
+    stale_check = human_decision_ledger.get("stale_check")
+    if not isinstance(stale_check, dict):
+        return False
+
+    stale_check_status = stale_check.get("status")
+    return stale_check_status == "fresh"
+
+
 def _normalize_human_decision_evidence(evidence_value, diagnostics):
     default_evidence = {
         "github_comment_url": None,
