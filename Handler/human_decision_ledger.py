@@ -474,6 +474,43 @@ def _normalize_human_decision_evidence(evidence_value, diagnostics):
     }
 
 
+def _has_handoff_source_identity(source):
+    if not isinstance(source, dict):
+        return False
+
+    return bool(
+        source.get("repo")
+        or source.get("issue_number") is not None
+        or source.get("accepted_recommendation_url")
+        or source.get("accepted_recommendation_comment_id") is not None
+        or source.get("roadmap_pr") is not None
+        or source.get("planner_issue_number") is not None
+        or source.get("planner_result_comment_id") is not None
+        or source.get("implementation_plan_artifact")
+    )
+
+
+def _has_handoff_decision_details(decision):
+    if not isinstance(decision, dict):
+        return False
+
+    return bool(
+        decision.get("selected_next_state")
+        or decision.get("next_state_options")
+        or decision.get("generated_issues")
+    )
+
+
+def _format_yaml_scalar(value):
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return repr(value)
+
+
 def normalize_human_decision_ledger(
     raw_human_decision_ledger,
     *,
@@ -678,14 +715,22 @@ def normalize_human_decision_ledger(
         decision_type = "implementation_plan_review_approval"
         diagnostics.append("decision_type defaulted from workflow")
 
-    if approved_by is None:
+    handoff_shape_present = bool(
+        isinstance(raw_human_decision_payload, dict)
+        and any(
+            field in raw_human_decision_payload
+            for field in ("source", "decision", "stale_check", "evidence")
+        )
+    )
+
+    if approved_by is None and not handoff_shape_present:
         diagnostics.append("approved_by missing")
 
-    if decision_summary is None:
+    if decision_summary is None and not handoff_shape_present:
         diagnostics.append("decision_summary missing")
 
     if status != "invalid":
-        has_all_required_fields = bool(
+        has_legacy_required_fields = bool(
             recommendation_comment_ids
             and selected_generated_issue_numbers
             and applied_transition_targets
@@ -693,7 +738,18 @@ def normalize_human_decision_ledger(
             and approved_by
             and decision_summary
         )
-        if has_all_required_fields:
+        has_handoff_required_fields = bool(
+            recommendation_comment_ids
+            and selected_generated_issue_numbers
+            and applied_transition_targets
+            and decision_type
+            and _has_handoff_source_identity(source)
+            and _has_handoff_decision_details(decision)
+            and stale_check.get("status") is not None
+            and ("evidence" in raw_human_decision_payload or any(evidence.values()))
+        )
+
+        if has_legacy_required_fields or has_handoff_required_fields:
             status = "available"
         elif (
             recommendation_comment_ids
@@ -792,6 +848,100 @@ def render_human_decision_ledger_markdown_block(human_decision_ledger):
         lines.append(f"  rationale_summary: {decision_summary!r}")
     else:
         lines.append("  rationale_summary:")
+
+    source = human_decision_ledger.get("source")
+    if not isinstance(source, dict):
+        source = {}
+
+    decision = human_decision_ledger.get("decision")
+    if not isinstance(decision, dict):
+        decision = {}
+
+    stale_check = human_decision_ledger.get("stale_check")
+    if not isinstance(stale_check, dict):
+        stale_check = {}
+
+    evidence = human_decision_ledger.get("evidence")
+    if not isinstance(evidence, dict):
+        evidence = {}
+
+    lines.extend(
+        [
+            "  human_decision_v1:",
+            f"    decision_type: {_format_yaml_scalar(human_decision_ledger.get('decision_type'))}",
+            "    source:",
+            f"      repo: {_format_yaml_scalar(source.get('repo'))}",
+            f"      issue_number: {_format_yaml_scalar(source.get('issue_number'))}",
+            f"      accepted_recommendation_url: {_format_yaml_scalar(source.get('accepted_recommendation_url'))}",
+            "      accepted_recommendation_comment_id: "
+            f"{_format_yaml_scalar(source.get('accepted_recommendation_comment_id'))}",
+            f"      roadmap_pr: {_format_yaml_scalar(source.get('roadmap_pr'))}",
+            f"      planner_issue_number: {_format_yaml_scalar(source.get('planner_issue_number'))}",
+            f"      planner_result_comment_id: {_format_yaml_scalar(source.get('planner_result_comment_id'))}",
+            f"      implementation_plan_artifact: {_format_yaml_scalar(source.get('implementation_plan_artifact'))}",
+            "    decision:",
+            f"      selected_next_state: {_format_yaml_scalar(decision.get('selected_next_state'))}",
+            "      next_state_options:",
+        ]
+    )
+
+    next_state_options = decision.get("next_state_options")
+    if isinstance(next_state_options, list) and next_state_options:
+        for next_state_option in next_state_options:
+            lines.append(f"        - {_format_yaml_scalar(next_state_option)}")
+    else:
+        lines.append("        -")
+
+    lines.append("      generated_issues:")
+    generated_issues = decision.get("generated_issues")
+    if isinstance(generated_issues, list) and generated_issues:
+        for generated_issue in generated_issues:
+            if not isinstance(generated_issue, dict):
+                continue
+            lines.append("        -")
+            lines.append(f"          number: {_format_yaml_scalar(generated_issue.get('number'))}")
+            lines.append(f"          initial_state: {_format_yaml_scalar(generated_issue.get('initial_state'))}")
+            lines.append(
+                "          next_state_after_approval: "
+                f"{_format_yaml_scalar(generated_issue.get('next_state_after_approval'))}"
+            )
+    else:
+        lines.append("        -")
+
+    lines.extend(
+        [
+            "    stale_check:",
+            f"      status: {_format_yaml_scalar(stale_check.get('status'))}",
+            "      compared_recommendation_comment_id: "
+            f"{_format_yaml_scalar(stale_check.get('compared_recommendation_comment_id'))}",
+            f"      compared_roadmap_pr: {_format_yaml_scalar(stale_check.get('compared_roadmap_pr'))}",
+            "      diagnostics:",
+        ]
+    )
+
+    stale_check_diagnostics = stale_check.get("diagnostics")
+    if isinstance(stale_check_diagnostics, list) and stale_check_diagnostics:
+        for stale_check_diagnostic in stale_check_diagnostics:
+            lines.append(f"        - {_format_yaml_scalar(stale_check_diagnostic)}")
+    else:
+        lines.append("        -")
+
+    lines.extend(
+        [
+            "    evidence:",
+            f"      github_comment_url: {_format_yaml_scalar(evidence.get('github_comment_url'))}",
+            f"      github_comment_id: {_format_yaml_scalar(evidence.get('github_comment_id'))}",
+            f"      watchtower_run_status: {_format_yaml_scalar(evidence.get('watchtower_run_status'))}",
+        ]
+    )
+
+    lines.append("  diagnostics:")
+    diagnostics = human_decision_ledger.get("diagnostics")
+    if isinstance(diagnostics, list) and diagnostics:
+        for diagnostic in diagnostics:
+            lines.append(f"    - {_format_yaml_scalar(diagnostic)}")
+    else:
+        lines.append("    -")
 
     lines.append("```")
     return lines

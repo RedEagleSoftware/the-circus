@@ -3755,7 +3755,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIsNotNone(planner_result)
         ledger = planner_result["human_decision_ledger_v1"]
         self.assertEqual(ledger["decision_type"], "implementation_plan_approval")
-        self.assertEqual(ledger["status"], "partial")
+        self.assertEqual(ledger["status"], "available")
         self.assertEqual(ledger["recommendation_comment_ids"], [50001])
         self.assertEqual(ledger["selected_generated_issue_numbers"], [201])
         self.assertEqual(ledger["applied_transition_targets"], ["state:ready-for-dev"])
@@ -3803,6 +3803,129 @@ class HandlerObservabilityTests(unittest.TestCase):
                 "watchtower_run_status": None,
             },
         )
+        self.assertNotIn("approved_by missing", ledger["diagnostics"])
+        self.assertNotIn("decision_summary missing", ledger["diagnostics"])
+
+    def test_approve_implementation_plan_review_audit_comment_renders_full_handoff_ledger(self):
+        source_issue_number = 143
+        planner_comment_id = 9001
+        recommendation_comment_id = 4001
+        roadmap_pr_number = 88
+        plan_body = (
+            "```yaml\n"
+            "planner_result_v1:\n"
+            "  outcome: READY\n"
+            "  parent_issue: 143\n"
+            "  recommendation_comment_id: 4001\n"
+            "  roadmap_pr: 88\n"
+            "  generated_issues:\n"
+            "    - number: 201\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-dev\n"
+            "  human_decision_ledger_v1:\n"
+            "    human_decision_v1:\n"
+            "      decision_type: implementation_plan_approval\n"
+            "      source:\n"
+            "        repo: RedEagleSoftware/the-circus\n"
+            "        issue_number: 143\n"
+            "        accepted_recommendation_comment_id: 4001\n"
+            "        roadmap_pr: 88\n"
+            "        planner_result_comment_id: 9001\n"
+            "      decision:\n"
+            "        selected_next_state: state:ready-for-dev\n"
+            "        next_state_options:\n"
+            "          - state:ready-for-dev\n"
+            "        generated_issues:\n"
+            "          - number: 201\n"
+            "            initial_state: state:planned\n"
+            "            next_state_after_approval: state:ready-for-dev\n"
+            "      stale_check:\n"
+            "        status: fresh\n"
+            "        compared_recommendation_comment_id: 4001\n"
+            "        compared_roadmap_pr: 88\n"
+            "      evidence:\n"
+            "        github_comment_url: https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-9001\n"
+            "        github_comment_id: 9001\n"
+            "```"
+        )
+        source_item = {
+            "type": "issue",
+            "number": source_issue_number,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [
+                {"name": "state:ready-for-implementation-plan-review"},
+                {"name": "status:triage"},
+            ],
+            "comments": [
+                {"id": recommendation_comment_id, "body": "Recommendation details"},
+                {
+                    "id": planner_comment_id,
+                    "body": plan_body,
+                },
+            ],
+        }
+        roadmap_pr_item = {
+            "number": roadmap_pr_number,
+            "state": "MERGED",
+            "mergedAt": "2026-06-23T10:11:12Z",
+            "title": "Roadmap update",
+            "url": "https://github.com/owner/repo/pull/88",
+        }
+        generated_issue_201 = {
+            "type": "issue",
+            "number": 201,
+            "title": "Generated issue A",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:planned"}],
+            "body": "Parent #143\nRecommendation 4001\nRoadmap #88\nNext state: state:ready-for-dev",
+        }
+        generated_issue_201_after = {
+            "type": "issue",
+            "number": 201,
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-dev"}],
+        }
+        source_item_after = {
+            "type": "issue",
+            "number": source_issue_number,
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-human-review"}],
+        }
+
+        with patch.object(handler.github_client, "get_item") as mock_get_item:
+            mock_get_item.side_effect = [
+                (source_item, True),
+                (roadmap_pr_item, True),
+                (generated_issue_201, True),
+                (generated_issue_201_after, True),
+                (source_item_after, True),
+            ]
+            with patch.object(handler.github_client, "replace_label", return_value=True):
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(
+                        source_issue_number,
+                        plan_comment_id=planner_comment_id,
+                    )
+
+        self.assertTrue(approved)
+        mock_add_comment.assert_called_once()
+        audit_comment = mock_add_comment.call_args.args[0]["comment"]
+        self.assertIn("human_decision_v1:", audit_comment)
+        self.assertIn("source:", audit_comment)
+        self.assertIn("decision:", audit_comment)
+        self.assertIn("stale_check:", audit_comment)
+        self.assertIn("evidence:", audit_comment)
+        self.assertIn("next_state_options:", audit_comment)
+        self.assertIn("generated_issues:", audit_comment)
 
     def test_parse_planner_result_v1_rejects_missing_generated_issues(self):
         body = "```yaml\nplanner_result_v1:\n  outcome: READY\n```"
