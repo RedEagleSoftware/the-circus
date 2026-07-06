@@ -1491,6 +1491,58 @@ def _parse_yaml_scalar_value(raw_value):
     return stripped_value
 
 
+def _parse_yaml_nested_mapping(lines, *, start_index, parent_indent):
+    nested_fields = {}
+    index = start_index
+
+    while index < len(lines):
+        nested_line = lines[index]
+        stripped_nested_line = nested_line.strip()
+        if not stripped_nested_line:
+            index += 1
+            continue
+
+        nested_indent = len(nested_line) - len(nested_line.lstrip(" "))
+        if nested_indent <= parent_indent:
+            break
+
+        if ":" not in stripped_nested_line:
+            return None, None
+
+        nested_key, nested_value = stripped_nested_line.split(":", 1)
+        normalized_nested_key = nested_key.strip()
+        normalized_nested_value = nested_value.strip()
+        if normalized_nested_value:
+            nested_fields[normalized_nested_key] = _parse_yaml_scalar_value(nested_value)
+            index += 1
+            continue
+
+        index += 1
+        list_values = []
+        while index < len(lines):
+            list_line = lines[index]
+            stripped_list_line = list_line.strip()
+            if not stripped_list_line:
+                index += 1
+                continue
+
+            list_indent = len(list_line) - len(list_line.lstrip(" "))
+            if list_indent <= nested_indent:
+                break
+
+            if not stripped_list_line.startswith("-"):
+                return None, None
+
+            list_item_value = stripped_list_line[1:].strip()
+            if list_item_value:
+                list_values.append(_parse_yaml_scalar_value(list_item_value))
+            index += 1
+
+        nested_fields[normalized_nested_key] = list_values
+
+    return nested_fields, index
+
+
 def parse_planner_result_v1_yaml_block(block_text):
     if not isinstance(block_text, str) or not block_text:
         return None
@@ -1576,7 +1628,17 @@ def parse_planner_result_v1_yaml_block(block_text):
             return None
 
         field_key, field_value = stripped_line.split(":", 1)
-        planner_fields[field_key.strip()] = _parse_yaml_scalar_value(field_value)
+        normalized_field_key = field_key.strip()
+        if normalized_field_key == "human_decision_ledger_v1" and not field_value.strip():
+            nested_fields, next_index = _parse_yaml_nested_mapping(lines, start_index=index + 1, parent_indent=indent)
+            if nested_fields is None:
+                return None
+
+            planner_fields[normalized_field_key] = nested_fields
+            index = next_index
+            continue
+
+        planner_fields[normalized_field_key] = _parse_yaml_scalar_value(field_value)
         index += 1
 
     if not generated_issues:
@@ -1913,6 +1975,13 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
             print(
                 f"[Approval] Generated issue #{generated_issue_number} target state '{target_state}' is human-owned "
                 "and not dispatchable."
+            )
+            return False
+
+        if target_state not in LABEL_MAP:
+            print(
+                f"[Approval] Generated issue #{generated_issue_number} target state '{target_state}' is not "
+                "a supported dispatch workflow state."
             )
             return False
 

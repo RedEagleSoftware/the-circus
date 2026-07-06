@@ -51,6 +51,25 @@ def _normalize_rationale_summary(value, diagnostics):
     return stripped_value
 
 
+def _normalize_recommendation_comment_ids(raw_human_decision_ledger, diagnostics):
+    recommendation_comment_ids = _normalize_positive_int_list(
+        raw_human_decision_ledger.get("recommendation_comment_ids"),
+        diagnostics,
+        field_name="recommendation_comment_ids",
+    )
+    if recommendation_comment_ids is not None:
+        return recommendation_comment_ids
+
+    fallback_recommendation_comment_ids = _normalize_positive_int_list(
+        raw_human_decision_ledger.get("based_on_recommendation_comment_ids"),
+        diagnostics,
+        field_name="based_on_recommendation_comment_ids",
+    )
+    if fallback_recommendation_comment_ids is not None and fallback_recommendation_comment_ids:
+        diagnostics.append("recommendation_comment_ids defaulted from based_on_recommendation_comment_ids")
+    return fallback_recommendation_comment_ids
+
+
 def normalize_human_decision_ledger(
     raw_human_decision_ledger,
     *,
@@ -88,11 +107,7 @@ def normalize_human_decision_ledger(
         diagnostics.append("unsupported human decision ledger version")
         status = "invalid"
 
-    based_on_recommendation_comment_ids = _normalize_positive_int_list(
-        raw_human_decision_ledger.get("based_on_recommendation_comment_ids"),
-        diagnostics,
-        field_name="based_on_recommendation_comment_ids",
-    )
+    recommendation_comment_ids = _normalize_recommendation_comment_ids(raw_human_decision_ledger, diagnostics)
     selected_generated_issue_numbers = _normalize_positive_int_list(
         raw_human_decision_ledger.get("selected_generated_issue_numbers"),
         diagnostics,
@@ -100,14 +115,14 @@ def normalize_human_decision_ledger(
     )
     rationale_summary = _normalize_rationale_summary(raw_human_decision_ledger.get("rationale_summary"), diagnostics)
 
-    if based_on_recommendation_comment_ids is None or selected_generated_issue_numbers is None:
+    if recommendation_comment_ids is None or selected_generated_issue_numbers is None:
         status = "invalid"
-        based_on_recommendation_comment_ids = based_on_recommendation_comment_ids or []
+        recommendation_comment_ids = recommendation_comment_ids or []
         selected_generated_issue_numbers = selected_generated_issue_numbers or []
 
-    if not based_on_recommendation_comment_ids and fallback_recommendation_comment_id is not None:
-        based_on_recommendation_comment_ids = [fallback_recommendation_comment_id]
-        diagnostics.append("based_on_recommendation_comment_ids defaulted from recommendation_comment_id")
+    if not recommendation_comment_ids and fallback_recommendation_comment_id is not None:
+        recommendation_comment_ids = [fallback_recommendation_comment_id]
+        diagnostics.append("recommendation_comment_ids defaulted from recommendation_comment_id")
 
     if not selected_generated_issue_numbers and fallback_generated_issue_numbers:
         selected_generated_issue_numbers = fallback_generated_issue_numbers
@@ -118,11 +133,11 @@ def normalize_human_decision_ledger(
 
     if status != "invalid":
         has_all_required_fields = bool(
-            based_on_recommendation_comment_ids and selected_generated_issue_numbers and rationale_summary
+            recommendation_comment_ids and selected_generated_issue_numbers and rationale_summary
         )
         if has_all_required_fields:
             status = "available"
-        elif based_on_recommendation_comment_ids or selected_generated_issue_numbers or rationale_summary:
+        elif recommendation_comment_ids or selected_generated_issue_numbers or rationale_summary:
             status = "partial"
         else:
             status = "missing"
@@ -141,7 +156,8 @@ def normalize_human_decision_ledger(
     return {
         "version": 1,
         "status": status,
-        "based_on_recommendation_comment_ids": based_on_recommendation_comment_ids,
+        "recommendation_comment_ids": recommendation_comment_ids,
+        "based_on_recommendation_comment_ids": recommendation_comment_ids,
         "selected_generated_issue_numbers": selected_generated_issue_numbers,
         "rationale_summary": rationale_summary,
         "diagnostics": normalized_diagnostics,
@@ -157,12 +173,12 @@ def render_human_decision_ledger_markdown_block(human_decision_ledger):
         "human_decision_ledger_v1:",
         f"  version: {human_decision_ledger.get('version')}",
         f"  status: {human_decision_ledger.get('status')}",
-        "  based_on_recommendation_comment_ids:",
+        "  recommendation_comment_ids:",
     ]
 
-    based_on_recommendation_comment_ids = human_decision_ledger.get("based_on_recommendation_comment_ids")
-    if isinstance(based_on_recommendation_comment_ids, list) and based_on_recommendation_comment_ids:
-        for recommendation_comment_id in based_on_recommendation_comment_ids:
+    recommendation_comment_ids = human_decision_ledger.get("recommendation_comment_ids")
+    if isinstance(recommendation_comment_ids, list) and recommendation_comment_ids:
+        for recommendation_comment_id in recommendation_comment_ids:
             lines.append(f"    - {recommendation_comment_id}")
     else:
         lines.append("    -")
