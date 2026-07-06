@@ -3,6 +3,7 @@ import os
 import re
 from datetime import datetime
 
+from Handler import human_decision_ledger
 from Handler import target_instructions
 from Handler import workspace_diagnostics
 
@@ -61,6 +62,7 @@ RUN_STATUS_FIELDS = [
     "workflow_classification",
     "recommendation_traceability",
     "accepted_decision_traceability",
+    "human_decision_ledger_v1",
     "recovery_decision",
     "recovery_reason",
     "recovery_recommendation",
@@ -422,6 +424,7 @@ def build_implementation_planner_snapshot(
     roadmap_pr_number=None,
     roadmap_reference_merged=None,
     generated_issues=None,
+    human_decision_ledger_v1=None,
 ):
     generated_issue_links = []
     source_recommendation_url = None
@@ -509,6 +512,7 @@ def build_implementation_planner_snapshot(
         "recommendation_comment_id": recommendation_comment_id,
         "roadmap_pr_number": roadmap_pr_number,
         "roadmap_reference_merged": roadmap_reference_merged,
+        "human_decision_ledger_v1": human_decision_ledger_v1,
     }
 
     snapshot["recommendation_traceability"] = build_implementation_planner_recommendation_traceability_snapshot(snapshot)
@@ -891,6 +895,7 @@ def initialize_run_status(
         recommendation_traceability=status_payload.get("recommendation_traceability"),
         implementation_planner=status_payload.get("implementation_planner"),
     )
+    status_payload["human_decision_ledger_v1"] = human_decision_ledger.normalize_human_decision_ledger(None)
 
     for field in run_status_fields:
         status_payload.setdefault(field, None)
@@ -945,6 +950,17 @@ def read_run_status(run_state, *, run_status_fields=RUN_STATUS_FIELDS, normalize
         )
         status_payload["accepted_decision_traceability"] = accepted_decision_traceability
 
+    normalized_human_decision_ledger = human_decision_ledger.normalize_human_decision_ledger(
+        status_payload.get("human_decision_ledger_v1"),
+        recommendation_comment_id=(status_payload.get("implementation_planner") or {}).get("recommendation_comment_id"),
+        generated_issue_numbers=[
+            generated_issue.get("number")
+            for generated_issue in ((status_payload.get("implementation_planner") or {}).get("generated_issues") or [])
+            if isinstance(generated_issue, dict)
+        ],
+    )
+    status_payload["human_decision_ledger_v1"] = normalized_human_decision_ledger
+
     return status_payload
 
 
@@ -982,6 +998,15 @@ def update_run_status(item, *, get_run_state_fn, read_run_status_fn, write_run_s
         recommendation_traceability=status_payload.get("recommendation_traceability"),
         implementation_planner=status_payload.get("implementation_planner"),
     )
+    status_payload["human_decision_ledger_v1"] = human_decision_ledger.normalize_human_decision_ledger(
+        status_payload.get("human_decision_ledger_v1"),
+        recommendation_comment_id=(status_payload.get("implementation_planner") or {}).get("recommendation_comment_id"),
+        generated_issue_numbers=[
+            generated_issue.get("number")
+            for generated_issue in ((status_payload.get("implementation_planner") or {}).get("generated_issues") or [])
+            if isinstance(generated_issue, dict)
+        ],
+    )
 
     write_run_status_fn(run_state, status_payload)
 
@@ -997,6 +1022,7 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
     workflow_classification = status_payload.get("workflow_classification") or {}
     recommendation_traceability = status_payload.get("recommendation_traceability") or {}
     accepted_decision_traceability = status_payload.get("accepted_decision_traceability") or {}
+    human_decision_ledger_v1 = status_payload.get("human_decision_ledger_v1") or {}
     label_transition = status_payload.get("label_transition")
     lifecycle_diagnostics = status_payload.get("lifecycle_diagnostics")
     if not lifecycle_diagnostics:
@@ -1080,6 +1106,14 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
             f"- planner artifact: `{(accepted_decision_traceability.get('planner') or {}).get('artifact')}`",
             f"- outcome state: `{accepted_decision_traceability.get('outcome_state')}`",
             "- diagnostics:",
+            "",
+            "## Human Decision Ledger",
+            f"- version: `{human_decision_ledger_v1.get('version')}`",
+            f"- status: `{human_decision_ledger_v1.get('status')}`",
+            f"- based_on_recommendation_comment_ids: `{human_decision_ledger_v1.get('based_on_recommendation_comment_ids')}`",
+            f"- selected_generated_issue_numbers: `{human_decision_ledger_v1.get('selected_generated_issue_numbers')}`",
+            f"- rationale_summary: `{human_decision_ledger_v1.get('rationale_summary')}`",
+            "- diagnostics:",
         ]
     )
 
@@ -1087,6 +1121,13 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
     if isinstance(accepted_decision_diagnostics, list) and accepted_decision_diagnostics:
         for accepted_decision_diagnostic in accepted_decision_diagnostics:
             lines.append(f"  - {accepted_decision_diagnostic}")
+    else:
+        lines.append("  - none")
+
+    human_decision_ledger_diagnostics = human_decision_ledger_v1.get("diagnostics")
+    if isinstance(human_decision_ledger_diagnostics, list) and human_decision_ledger_diagnostics:
+        for human_decision_ledger_diagnostic in human_decision_ledger_diagnostics:
+            lines.append(f"  - {human_decision_ledger_diagnostic}")
     else:
         lines.append("  - none")
 

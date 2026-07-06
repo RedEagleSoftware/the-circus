@@ -14,6 +14,7 @@ from Handler import dependencies
 from Handler import developer_flow
 from Handler import git_workspace
 from Handler import github_client
+from Handler import human_decision_ledger
 from Handler import paths as handler_paths
 from Handler import recovery
 from Handler import review_flow
@@ -1354,8 +1355,23 @@ def parse_planner_result_v1(body):
                 }
             )
 
+        recommendation_comment_id = planner_result.get("recommendation_comment_id")
+        if not isinstance(recommendation_comment_id, int) or recommendation_comment_id <= 0:
+            recommendation_comment_id = None
+
+        normalized_human_decision_ledger = human_decision_ledger.normalize_human_decision_ledger(
+            planner_result.get("human_decision_ledger_v1"),
+            recommendation_comment_id=recommendation_comment_id,
+            generated_issue_numbers=[issue.get("issue_number") for issue in normalized_generated_issues],
+        )
+
         return {
+            "outcome": planner_result.get("outcome"),
+            "parent_issue": planner_result.get("parent_issue"),
+            "recommendation_comment_id": recommendation_comment_id,
+            "roadmap_pr": planner_result.get("roadmap_pr"),
             "generated_issues": normalized_generated_issues,
+            "human_decision_ledger_v1": normalized_human_decision_ledger,
         }
 
     for match in PLANNER_RESULT_V1_FENCED_BLOCK_PATTERN.finditer(body):
@@ -1446,6 +1462,11 @@ def parse_planner_result_from_markdown_sections(body):
         "recommendation_comment_id": recommendation_comment_id,
         "roadmap_pr": roadmap_pr,
         "generated_issues": normalized_generated_issues,
+        "human_decision_ledger_v1": human_decision_ledger.normalize_human_decision_ledger(
+            None,
+            recommendation_comment_id=recommendation_comment_id,
+            generated_issue_numbers=[issue.get("issue_number") for issue in normalized_generated_issues],
+        ),
     }
 
 
@@ -1596,6 +1617,11 @@ def parse_planner_result_v1_yaml_block(block_text):
         "recommendation_comment_id": planner_fields.get("recommendation_comment_id"),
         "roadmap_pr": planner_fields.get("roadmap_pr"),
         "generated_issues": normalized_generated_issues,
+        "human_decision_ledger_v1": human_decision_ledger.normalize_human_decision_ledger(
+            planner_fields.get("human_decision_ledger_v1"),
+            recommendation_comment_id=planner_fields.get("recommendation_comment_id"),
+            generated_issue_numbers=[issue.get("issue_number") for issue in normalized_generated_issues],
+        ),
     }
 
 
@@ -1801,6 +1827,15 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
     parent_issue = planner_result.get("parent_issue")
     recommendation_comment_id = planner_result.get("recommendation_comment_id")
     roadmap_pr = planner_result.get("roadmap_pr")
+    normalized_human_decision_ledger = human_decision_ledger.normalize_human_decision_ledger(
+        planner_result.get("human_decision_ledger_v1"),
+        recommendation_comment_id=recommendation_comment_id,
+        generated_issue_numbers=[
+            generated_issue.get("issue_number")
+            for generated_issue in planner_result.get("generated_issues", [])
+            if isinstance(generated_issue, dict)
+        ],
+    )
 
     if outcome != "READY":
         print(f"[Approval] planner_result_v1 outcome must be READY before approval (found: {outcome!r}).")
@@ -1962,7 +1997,12 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
         f"- Recommendation comment id: {recommendation_comment_id}",
         f"- Roadmap PR: #{roadmap_pr}",
         f"- Transitioned generated issues: {', '.join(f'#{issue_number}' for issue_number in transitioned_issue_numbers)}",
+        "",
+        "Human decision ledger artifact:",
     ]
+    audit_lines.extend(
+        human_decision_ledger.render_human_decision_ledger_markdown_block(normalized_human_decision_ledger)
+    )
     if not _add_source_audit_comment(source_issue_number, audit_lines):
         print(f"[Approval] Failed to record approval audit comment on source issue #{source_issue_number}.")
         return False
@@ -2965,6 +3005,9 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     if isinstance(planner_result, dict) and isinstance(planner_result.get("roadmap_pr"), int)
                     else None
                 )
+                planner_result_human_decision_ledger = (
+                    planner_result.get("human_decision_ledger_v1") if isinstance(planner_result, dict) else None
+                )
                 planner_result_comment_id = (
                     planner_result_metadata.get("planner_result_comment_id")
                     if isinstance(planner_result_metadata, dict)
@@ -3017,6 +3060,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         roadmap_pr_number=planner_result_roadmap_pr,
                         roadmap_reference_merged=roadmap_reference_merged,
                         generated_issues=planner_result_generated_issues,
+                        human_decision_ledger_v1=planner_result_human_decision_ledger,
                     )
                     update_run_status(
                         item,
@@ -3145,6 +3189,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         roadmap_pr_number=planner_result_roadmap_pr,
                         roadmap_reference_merged=roadmap_reference_merged,
                         generated_issues=planner_result_generated_issues,
+                        human_decision_ledger_v1=planner_result_human_decision_ledger,
                     )
                     update_run_status(
                         item,
@@ -3186,6 +3231,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     roadmap_pr_number=planner_result_roadmap_pr,
                     roadmap_reference_merged=roadmap_reference_merged,
                     generated_issues=planner_result_generated_issues,
+                    human_decision_ledger_v1=planner_result_human_decision_ledger,
                 )
                 if not ready_snapshot.get("generated_issues"):
                     ready_snapshot["diagnostic"] = (
