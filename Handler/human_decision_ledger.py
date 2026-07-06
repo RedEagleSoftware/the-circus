@@ -437,7 +437,12 @@ def _normalize_human_decision_stale_check(stale_check_value, diagnostics):
     }
 
 
-def is_dispatch_approval_stale_check_fresh(human_decision_ledger):
+def is_dispatch_approval_stale_check_fresh(
+    human_decision_ledger,
+    *,
+    recommendation_comment_id=None,
+    roadmap_pr=None,
+):
     if not isinstance(human_decision_ledger, dict):
         return False
 
@@ -446,7 +451,46 @@ def is_dispatch_approval_stale_check_fresh(human_decision_ledger):
         return False
 
     stale_check_status = stale_check.get("status")
-    return stale_check_status == "fresh"
+    if stale_check_status != "fresh":
+        return False
+
+    compared_recommendation_comment_id = stale_check.get("compared_recommendation_comment_id")
+    if (
+        recommendation_comment_id is not None
+        and compared_recommendation_comment_id is not None
+        and compared_recommendation_comment_id != recommendation_comment_id
+    ):
+        return False
+
+    compared_roadmap_pr = stale_check.get("compared_roadmap_pr")
+    if roadmap_pr is not None and compared_roadmap_pr is not None and compared_roadmap_pr != roadmap_pr:
+        return False
+
+    source = human_decision_ledger.get("source")
+    if not isinstance(source, dict):
+        source = {}
+
+    source_recommendation_comment_id = source.get("accepted_recommendation_comment_id")
+    if (
+        recommendation_comment_id is not None
+        and source_recommendation_comment_id is not None
+        and source_recommendation_comment_id != recommendation_comment_id
+    ):
+        return False
+    if (
+        source_recommendation_comment_id is not None
+        and compared_recommendation_comment_id is not None
+        and source_recommendation_comment_id != compared_recommendation_comment_id
+    ):
+        return False
+
+    source_roadmap_pr = source.get("roadmap_pr")
+    if roadmap_pr is not None and source_roadmap_pr is not None and source_roadmap_pr != roadmap_pr:
+        return False
+    if source_roadmap_pr is not None and compared_roadmap_pr is not None and source_roadmap_pr != compared_roadmap_pr:
+        return False
+
+    return True
 
 
 def _normalize_human_decision_evidence(evidence_value, diagnostics):
