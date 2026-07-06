@@ -3594,6 +3594,32 @@ class HandlerObservabilityTests(unittest.TestCase):
                     "selected_generated_issue_urls": [],
                     "applied_transition_targets": ["state:ready-for-dev", "state:ready-for-architecture"],
                     "rationale_summary": None,
+                    "source": {
+                        "repo": None,
+                        "issue_number": None,
+                        "accepted_recommendation_url": None,
+                        "accepted_recommendation_comment_id": None,
+                        "roadmap_pr": None,
+                        "planner_issue_number": None,
+                        "planner_result_comment_id": None,
+                        "implementation_plan_artifact": None,
+                    },
+                    "decision": {
+                        "selected_next_state": None,
+                        "next_state_options": [],
+                        "generated_issues": [],
+                    },
+                    "stale_check": {
+                        "status": None,
+                        "compared_recommendation_comment_id": None,
+                        "compared_roadmap_pr": None,
+                        "diagnostics": [],
+                    },
+                    "evidence": {
+                        "github_comment_url": None,
+                        "github_comment_id": None,
+                        "watchtower_run_status": None,
+                    },
                     "diagnostics": [
                         "human decision ledger missing",
                         "recommendation_comment_ids defaulted from recommendation_comment_id",
@@ -3653,7 +3679,128 @@ class HandlerObservabilityTests(unittest.TestCase):
                 ],
                 "applied_transition_targets": ["state:ready-for-dev"],
                 "rationale_summary": "Selected by reviewer decision.",
+                "source": {
+                    "repo": None,
+                    "issue_number": None,
+                    "accepted_recommendation_url": None,
+                    "accepted_recommendation_comment_id": None,
+                    "roadmap_pr": None,
+                    "planner_issue_number": None,
+                    "planner_result_comment_id": None,
+                    "implementation_plan_artifact": None,
+                },
+                "decision": {
+                    "selected_next_state": None,
+                    "next_state_options": [],
+                    "generated_issues": [],
+                },
+                "stale_check": {
+                    "status": None,
+                    "compared_recommendation_comment_id": None,
+                    "compared_roadmap_pr": None,
+                    "diagnostics": [],
+                },
+                "evidence": {
+                    "github_comment_url": None,
+                    "github_comment_id": None,
+                    "watchtower_run_status": None,
+                },
                 "diagnostics": [],
+            },
+        )
+
+    def test_parse_planner_result_v1_parses_handoff_shaped_human_decision_v1_yaml_block(self):
+        body = (
+            "```yaml\n"
+            "planner_result_v1:\n"
+            "  outcome: READY\n"
+            "  parent_issue: 143\n"
+            "  recommendation_comment_id: 50001\n"
+            "  roadmap_pr: 90\n"
+            "  generated_issues:\n"
+            "    - number: 201\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-dev\n"
+            "  human_decision_ledger_v1:\n"
+            "    human_decision_v1:\n"
+            "      decision_type: implementation_plan_approval\n"
+            "      source:\n"
+            "        repo: RedEagleSoftware/the-circus\n"
+            "        issue_number: 143\n"
+            "        accepted_recommendation_comment_id: 50001\n"
+            "        roadmap_pr: 90\n"
+            "        planner_result_comment_id: 9111\n"
+            "      decision:\n"
+            "        selected_next_state: state:ready-for-dev\n"
+            "        next_state_options:\n"
+            "          - state:ready-for-dev\n"
+            "        generated_issues:\n"
+            "          - number: 201\n"
+            "            initial_state: state:planned\n"
+            "            next_state_after_approval: state:ready-for-dev\n"
+            "      stale_check:\n"
+            "        status: fresh\n"
+            "        compared_recommendation_comment_id: 50001\n"
+            "        compared_roadmap_pr: 90\n"
+            "        diagnostics:\n"
+            "          - verified\n"
+            "      evidence:\n"
+            "        github_comment_url: https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-9111\n"
+            "        github_comment_id: 9111\n"
+            "```"
+        )
+
+        planner_result = handler.parse_planner_result_v1(body)
+
+        self.assertIsNotNone(planner_result)
+        ledger = planner_result["human_decision_ledger_v1"]
+        self.assertEqual(ledger["decision_type"], "implementation_plan_approval")
+        self.assertEqual(ledger["status"], "partial")
+        self.assertEqual(ledger["recommendation_comment_ids"], [50001])
+        self.assertEqual(ledger["selected_generated_issue_numbers"], [201])
+        self.assertEqual(ledger["applied_transition_targets"], ["state:ready-for-dev"])
+        self.assertEqual(
+            ledger["source"],
+            {
+                "repo": "RedEagleSoftware/the-circus",
+                "issue_number": 143,
+                "accepted_recommendation_url": None,
+                "accepted_recommendation_comment_id": 50001,
+                "roadmap_pr": 90,
+                "planner_issue_number": None,
+                "planner_result_comment_id": 9111,
+                "implementation_plan_artifact": None,
+            },
+        )
+        self.assertEqual(
+            ledger["decision"],
+            {
+                "selected_next_state": "state:ready-for-dev",
+                "next_state_options": ["state:ready-for-dev"],
+                "generated_issues": [
+                    {
+                        "number": 201,
+                        "initial_state": "state:planned",
+                        "next_state_after_approval": "state:ready-for-dev",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(
+            ledger["stale_check"],
+            {
+                "status": "fresh",
+                "compared_recommendation_comment_id": 50001,
+                "compared_roadmap_pr": 90,
+                "diagnostics": ["verified"],
+            },
+        )
+        self.assertEqual(
+            ledger["evidence"],
+            {
+                "github_comment_url": "https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-9111",
+                "github_comment_id": 9111,
+                "watchtower_run_status": None,
             },
         )
 
@@ -3708,6 +3855,32 @@ class HandlerObservabilityTests(unittest.TestCase):
                     "selected_generated_issue_urls": [],
                     "applied_transition_targets": ["state:ready-for-dev", "state:ready-for-architecture"],
                     "rationale_summary": None,
+                    "source": {
+                        "repo": None,
+                        "issue_number": None,
+                        "accepted_recommendation_url": None,
+                        "accepted_recommendation_comment_id": None,
+                        "roadmap_pr": None,
+                        "planner_issue_number": None,
+                        "planner_result_comment_id": None,
+                        "implementation_plan_artifact": None,
+                    },
+                    "decision": {
+                        "selected_next_state": None,
+                        "next_state_options": [],
+                        "generated_issues": [],
+                    },
+                    "stale_check": {
+                        "status": None,
+                        "compared_recommendation_comment_id": None,
+                        "compared_roadmap_pr": None,
+                        "diagnostics": [],
+                    },
+                    "evidence": {
+                        "github_comment_url": None,
+                        "github_comment_id": None,
+                        "watchtower_run_status": None,
+                    },
                     "diagnostics": [
                         "human decision ledger missing",
                         "recommendation_comment_ids defaulted from recommendation_comment_id",
@@ -3773,6 +3946,32 @@ class HandlerObservabilityTests(unittest.TestCase):
                     "selected_generated_issue_urls": [],
                     "applied_transition_targets": ["state:ready-for-architecture", "state:ready-for-dev"],
                     "rationale_summary": None,
+                    "source": {
+                        "repo": None,
+                        "issue_number": None,
+                        "accepted_recommendation_url": None,
+                        "accepted_recommendation_comment_id": None,
+                        "roadmap_pr": None,
+                        "planner_issue_number": None,
+                        "planner_result_comment_id": None,
+                        "implementation_plan_artifact": None,
+                    },
+                    "decision": {
+                        "selected_next_state": None,
+                        "next_state_options": [],
+                        "generated_issues": [],
+                    },
+                    "stale_check": {
+                        "status": None,
+                        "compared_recommendation_comment_id": None,
+                        "compared_roadmap_pr": None,
+                        "diagnostics": [],
+                    },
+                    "evidence": {
+                        "github_comment_url": None,
+                        "github_comment_id": None,
+                        "watchtower_run_status": None,
+                    },
                     "diagnostics": [
                         "human decision ledger missing",
                         "recommendation_comment_ids defaulted from recommendation_comment_id",

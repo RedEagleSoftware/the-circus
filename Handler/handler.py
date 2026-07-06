@@ -1508,56 +1508,146 @@ def _parse_yaml_scalar_value(raw_value):
     return stripped_value
 
 
+def _is_yaml_inline_mapping(value):
+    if not isinstance(value, str):
+        return False
+
+    stripped_value = value.strip()
+    return (
+        re.match(r"^[A-Za-z0-9_][A-Za-z0-9_-]*\s*:\s", stripped_value) is not None
+        or re.match(r"^[A-Za-z0-9_][A-Za-z0-9_-]*\s*:$", stripped_value) is not None
+    )
+
+
+def _next_yaml_non_empty_line(lines, index):
+    while index < len(lines):
+        candidate = lines[index]
+        if candidate.strip():
+            return index, candidate
+        index += 1
+
+    return None, None
+
+
+def _parse_yaml_nested_list(lines, *, start_index, parent_indent):
+    values = []
+    index = start_index
+
+    while index < len(lines):
+        item_index, item_line = _next_yaml_non_empty_line(lines, index)
+        if item_index is None:
+            return values, len(lines)
+
+        item_indent = len(item_line) - len(item_line.lstrip(" "))
+        if item_indent <= parent_indent:
+            return values, item_index
+
+        stripped_item_line = item_line.strip()
+        if not stripped_item_line.startswith("-"):
+            return None, None
+
+        item_payload = stripped_item_line[1:].strip()
+        index = item_index + 1
+
+        if not item_payload:
+            nested_value, next_index = _parse_yaml_nested_value(lines, start_index=index, parent_indent=item_indent)
+            if nested_value is None:
+                values.append("")
+                continue
+
+            values.append(nested_value)
+            index = next_index
+            continue
+
+        if _is_yaml_inline_mapping(item_payload):
+            nested_key, nested_value = item_payload.split(":", 1)
+            item_mapping = {nested_key.strip(): _parse_yaml_scalar_value(nested_value)}
+
+            while index < len(lines):
+                field_index, field_line = _next_yaml_non_empty_line(lines, index)
+                if field_index is None:
+                    values.append(item_mapping)
+                    return values, len(lines)
+
+                field_indent = len(field_line) - len(field_line.lstrip(" "))
+                if field_indent <= item_indent:
+                    break
+
+                stripped_field_line = field_line.strip()
+                if ":" not in stripped_field_line:
+                    return None, None
+
+                field_key, field_value = stripped_field_line.split(":", 1)
+                normalized_field_key = field_key.strip()
+                if field_value.strip():
+                    item_mapping[normalized_field_key] = _parse_yaml_scalar_value(field_value)
+                    index = field_index + 1
+                    continue
+
+                nested_field_value, next_index = _parse_yaml_nested_value(
+                    lines,
+                    start_index=field_index + 1,
+                    parent_indent=field_indent,
+                )
+                item_mapping[normalized_field_key] = nested_field_value if nested_field_value is not None else []
+                index = next_index if next_index is not None else field_index + 1
+
+            values.append(item_mapping)
+            continue
+
+        values.append(_parse_yaml_scalar_value(item_payload))
+
+    return values, index
+
+
+def _parse_yaml_nested_value(lines, *, start_index, parent_indent):
+    next_index, next_line = _next_yaml_non_empty_line(lines, start_index)
+    if next_index is None:
+        return None, len(lines)
+
+    next_indent = len(next_line) - len(next_line.lstrip(" "))
+    if next_indent <= parent_indent:
+        return None, next_index
+
+    if next_line.strip().startswith("-"):
+        return _parse_yaml_nested_list(lines, start_index=next_index, parent_indent=parent_indent)
+
+    return _parse_yaml_nested_mapping(lines, start_index=next_index, parent_indent=parent_indent)
+
+
 def _parse_yaml_nested_mapping(lines, *, start_index, parent_indent):
     nested_fields = {}
     index = start_index
 
     while index < len(lines):
-        nested_line = lines[index]
-        stripped_nested_line = nested_line.strip()
-        if not stripped_nested_line:
-            index += 1
-            continue
+        nested_index, nested_line = _next_yaml_non_empty_line(lines, index)
+        if nested_index is None:
+            return nested_fields, len(lines)
 
+        stripped_nested_line = nested_line.strip()
         nested_indent = len(nested_line) - len(nested_line.lstrip(" "))
         if nested_indent <= parent_indent:
-            break
+            return nested_fields, nested_index
 
         if ":" not in stripped_nested_line:
             return None, None
 
         nested_key, nested_value = stripped_nested_line.split(":", 1)
         normalized_nested_key = nested_key.strip()
-        normalized_nested_value = nested_value.strip()
-        if normalized_nested_value:
+        if nested_value.strip():
             nested_fields[normalized_nested_key] = _parse_yaml_scalar_value(nested_value)
-            index += 1
+            index = nested_index + 1
             continue
 
-        index += 1
-        list_values = []
-        while index < len(lines):
-            list_line = lines[index]
-            stripped_list_line = list_line.strip()
-            if not stripped_list_line:
-                index += 1
-                continue
+        nested_fields_value, next_index = _parse_yaml_nested_value(
+            lines,
+            start_index=nested_index + 1,
+            parent_indent=nested_indent,
+        )
+        nested_fields[normalized_nested_key] = nested_fields_value if nested_fields_value is not None else []
+        index = next_index if next_index is not None else nested_index + 1
 
-            list_indent = len(list_line) - len(list_line.lstrip(" "))
-            if list_indent <= nested_indent:
-                break
-
-            if not stripped_list_line.startswith("-"):
-                return None, None
-
-            list_item_value = stripped_list_line[1:].strip()
-            if list_item_value:
-                list_values.append(_parse_yaml_scalar_value(list_item_value))
-            index += 1
-
-        nested_fields[normalized_nested_key] = list_values
-
-    return nested_fields, index
+    return nested_fields, len(lines)
 
 
 def parse_planner_result_v1_yaml_block(block_text):
