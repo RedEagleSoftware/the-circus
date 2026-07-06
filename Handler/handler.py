@@ -1426,6 +1426,10 @@ def parse_planner_result_from_markdown_sections(body):
 
         next_state_after_approval = None
         for generated_issue_line in generated_issue_block.get("lines", []):
+            normalized_generated_issue_line = generated_issue_line.strip().lower()
+            if "next workflow state after human approval" not in normalized_generated_issue_line:
+                continue
+
             next_state_match = STATE_LABEL_PATTERN.search(generated_issue_line)
             if not next_state_match:
                 continue
@@ -1897,7 +1901,19 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
             for generated_issue in planner_result.get("generated_issues", [])
             if isinstance(generated_issue, dict)
         ],
+        generated_issue_transition_targets=[
+            generated_issue.get("next_state_after_approval")
+            for generated_issue in planner_result.get("generated_issues", [])
+            if isinstance(generated_issue, dict)
+        ],
     )
+
+    if normalized_human_decision_ledger.get("status") != "available":
+        print(
+            "[Approval] planner_result_v1 human_decision_ledger_v1 must be available before approval "
+            f"(found: {normalized_human_decision_ledger.get('status')!r})."
+        )
+        return False
 
     if outcome != "READY":
         print(f"[Approval] planner_result_v1 outcome must be READY before approval (found: {outcome!r}).")

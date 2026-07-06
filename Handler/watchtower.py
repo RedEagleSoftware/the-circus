@@ -1110,8 +1110,13 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
             "## Human Decision Ledger",
             f"- version: `{human_decision_ledger_v1.get('version')}`",
             f"- status: `{human_decision_ledger_v1.get('status')}`",
+            f"- decision_type: `{human_decision_ledger_v1.get('decision_type')}`",
+            f"- approved_by: `{human_decision_ledger_v1.get('approved_by')}`",
+            f"- decision_summary: `{human_decision_ledger_v1.get('decision_summary')}`",
             f"- recommendation_comment_ids: `{human_decision_ledger_v1.get('recommendation_comment_ids')}`",
             f"- selected_generated_issue_numbers: `{human_decision_ledger_v1.get('selected_generated_issue_numbers')}`",
+            f"- selected_generated_issue_urls: `{human_decision_ledger_v1.get('selected_generated_issue_urls')}`",
+            f"- applied_transition_targets: `{human_decision_ledger_v1.get('applied_transition_targets')}`",
             f"- rationale_summary: `{human_decision_ledger_v1.get('rationale_summary')}`",
             "- diagnostics:",
         ]

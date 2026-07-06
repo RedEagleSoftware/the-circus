@@ -3585,15 +3585,23 @@ class HandlerObservabilityTests(unittest.TestCase):
                 "human_decision_ledger_v1": {
                     "version": 1,
                     "status": "partial",
+                    "decision_type": "implementation_plan_review_approval",
+                    "approved_by": None,
+                    "decision_summary": None,
                     "recommendation_comment_ids": [50001],
                     "based_on_recommendation_comment_ids": [50001],
                     "selected_generated_issue_numbers": [201, 202],
+                    "selected_generated_issue_urls": [],
+                    "applied_transition_targets": ["state:ready-for-dev", "state:ready-for-architecture"],
                     "rationale_summary": None,
                     "diagnostics": [
                         "human decision ledger missing",
                         "recommendation_comment_ids defaulted from recommendation_comment_id",
                         "selected_generated_issue_numbers defaulted from generated_issues",
-                        "rationale_summary missing",
+                        "applied_transition_targets defaulted from generated_issues",
+                        "decision_type defaulted from workflow",
+                        "approved_by missing",
+                        "decision_summary missing",
                     ],
                 },
             },
@@ -3612,10 +3620,17 @@ class HandlerObservabilityTests(unittest.TestCase):
             "      next_state_after_approval: state:ready-for-dev\n"
             "  human_decision_ledger_v1:\n"
             "    version: 1\n"
+            "    decision_type: implementation_plan_review_approval\n"
+            "    approved_by: reviewer\n"
+            "    decision_summary: 'Selected by reviewer decision.'\n"
             "    recommendation_comment_ids:\n"
             "      - 50001\n"
             "    selected_generated_issue_numbers:\n"
             "      - 201\n"
+            "    selected_generated_issue_urls:\n"
+            "      - https://github.com/RedEagleSoftware/the-circus/issues/201\n"
+            "    applied_transition_targets:\n"
+            "      - state:ready-for-dev\n"
             "    rationale_summary: 'Selected by reviewer decision.'\n"
             "```"
         )
@@ -3627,9 +3642,16 @@ class HandlerObservabilityTests(unittest.TestCase):
             {
                 "version": 1,
                 "status": "available",
+                "decision_type": "implementation_plan_review_approval",
+                "approved_by": "reviewer",
+                "decision_summary": "Selected by reviewer decision.",
                 "recommendation_comment_ids": [50001],
                 "based_on_recommendation_comment_ids": [50001],
                 "selected_generated_issue_numbers": [201],
+                "selected_generated_issue_urls": [
+                    "https://github.com/RedEagleSoftware/the-circus/issues/201",
+                ],
+                "applied_transition_targets": ["state:ready-for-dev"],
                 "rationale_summary": "Selected by reviewer decision.",
                 "diagnostics": [],
             },
@@ -3677,15 +3699,23 @@ class HandlerObservabilityTests(unittest.TestCase):
                 "human_decision_ledger_v1": {
                     "version": 1,
                     "status": "partial",
+                    "decision_type": "implementation_plan_review_approval",
+                    "approved_by": None,
+                    "decision_summary": None,
                     "recommendation_comment_ids": [4001],
                     "based_on_recommendation_comment_ids": [4001],
                     "selected_generated_issue_numbers": [201, 202],
+                    "selected_generated_issue_urls": [],
+                    "applied_transition_targets": ["state:ready-for-dev", "state:ready-for-architecture"],
                     "rationale_summary": None,
                     "diagnostics": [
                         "human decision ledger missing",
                         "recommendation_comment_ids defaulted from recommendation_comment_id",
                         "selected_generated_issue_numbers defaulted from generated_issues",
-                        "rationale_summary missing",
+                        "applied_transition_targets defaulted from generated_issues",
+                        "decision_type defaulted from workflow",
+                        "approved_by missing",
+                        "decision_summary missing",
                     ],
                 },
             },
@@ -3731,6 +3761,28 @@ class HandlerObservabilityTests(unittest.TestCase):
                         "next_state_after_approval": "state:ready-for-dev",
                     },
                 ],
+                "human_decision_ledger_v1": {
+                    "version": 1,
+                    "status": "partial",
+                    "decision_type": "implementation_plan_review_approval",
+                    "approved_by": None,
+                    "decision_summary": None,
+                    "recommendation_comment_ids": [4817675158],
+                    "based_on_recommendation_comment_ids": [4817675158],
+                    "selected_generated_issue_numbers": [89, 90],
+                    "selected_generated_issue_urls": [],
+                    "applied_transition_targets": ["state:ready-for-architecture", "state:ready-for-dev"],
+                    "rationale_summary": None,
+                    "diagnostics": [
+                        "human decision ledger missing",
+                        "recommendation_comment_ids defaulted from recommendation_comment_id",
+                        "selected_generated_issue_numbers defaulted from generated_issues",
+                        "applied_transition_targets defaulted from generated_issues",
+                        "decision_type defaulted from workflow",
+                        "approved_by missing",
+                        "decision_summary missing",
+                    ],
+                },
             },
         )
 
@@ -3760,6 +3812,19 @@ class HandlerObservabilityTests(unittest.TestCase):
             "    - number: 201\n"
             "      initial_state: state:planned\n"
             "      next_state_after_approval: state:ready-for-dev\n"
+            "  human_decision_ledger_v1:\n"
+            "    version: 1\n"
+            "    decision_type: implementation_plan_review_approval\n"
+            "    approved_by: reviewer\n"
+            "    decision_summary: 'Approved planner output for dispatch.'\n"
+            "    recommendation_comment_ids:\n"
+            "      - 4001\n"
+            "    selected_generated_issue_numbers:\n"
+            "      - 201\n"
+            "    selected_generated_issue_urls:\n"
+            "      - https://github.com/owner/repo/issues/201\n"
+            "    applied_transition_targets:\n"
+            "      - state:ready-for-dev\n"
             "```"
         )
         source_item = {
@@ -3882,6 +3947,22 @@ class HandlerObservabilityTests(unittest.TestCase):
             "    - number: 202\n"
             "      initial_state: state:planned\n"
             "      next_state_after_approval: state:ready-for-architecture\n"
+            "  human_decision_ledger_v1:\n"
+            "    version: 1\n"
+            "    decision_type: implementation_plan_review_approval\n"
+            "    approved_by: reviewer\n"
+            "    decision_summary: 'Approved planner output for dispatch.'\n"
+            "    recommendation_comment_ids:\n"
+            "      - 4001\n"
+            "    selected_generated_issue_numbers:\n"
+            "      - 201\n"
+            "      - 202\n"
+            "    selected_generated_issue_urls:\n"
+            "      - https://github.com/owner/repo/issues/201\n"
+            "      - https://github.com/owner/repo/issues/202\n"
+            "    applied_transition_targets:\n"
+            "      - state:ready-for-dev\n"
+            "      - state:ready-for-architecture\n"
             "```"
         )
         source_item = {
@@ -4001,7 +4082,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         )
         mock_add_comment.assert_called_once()
 
-    def test_approve_implementation_plan_review_transitions_using_markdown_sections_without_planner_result_v1(self):
+    def test_approve_implementation_plan_review_rejects_markdown_sections_without_available_human_decision_ledger(self):
         source_issue_number = 143
         planner_comment_id = 9001
         recommendation_comment_id = 4001
@@ -4106,34 +4187,10 @@ class HandlerObservabilityTests(unittest.TestCase):
                         plan_comment_id=planner_comment_id,
                     )
 
-        self.assertTrue(approved)
-        self.assertEqual(mock_get_item.call_count, 7)
-        mock_replace_label.assert_has_calls(
-            [
-                unittest.mock.call(
-                    generated_issue_201,
-                    remove_label_value="state:planned",
-                    add_label_value="state:ready-for-dev",
-                    repo=unittest.mock.ANY,
-                    run_command_fn=unittest.mock.ANY,
-                ),
-                unittest.mock.call(
-                    generated_issue_202,
-                    remove_label_value="state:planned",
-                    add_label_value="state:ready-for-architecture",
-                    repo=unittest.mock.ANY,
-                    run_command_fn=unittest.mock.ANY,
-                ),
-                unittest.mock.call(
-                    source_item,
-                    remove_label_value="state:ready-for-implementation-plan-review",
-                    add_label_value="state:ready-for-human-review",
-                    repo=unittest.mock.ANY,
-                    run_command_fn=unittest.mock.ANY,
-                ),
-            ]
-        )
-        mock_add_comment.assert_called_once()
+        self.assertFalse(approved)
+        self.assertEqual(mock_get_item.call_count, 2)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
         for call in mock_get_item.call_args_list:
             self.assertNotIn("locked", call.kwargs.get("fields", ""))
 
@@ -4163,6 +4220,22 @@ class HandlerObservabilityTests(unittest.TestCase):
                         "    - number: 202\n"
                         "      initial_state: state:planned\n"
                         "      next_state_after_approval: state:ready-for-architecture\n"
+                        "  human_decision_ledger_v1:\n"
+                        "    version: 1\n"
+                        "    decision_type: implementation_plan_review_approval\n"
+                        "    approved_by: reviewer\n"
+                        "    decision_summary: 'Approved planner output for dispatch.'\n"
+                        "    recommendation_comment_ids:\n"
+                        "      - 4001\n"
+                        "    selected_generated_issue_numbers:\n"
+                        "      - 201\n"
+                        "      - 202\n"
+                        "    selected_generated_issue_urls:\n"
+                        "      - https://github.com/owner/repo/issues/201\n"
+                        "      - https://github.com/owner/repo/issues/202\n"
+                        "    applied_transition_targets:\n"
+                        "      - state:ready-for-dev\n"
+                        "      - state:ready-for-architecture\n"
                         "```"
                     ),
                 },
@@ -4243,6 +4316,19 @@ class HandlerObservabilityTests(unittest.TestCase):
                         "    - number: 201\n"
                         "      initial_state: state:planned\n"
                         "      next_state_after_approval: state:ready-for-dev\n"
+                        "  human_decision_ledger_v1:\n"
+                        "    version: 1\n"
+                        "    decision_type: implementation_plan_review_approval\n"
+                        "    approved_by: reviewer\n"
+                        "    decision_summary: 'Approved planner output for dispatch.'\n"
+                        "    recommendation_comment_ids:\n"
+                        "      - 4001\n"
+                        "    selected_generated_issue_numbers:\n"
+                        "      - 201\n"
+                        "    selected_generated_issue_urls:\n"
+                        "      - https://github.com/owner/repo/issues/201\n"
+                        "    applied_transition_targets:\n"
+                        "      - state:ready-for-dev\n"
                         "```"
                     ),
                 },
