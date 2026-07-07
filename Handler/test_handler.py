@@ -3754,8 +3754,8 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         self.assertIsNotNone(planner_result)
         ledger = planner_result["human_decision_ledger_v1"]
-        self.assertEqual(ledger["decision_type"], "implementation_plan_approval")
-        self.assertEqual(ledger["status"], "available")
+        self.assertIsNone(ledger["decision_type"])
+        self.assertEqual(ledger["status"], "partial")
         self.assertEqual(ledger["recommendation_comment_ids"], [50001])
         self.assertEqual(ledger["selected_generated_issue_numbers"], [201])
         self.assertEqual(ledger["applied_transition_targets"], ["state:ready-for-dev"])
@@ -3805,6 +3805,8 @@ class HandlerObservabilityTests(unittest.TestCase):
         )
         self.assertNotIn("approved_by missing", ledger["diagnostics"])
         self.assertNotIn("decision_summary missing", ledger["diagnostics"])
+        self.assertIn("decision_type contains an unsupported entry", ledger["diagnostics"])
+        self.assertNotIn("decision_type defaulted from workflow", ledger["diagnostics"])
 
     def test_approve_implementation_plan_review_audit_comment_renders_full_handoff_ledger(self):
         source_issue_number = 143
@@ -7062,6 +7064,42 @@ class HandlerObservabilityTests(unittest.TestCase):
                             "source": "implementation-planner",
                             "diagnostic": None,
                         },
+                        human_decision_ledger_v1={
+                            "human_decision_v1": {
+                                "decision_type": "implementation_plan_review_approval",
+                                "source": {
+                                    "repo": "owner/repo",
+                                    "issue_number": 69,
+                                    "accepted_recommendation_comment_id": 50001,
+                                    "roadmap_pr": 90,
+                                    "planner_result_comment_id": 9111,
+                                },
+                                "decision": {
+                                    "selected_next_state": "state:ready-for-dev",
+                                    "next_state_options": ["state:ready-for-dev"],
+                                    "generated_issues": [
+                                        {
+                                            "number": 69,
+                                            "issue_url": "https://github.com/owner/repo/issues/69",
+                                            "title": "Record planner outcomes",
+                                            "initial_state": "state:planned",
+                                            "next_state_after_approval": "state:ready-for-dev",
+                                        }
+                                    ],
+                                },
+                                "stale_check": {
+                                    "status": "fresh",
+                                    "compared_recommendation_comment_id": 50001,
+                                    "compared_roadmap_pr": 90,
+                                    "diagnostics": ["verified against recommendation"],
+                                },
+                                "evidence": {
+                                    "github_comment_url": "https://github.com/owner/repo/issues/69#issuecomment-9111",
+                                    "github_comment_id": 9111,
+                                    "watchtower_run_status": "accepted",
+                                },
+                            }
+                        },
                     )
                     handler.write_run_result(item)
 
@@ -7082,6 +7120,17 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("- status: `available`", accepted_traceability_section)
         self.assertIn("- recommendation comment ID: `50001`", accepted_traceability_section)
         self.assertIn("- planner outcome: `READY`", accepted_traceability_section)
+        human_decision_section = result_content.split("## Human Decision Ledger", 1)[1].split("## Implementation Planner", 1)[0]
+        self.assertIn("- source:", human_decision_section)
+        self.assertIn("  - accepted_recommendation_comment_id: `50001`", human_decision_section)
+        self.assertIn("- decision:", human_decision_section)
+        self.assertIn("  - generated_issues: `", human_decision_section)
+        self.assertIn("'number': 69", human_decision_section)
+        self.assertIn("'next_state_after_approval': 'state:ready-for-dev'", human_decision_section)
+        self.assertIn("- stale_check:", human_decision_section)
+        self.assertIn("  - diagnostics: `['verified against recommendation']`", human_decision_section)
+        self.assertIn("- evidence:", human_decision_section)
+        self.assertIn("  - watchtower_run_status: `accepted`", human_decision_section)
 
     def test_write_run_result_includes_workspace_lifecycle_diagnostics(self):
         item = {

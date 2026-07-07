@@ -1023,6 +1023,10 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
     recommendation_traceability = status_payload.get("recommendation_traceability") or {}
     accepted_decision_traceability = status_payload.get("accepted_decision_traceability") or {}
     human_decision_ledger_v1 = status_payload.get("human_decision_ledger_v1") or {}
+    human_decision_source = human_decision_ledger_v1.get("source") or {}
+    human_decision_details = human_decision_ledger_v1.get("decision") or {}
+    human_decision_stale_check = human_decision_ledger_v1.get("stale_check") or {}
+    human_decision_evidence = human_decision_ledger_v1.get("evidence") or {}
     label_transition = status_payload.get("label_transition")
     lifecycle_diagnostics = status_payload.get("lifecycle_diagnostics")
     if not lifecycle_diagnostics:
@@ -1118,6 +1122,28 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
             f"- selected_generated_issue_urls: `{human_decision_ledger_v1.get('selected_generated_issue_urls')}`",
             f"- applied_transition_targets: `{human_decision_ledger_v1.get('applied_transition_targets')}`",
             f"- rationale_summary: `{human_decision_ledger_v1.get('rationale_summary')}`",
+            "- source:",
+            f"  - repo: `{human_decision_source.get('repo')}`",
+            f"  - issue_number: `{human_decision_source.get('issue_number')}`",
+            f"  - accepted_recommendation_url: `{human_decision_source.get('accepted_recommendation_url')}`",
+            f"  - accepted_recommendation_comment_id: `{human_decision_source.get('accepted_recommendation_comment_id')}`",
+            f"  - roadmap_pr: `{human_decision_source.get('roadmap_pr')}`",
+            f"  - planner_issue_number: `{human_decision_source.get('planner_issue_number')}`",
+            f"  - planner_result_comment_id: `{human_decision_source.get('planner_result_comment_id')}`",
+            f"  - implementation_plan_artifact: `{human_decision_source.get('implementation_plan_artifact')}`",
+            "- decision:",
+            f"  - selected_next_state: `{human_decision_details.get('selected_next_state')}`",
+            f"  - next_state_options: `{human_decision_details.get('next_state_options')}`",
+            f"  - generated_issues: `{human_decision_details.get('generated_issues')}`",
+            "- stale_check:",
+            f"  - status: `{human_decision_stale_check.get('status')}`",
+            f"  - compared_recommendation_comment_id: `{human_decision_stale_check.get('compared_recommendation_comment_id')}`",
+            f"  - compared_roadmap_pr: `{human_decision_stale_check.get('compared_roadmap_pr')}`",
+            f"  - diagnostics: `{human_decision_stale_check.get('diagnostics')}`",
+            "- evidence:",
+            f"  - github_comment_url: `{human_decision_evidence.get('github_comment_url')}`",
+            f"  - github_comment_id: `{human_decision_evidence.get('github_comment_id')}`",
+            f"  - watchtower_run_status: `{human_decision_evidence.get('watchtower_run_status')}`",
             "- diagnostics:",
         ]
     )

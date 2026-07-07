@@ -1,3 +1,8 @@
+SUPPORTED_HUMAN_DECISION_TYPES = {
+    "implementation_plan_review_approval",
+}
+
+
 def _coerce_positive_int(value):
     if isinstance(value, int) and value > 0:
         return value
@@ -95,6 +100,18 @@ def _normalize_recommendation_comment_ids(raw_human_decision_ledger, diagnostics
     if fallback_recommendation_comment_ids is not None and fallback_recommendation_comment_ids:
         diagnostics.append("recommendation_comment_ids defaulted from based_on_recommendation_comment_ids")
     return fallback_recommendation_comment_ids
+
+
+def _normalize_decision_type(value, diagnostics):
+    decision_type = _normalize_non_empty_string(value, diagnostics, field_name="decision_type")
+    if decision_type is None:
+        return None
+
+    if decision_type not in SUPPORTED_HUMAN_DECISION_TYPES:
+        diagnostics.append("decision_type contains an unsupported entry")
+        return None
+
+    return decision_type
 
 
 def _normalize_human_decision_source(source_value, diagnostics):
@@ -673,11 +690,8 @@ def normalize_human_decision_ledger(
         if selected_generated_issue_numbers:
             diagnostics.append("selected_generated_issue_numbers defaulted from decision.generated_issues")
 
-    decision_type = _normalize_non_empty_string(
-        raw_human_decision_payload.get("decision_type"),
-        diagnostics,
-        field_name="decision_type",
-    )
+    raw_decision_type = raw_human_decision_payload.get("decision_type")
+    decision_type = _normalize_decision_type(raw_decision_type, diagnostics)
     approved_by = _normalize_non_empty_string(
         raw_human_decision_payload.get("approved_by") or approval_payload.get("approved_by"),
         diagnostics,
@@ -767,7 +781,7 @@ def normalize_human_decision_ledger(
         applied_transition_targets = fallback_generated_issue_transition_targets
         diagnostics.append("applied_transition_targets defaulted from generated_issues")
 
-    if decision_type is None:
+    if decision_type is None and raw_decision_type is None:
         decision_type = "implementation_plan_review_approval"
         diagnostics.append("decision_type defaulted from workflow")
 
