@@ -4144,6 +4144,82 @@ class HandlerObservabilityTests(unittest.TestCase):
         mock_replace_label.assert_not_called()
         mock_add_comment.assert_not_called()
 
+    def test_approve_implementation_plan_review_rejects_non_approval_human_decision_types(self):
+        source_issue_number = 143
+        planner_comment_id = 9001
+        non_approval_decision_types = [
+            "roadmap_acceptance",
+            "implementation_planning_changes_requested",
+            "architecture_escalation",
+            "stale_plan_detected",
+        ]
+
+        for decision_type in non_approval_decision_types:
+            with self.subTest(decision_type=decision_type):
+                source_item = {
+                    "type": "issue",
+                    "number": source_issue_number,
+                    "title": "Implementation planning complete",
+                    "state": "OPEN",
+                    "closed": False,
+                    "locked": False,
+                    "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+                    "comments": [
+                        {"id": 4001, "body": "Recommendation details"},
+                        {
+                            "id": planner_comment_id,
+                            "body": (
+                                "```yaml\n"
+                                "planner_result_v1:\n"
+                                "  outcome: READY\n"
+                                "  parent_issue: 143\n"
+                                "  recommendation_comment_id: 4001\n"
+                                "  roadmap_pr: 88\n"
+                                "  generated_issues:\n"
+                                "    - number: 201\n"
+                                "      initial_state: state:planned\n"
+                                "      next_state_after_approval: state:ready-for-dev\n"
+                                "  human_decision_ledger_v1:\n"
+                                "    human_decision_v1:\n"
+                                f"      decision_type: {decision_type}\n"
+                                "      source:\n"
+                                "        repo: RedEagleSoftware/the-circus\n"
+                                "        issue_number: 143\n"
+                                "        accepted_recommendation_comment_id: 4001\n"
+                                "        roadmap_pr: 88\n"
+                                "        planner_result_comment_id: 9001\n"
+                                "      decision:\n"
+                                "        selected_next_state: state:ready-for-dev\n"
+                                "        generated_issues:\n"
+                                "          - number: 201\n"
+                                "            initial_state: state:planned\n"
+                                "            next_state_after_approval: state:ready-for-dev\n"
+                                "      stale_check:\n"
+                                "        status: fresh\n"
+                                "        compared_recommendation_comment_id: 4001\n"
+                                "        compared_roadmap_pr: 88\n"
+                                "      evidence:\n"
+                                "        github_comment_url: https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-9001\n"
+                                "        github_comment_id: 9001\n"
+                                "```"
+                            ),
+                        },
+                    ],
+                }
+
+                with patch.object(handler.github_client, "get_item", return_value=(source_item, True)) as mock_get_item:
+                    with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                        with patch.object(handler, "add_comment") as mock_add_comment:
+                            approved = handler.approve_implementation_plan_review(
+                                source_issue_number,
+                                plan_comment_id=planner_comment_id,
+                            )
+
+                self.assertFalse(approved)
+                self.assertEqual(mock_get_item.call_count, 1)
+                mock_replace_label.assert_not_called()
+                mock_add_comment.assert_not_called()
+
     def test_approve_implementation_plan_review_rejects_fresh_stale_check_recommendation_mismatch(self):
         source_issue_number = 143
         planner_comment_id = 9001

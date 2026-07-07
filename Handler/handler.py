@@ -56,6 +56,10 @@ IMPLEMENTATION_PLAN_FILENAME = watchtower.IMPLEMENTATION_PLAN_FILENAME
 REVIEW_OUTCOMES = workflow.REVIEW_OUTCOMES
 REVIEW_OUTCOME_MARKERS = workflow.REVIEW_OUTCOME_MARKERS
 IMPLEMENTATION_PLAN_OUTCOMES = {"READY", "BLOCKED", "ESCALATION_REQUIRED"}
+IMPLEMENTATION_PLAN_APPROVAL_DECISION_TYPES = {
+    "implementation_plan_review_approval",
+    "generated_issue_dispatch_approval",
+}
 PLANNER_RESULT_V1_JSON_BLOCK_PATTERN = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 PLANNER_RESULT_V1_FENCED_BLOCK_PATTERN = re.compile(r"```(?:yaml|yml|json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 STATE_LABEL_PATTERN = re.compile(r"\b(state:[A-Za-z0-9][A-Za-z0-9-]*)\b")
@@ -2018,6 +2022,15 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
         print(
             "[Approval] planner_result_v1 human_decision_ledger_v1 must be available before approval "
             f"(found: {normalized_human_decision_ledger.get('status')!r})."
+        )
+        return False
+
+    decision_type = normalized_human_decision_ledger.get("decision_type")
+    if decision_type not in IMPLEMENTATION_PLAN_APPROVAL_DECISION_TYPES:
+        print(
+            "[Approval] planner_result_v1 human_decision_ledger_v1 decision_type must be one of "
+            f"{sorted(IMPLEMENTATION_PLAN_APPROVAL_DECISION_TYPES)!r} before approval "
+            f"(found: {decision_type!r})."
         )
         return False
 
