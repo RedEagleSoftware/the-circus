@@ -1,5 +1,10 @@
 SUPPORTED_HUMAN_DECISION_TYPES = {
     "implementation_plan_review_approval",
+    "implementation_plan_approval",
+}
+
+DECISION_TYPE_ALIASES = {
+    "implementation_plan_approval": "implementation_plan_review_approval",
 }
 
 
@@ -111,7 +116,7 @@ def _normalize_decision_type(value, diagnostics):
         diagnostics.append("decision_type contains an unsupported entry")
         return None
 
-    return decision_type
+    return DECISION_TYPE_ALIASES.get(decision_type, decision_type)
 
 
 def _normalize_human_decision_source(source_value, diagnostics):
@@ -638,6 +643,15 @@ def normalize_human_decision_ledger(
     if isinstance(raw_human_decision_ledger.get("human_decision_v1"), dict):
         raw_human_decision_payload = raw_human_decision_ledger.get("human_decision_v1")
 
+    previously_reported_unsupported_decision_type = False
+    existing_diagnostics = raw_human_decision_ledger.get("diagnostics")
+    if isinstance(existing_diagnostics, list):
+        previously_reported_unsupported_decision_type = any(
+            isinstance(diagnostic, str)
+            and diagnostic.strip() == "decision_type contains an unsupported entry"
+            for diagnostic in existing_diagnostics
+        )
+
     source = _normalize_human_decision_source(raw_human_decision_payload.get("source"), diagnostics)
     decision = _normalize_human_decision_decision(raw_human_decision_payload.get("decision"), diagnostics)
     stale_check = _normalize_human_decision_stale_check(raw_human_decision_payload.get("stale_check"), diagnostics)
@@ -781,7 +795,7 @@ def normalize_human_decision_ledger(
         applied_transition_targets = fallback_generated_issue_transition_targets
         diagnostics.append("applied_transition_targets defaulted from generated_issues")
 
-    if decision_type is None and raw_decision_type is None:
+    if decision_type is None and raw_decision_type is None and not previously_reported_unsupported_decision_type:
         decision_type = "implementation_plan_review_approval"
         diagnostics.append("decision_type defaulted from workflow")
 

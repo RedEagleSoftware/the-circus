@@ -3754,8 +3754,8 @@ class HandlerObservabilityTests(unittest.TestCase):
 
         self.assertIsNotNone(planner_result)
         ledger = planner_result["human_decision_ledger_v1"]
-        self.assertIsNone(ledger["decision_type"])
-        self.assertEqual(ledger["status"], "partial")
+        self.assertEqual(ledger["decision_type"], "implementation_plan_review_approval")
+        self.assertEqual(ledger["status"], "available")
         self.assertEqual(ledger["recommendation_comment_ids"], [50001])
         self.assertEqual(ledger["selected_generated_issue_numbers"], [201])
         self.assertEqual(ledger["applied_transition_targets"], ["state:ready-for-dev"])
@@ -3805,7 +3805,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         )
         self.assertNotIn("approved_by missing", ledger["diagnostics"])
         self.assertNotIn("decision_summary missing", ledger["diagnostics"])
-        self.assertIn("decision_type contains an unsupported entry", ledger["diagnostics"])
+        self.assertNotIn("decision_type contains an unsupported entry", ledger["diagnostics"])
         self.assertNotIn("decision_type defaulted from workflow", ledger["diagnostics"])
 
     def test_approve_implementation_plan_review_audit_comment_renders_full_handoff_ledger(self):
@@ -5049,6 +5049,71 @@ class HandlerObservabilityTests(unittest.TestCase):
                         "    - number: 201\n"
                         "      initial_state: state:planned\n"
                         "      next_state_after_approval: state:ready-for-implementation-plan-review\n"
+                        "```"
+                    ),
+                },
+            ],
+        }
+        roadmap_pr_item = {
+            "number": 88,
+            "state": "MERGED",
+            "mergedAt": "2026-06-23T10:11:12Z",
+            "title": "Roadmap update",
+            "url": "https://github.com/owner/repo/pull/88",
+        }
+
+        with patch.object(handler.github_client, "get_item") as mock_get_item:
+            mock_get_item.side_effect = [
+                (source_item, True),
+                (roadmap_pr_item, True),
+            ]
+            with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(143, plan_comment_id=9001, dry_run=True)
+
+        self.assertFalse(approved)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
+
+    def test_approve_implementation_plan_review_rejects_unsupported_decision_type_without_dispatch_mutation(self):
+        source_item = {
+            "type": "issue",
+            "number": 143,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+            "comments": [
+                {"id": 4001, "body": "Recommendation details"},
+                {
+                    "id": 9001,
+                    "body": (
+                        "```yaml\n"
+                        "planner_result_v1:\n"
+                        "  outcome: READY\n"
+                        "  parent_issue: 143\n"
+                        "  recommendation_comment_id: 4001\n"
+                        "  roadmap_pr: 88\n"
+                        "  generated_issues:\n"
+                        "    - number: 201\n"
+                        "      initial_state: state:planned\n"
+                        "      next_state_after_approval: state:ready-for-dev\n"
+                        "  human_decision_ledger_v1:\n"
+                        "    version: 1\n"
+                        "    decision_type: not_a_real_decision_type\n"
+                        "    approved_by: reviewer\n"
+                        "    decision_summary: 'Approved planner output for dispatch.'\n"
+                        "    recommendation_comment_ids:\n"
+                        "      - 4001\n"
+                        "    selected_generated_issue_numbers:\n"
+                        "      - 201\n"
+                        "    applied_transition_targets:\n"
+                        "      - state:ready-for-dev\n"
+                        "    stale_check:\n"
+                        "      status: fresh\n"
+                        "      compared_recommendation_comment_id: 4001\n"
+                        "      compared_roadmap_pr: 88\n"
                         "```"
                     ),
                 },
