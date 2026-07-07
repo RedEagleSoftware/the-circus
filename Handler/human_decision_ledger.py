@@ -1,4 +1,9 @@
 SUPPORTED_HUMAN_DECISION_TYPES = {
+    "roadmap_acceptance",
+    "generated_issue_dispatch_approval",
+    "implementation_planning_changes_requested",
+    "architecture_escalation",
+    "stale_plan_detected",
     "implementation_plan_review_approval",
     "implementation_plan_approval",
 }

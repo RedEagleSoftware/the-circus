@@ -3808,6 +3808,76 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertNotIn("decision_type contains an unsupported entry", ledger["diagnostics"])
         self.assertNotIn("decision_type defaulted from workflow", ledger["diagnostics"])
 
+    def test_human_decision_ledger_supports_first_slice_decision_types(self):
+        first_slice_decision_types = [
+            "roadmap_acceptance",
+            "implementation_plan_approval",
+            "generated_issue_dispatch_approval",
+            "implementation_planning_changes_requested",
+            "architecture_escalation",
+            "stale_plan_detected",
+        ]
+
+        for index, decision_type in enumerate(first_slice_decision_types, start=1):
+            with self.subTest(decision_type=decision_type):
+                recommendation_comment_id = 50000 + index
+                planner_issue_number = 140 + index
+                planner_result_comment_id = 9000 + index
+                roadmap_pr = 80 + index
+                generated_issue_number = 200 + index
+
+                normalized_ledger = handler.human_decision_ledger.normalize_human_decision_ledger(
+                    {
+                        "version": 1,
+                        "human_decision_v1": {
+                            "decision_type": decision_type,
+                            "source": {
+                                "repo": "RedEagleSoftware/the-circus",
+                                "issue_number": planner_issue_number,
+                                "accepted_recommendation_comment_id": recommendation_comment_id,
+                                "roadmap_pr": roadmap_pr,
+                                "planner_result_comment_id": planner_result_comment_id,
+                            },
+                            "decision": {
+                                "selected_next_state": "state:ready-for-dev",
+                                "next_state_options": ["state:ready-for-dev"],
+                                "generated_issues": [
+                                    {
+                                        "number": generated_issue_number,
+                                        "initial_state": "state:planned",
+                                        "next_state_after_approval": "state:ready-for-dev",
+                                    }
+                                ],
+                            },
+                            "stale_check": {
+                                "status": "fresh",
+                                "compared_recommendation_comment_id": recommendation_comment_id,
+                                "compared_roadmap_pr": roadmap_pr,
+                                "diagnostics": [],
+                            },
+                            "evidence": {
+                                "github_comment_url": (
+                                    "https://github.com/RedEagleSoftware/the-circus/issues/"
+                                    f"{planner_issue_number}#issuecomment-{planner_result_comment_id}"
+                                ),
+                                "github_comment_id": planner_result_comment_id,
+                            },
+                        },
+                    },
+                    recommendation_comment_id=recommendation_comment_id,
+                    generated_issue_numbers=[generated_issue_number],
+                    generated_issue_transition_targets=["state:ready-for-dev"],
+                )
+
+                self.assertEqual(normalized_ledger["status"], "available")
+                expected_decision_type = (
+                    "implementation_plan_review_approval"
+                    if decision_type == "implementation_plan_approval"
+                    else decision_type
+                )
+                self.assertEqual(normalized_ledger["decision_type"], expected_decision_type)
+                self.assertNotIn("decision_type contains an unsupported entry", normalized_ledger["diagnostics"])
+
     def test_approve_implementation_plan_review_audit_comment_renders_full_handoff_ledger(self):
         source_issue_number = 143
         planner_comment_id = 9001
