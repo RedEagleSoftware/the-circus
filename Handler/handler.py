@@ -1506,6 +1506,13 @@ def _parse_yaml_scalar_value(raw_value):
     ):
         stripped_value = stripped_value[1:-1]
 
+    lowered_value = stripped_value.lower()
+    if lowered_value in {"null", "~"}:
+        return None
+
+    if stripped_value == "[]":
+        return []
+
     if re.fullmatch(r"-?\d+", stripped_value):
         return int(stripped_value)
 

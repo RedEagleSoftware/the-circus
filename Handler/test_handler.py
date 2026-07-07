@@ -3808,6 +3808,67 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertNotIn("decision_type contains an unsupported entry", ledger["diagnostics"])
         self.assertNotIn("decision_type defaulted from workflow", ledger["diagnostics"])
 
+    def test_parse_planner_result_v1_handoff_yaml_treats_nulls_and_empty_list_as_yaml_values(self):
+        body = (
+            "```yaml\n"
+            "planner_result_v1:\n"
+            "  outcome: READY\n"
+            "  parent_issue: 143\n"
+            "  recommendation_comment_id: 50001\n"
+            "  roadmap_pr: 90\n"
+            "  generated_issues:\n"
+            "    - number: 201\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-dev\n"
+            "  human_decision_ledger_v1:\n"
+            "    human_decision_v1:\n"
+            "      decision_type: implementation_plan_approval\n"
+            "      source:\n"
+            "        repo: RedEagleSoftware/the-circus\n"
+            "        issue_number: 143\n"
+            "        accepted_recommendation_comment_id: 50001\n"
+            "        roadmap_pr: 90\n"
+            "        planner_result_comment_id: null\n"
+            "        implementation_plan_artifact: ~\n"
+            "      decision:\n"
+            "        selected_next_state: state:ready-for-dev\n"
+            "        next_state_options:\n"
+            "          - state:ready-for-dev\n"
+            "        generated_issues:\n"
+            "          - number: 201\n"
+            "            initial_state: state:planned\n"
+            "            next_state_after_approval: state:ready-for-dev\n"
+            "      stale_check:\n"
+            "        status: fresh\n"
+            "        compared_recommendation_comment_id: 50001\n"
+            "        compared_roadmap_pr: 90\n"
+            "        diagnostics: []\n"
+            "      evidence:\n"
+            "        github_comment_url: null\n"
+            "        github_comment_id: null\n"
+            "        watchtower_run_status: null\n"
+            "```"
+        )
+
+        planner_result = handler.parse_planner_result_v1(body)
+
+        self.assertIsNotNone(planner_result)
+        ledger = planner_result["human_decision_ledger_v1"]
+        self.assertEqual(ledger["status"], "available")
+        self.assertIsNone(ledger["source"]["planner_result_comment_id"])
+        self.assertIsNone(ledger["source"]["implementation_plan_artifact"])
+        self.assertEqual(ledger["stale_check"]["diagnostics"], [])
+        self.assertEqual(
+            ledger["evidence"],
+            {
+                "github_comment_url": None,
+                "github_comment_id": None,
+                "watchtower_run_status": None,
+            },
+        )
+        self.assertNotIn("stale_check.diagnostics must be a list of strings", ledger["diagnostics"])
+        self.assertNotIn("evidence.github_comment_id must be a positive integer", ledger["diagnostics"])
+
     def test_human_decision_ledger_supports_first_slice_decision_types(self):
         first_slice_decision_types = [
             "roadmap_acceptance",
