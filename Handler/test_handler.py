@@ -3960,6 +3960,45 @@ class HandlerObservabilityTests(unittest.TestCase):
                     self.assertEqual(normalized_ledger["applied_transition_targets"], ["state:ready-for-dev"])
                 self.assertNotIn("decision_type contains an unsupported entry", normalized_ledger["diagnostics"])
 
+    def test_human_decision_ledger_rejects_unsupported_stale_check_status_for_handoff_shape(self):
+        normalized_ledger = handler.human_decision_ledger.normalize_human_decision_ledger(
+            {
+                "version": 1,
+                "human_decision_v1": {
+                    "decision_type": "roadmap_acceptance",
+                    "source": {
+                        "repo": "RedEagleSoftware/the-circus",
+                        "issue_number": 143,
+                        "accepted_recommendation_comment_id": 50001,
+                        "roadmap_pr": 90,
+                    },
+                    "decision": {
+                        "selected_next_state": "state:ready-for-roadmap-update",
+                        "next_state_options": ["state:ready-for-roadmap-update"],
+                        "generated_issues": [],
+                    },
+                    "stale_check": {
+                        "status": "banana",
+                        "compared_recommendation_comment_id": 50001,
+                        "compared_roadmap_pr": 90,
+                        "diagnostics": ["input used unsupported stale status"],
+                    },
+                    "evidence": {
+                        "github_comment_url": "https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-9111",
+                        "github_comment_id": 9111,
+                    },
+                },
+            },
+            recommendation_comment_id=50001,
+            generated_issue_numbers=[],
+            generated_issue_transition_targets=[],
+        )
+
+        self.assertNotEqual(normalized_ledger["status"], "available")
+        self.assertEqual(normalized_ledger["status"], "partial")
+        self.assertIsNone(normalized_ledger["stale_check"]["status"])
+        self.assertIn("stale_check.status contains an unsupported entry", normalized_ledger["diagnostics"])
+
     def test_approve_implementation_plan_review_audit_comment_renders_full_handoff_ledger(self):
         source_issue_number = 143
         planner_comment_id = 9001

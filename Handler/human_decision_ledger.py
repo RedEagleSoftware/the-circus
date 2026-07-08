@@ -17,6 +17,14 @@ DECISION_TYPES_REQUIRING_GENERATED_ISSUES = {
     "generated_issue_dispatch_approval",
 }
 
+SUPPORTED_STALE_CHECK_STATUSES = {
+    "fresh",
+    "stale",
+    "missing",
+    "reference_mismatch",
+    "unknown",
+}
+
 
 def _coerce_positive_int(value):
     if isinstance(value, int) and value > 0:
@@ -443,6 +451,9 @@ def _normalize_human_decision_stale_check(stale_check_value, diagnostics):
     )
     if isinstance(stale_check_status, str):
         stale_check_status = stale_check_status.lower()
+        if stale_check_status not in SUPPORTED_STALE_CHECK_STATUSES:
+            diagnostics.append("stale_check.status contains an unsupported entry")
+            stale_check_status = None
 
     compared_recommendation_comment_id = _coerce_positive_int(stale_check_value.get("compared_recommendation_comment_id"))
     if (
