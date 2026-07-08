@@ -7488,6 +7488,177 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("- evidence:", human_decision_section)
         self.assertIn("  - watchtower_run_status: `accepted`", human_decision_section)
 
+    def test_read_run_status_promotes_planner_human_decision_ledger_when_more_complete(self):
+        planner_human_decision_ledger = {
+            "human_decision_v1": {
+                "decision_type": "implementation_plan_review_approval",
+                "source": {
+                    "repo": "owner/repo",
+                    "issue_number": 69,
+                    "accepted_recommendation_comment_id": 50001,
+                    "roadmap_pr": 90,
+                    "planner_result_comment_id": 9111,
+                },
+                "decision": {
+                    "selected_next_state": "state:ready-for-dev",
+                    "next_state_options": ["state:ready-for-dev"],
+                    "generated_issues": [
+                        {
+                            "number": 70,
+                            "issue_url": "https://github.com/owner/repo/issues/70",
+                            "title": "Implement planner promotion",
+                            "initial_state": "state:planned",
+                            "next_state_after_approval": "state:ready-for-dev",
+                        }
+                    ],
+                },
+                "stale_check": {
+                    "status": "fresh",
+                    "compared_recommendation_comment_id": 50001,
+                    "compared_roadmap_pr": 90,
+                },
+                "evidence": {
+                    "github_comment_url": "https://github.com/owner/repo/issues/69#issuecomment-9111",
+                    "github_comment_id": 9111,
+                    "watchtower_run_status": "accepted",
+                },
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = os.path.join(temp_dir, "owner-repo", "issue-69", "run-001-developer")
+            os.makedirs(run_dir, exist_ok=True)
+            run_state = {
+                "status_path": os.path.join(run_dir, "status.json"),
+                "result_path": os.path.join(run_dir, "result.md"),
+                "launch_brief_path": os.path.join(run_dir, "launch-brief.md"),
+            }
+            with open(run_state["result_path"], "w", encoding="utf-8") as result_file:
+                result_file.write("# Result\n")
+            with open(run_state["launch_brief_path"], "w", encoding="utf-8") as launch_brief_file:
+                launch_brief_file.write("# Launch Brief\n")
+
+            with open(run_state["status_path"], "w", encoding="utf-8") as status_file:
+                json.dump(
+                    {
+                        "repository": "owner/repo",
+                        "item_number": 69,
+                        "human_decision_ledger_v1": {
+                            "version": 1,
+                            "status": "missing",
+                        },
+                        "implementation_planner": {
+                            "recommendation_comment_id": 50001,
+                            "generated_issues": [
+                                {
+                                    "number": 70,
+                                    "next_state_after_approval": "state:ready-for-dev",
+                                }
+                            ],
+                            "human_decision_ledger_v1": planner_human_decision_ledger,
+                        },
+                    },
+                    status_file,
+                )
+                status_file.write("\n")
+
+            status_payload = handler.watchtower.read_run_status(
+                run_state,
+                normalize_path_for_display_fn=lambda path: path.replace("\\", "/"),
+            )
+
+        normalized_ledger = status_payload["human_decision_ledger_v1"]
+        self.assertEqual(normalized_ledger["status"], "available")
+        self.assertEqual(normalized_ledger["source"]["accepted_recommendation_comment_id"], 50001)
+        self.assertEqual(normalized_ledger["stale_check"]["status"], "fresh")
+        self.assertEqual(normalized_ledger["evidence"]["github_comment_id"], 9111)
+
+    def test_update_run_status_promotes_planner_human_decision_ledger_when_more_complete(self):
+        item = {
+            "type": "issue",
+            "number": 69,
+            "title": "Planner ledger promotion",
+            "working_branch": "circus/issue-69-ledger-promotion",
+        }
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        planner_human_decision_ledger = {
+            "human_decision_v1": {
+                "decision_type": "implementation_plan_review_approval",
+                "source": {
+                    "repo": "owner/repo",
+                    "issue_number": 69,
+                    "accepted_recommendation_comment_id": 50001,
+                    "roadmap_pr": 90,
+                    "planner_result_comment_id": 9111,
+                },
+                "decision": {
+                    "selected_next_state": "state:ready-for-dev",
+                    "next_state_options": ["state:ready-for-dev"],
+                    "generated_issues": [
+                        {
+                            "number": 70,
+                            "issue_url": "https://github.com/owner/repo/issues/70",
+                            "title": "Implement planner promotion",
+                            "initial_state": "state:planned",
+                            "next_state_after_approval": "state:ready-for-dev",
+                        }
+                    ],
+                },
+                "stale_check": {
+                    "status": "fresh",
+                    "compared_recommendation_comment_id": 50001,
+                    "compared_roadmap_pr": 90,
+                },
+                "evidence": {
+                    "github_comment_url": "https://github.com/owner/repo/issues/69#issuecomment-9111",
+                    "github_comment_id": 9111,
+                    "watchtower_run_status": "accepted",
+                },
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            launch_brief_path = os.path.join(temp_dir, "owner-repo", "issue-69", "run-001-developer", "launch-brief.md")
+            os.makedirs(os.path.dirname(launch_brief_path), exist_ok=True)
+            with open(launch_brief_path, "w", encoding="utf-8") as launch_brief_file:
+                launch_brief_file.write("# Launch Brief\n")
+
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                    run_state = handler.initialize_run_status(item, "state:changes-requested", config, launch_brief_path)
+                    handler.update_run_status(
+                        item,
+                        implementation_planner={
+                            "outcome": "READY",
+                            "recommendation_comment_id": 50001,
+                            "generated_issues": [
+                                {
+                                    "number": 70,
+                                    "url": "https://github.com/owner/repo/issues/70",
+                                    "next_state_after_approval": "state:ready-for-dev",
+                                }
+                            ],
+                            "human_decision_ledger_v1": planner_human_decision_ledger,
+                        },
+                    )
+                    status_payload = handler.watchtower.read_run_status(
+                        run_state,
+                        normalize_path_for_display_fn=lambda path: path.replace("\\", "/"),
+                    )
+
+        normalized_ledger = status_payload["human_decision_ledger_v1"]
+        self.assertEqual(normalized_ledger["status"], "available")
+        self.assertEqual(normalized_ledger["source"]["accepted_recommendation_comment_id"], 50001)
+        self.assertEqual(normalized_ledger["stale_check"]["status"], "fresh")
+        self.assertEqual(normalized_ledger["evidence"]["github_comment_id"], 9111)
+        self.assertEqual(normalized_ledger["decision"]["selected_next_state"], "state:ready-for-dev")
+
     def test_write_run_result_includes_workspace_lifecycle_diagnostics(self):
         item = {
             "type": "issue",

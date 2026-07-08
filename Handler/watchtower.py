@@ -73,9 +73,96 @@ RUN_STATUS_FIELDS = [
     "dependency_resolution",
 ]
 
+HUMAN_DECISION_LEDGER_STATUS_PRIORITY = {
+    "available": 3,
+    "partial": 2,
+    "missing": 1,
+    "invalid": 0,
+}
+
 
 def _trim_trailing_markdown_punctuation(value):
     return value.rstrip(")].,;:!?")
+
+
+def _normalize_generated_issue_numbers(generated_issues):
+    if not isinstance(generated_issues, list):
+        return []
+
+    normalized_issue_numbers = []
+    for generated_issue in generated_issues:
+        if not isinstance(generated_issue, dict):
+            continue
+
+        generated_issue_number = generated_issue.get("number")
+        if isinstance(generated_issue_number, int) and generated_issue_number > 0:
+            normalized_issue_numbers.append(generated_issue_number)
+
+    return normalized_issue_numbers
+
+
+def _normalize_generated_issue_transition_targets(generated_issues):
+    if not isinstance(generated_issues, list):
+        return []
+
+    normalized_transition_targets = []
+    for generated_issue in generated_issues:
+        if not isinstance(generated_issue, dict):
+            continue
+
+        transition_target = generated_issue.get("next_state_after_approval")
+        if not isinstance(transition_target, str):
+            continue
+
+        normalized_transition_target = transition_target.strip().lower()
+        if normalized_transition_target:
+            normalized_transition_targets.append(normalized_transition_target)
+
+    return normalized_transition_targets
+
+
+def _human_decision_ledger_status_score(ledger_payload):
+    if not isinstance(ledger_payload, dict):
+        return -1
+
+    return HUMAN_DECISION_LEDGER_STATUS_PRIORITY.get(ledger_payload.get("status"), -1)
+
+
+def _normalize_status_human_decision_ledger(status_payload):
+    implementation_planner = status_payload.get("implementation_planner")
+    if not isinstance(implementation_planner, dict):
+        implementation_planner = {}
+
+    generated_issues = implementation_planner.get("generated_issues")
+    recommendation_comment_id = implementation_planner.get("recommendation_comment_id")
+    generated_issue_numbers = _normalize_generated_issue_numbers(generated_issues)
+    generated_issue_transition_targets = _normalize_generated_issue_transition_targets(generated_issues)
+
+    normalized_status_human_decision_ledger = human_decision_ledger.normalize_human_decision_ledger(
+        status_payload.get("human_decision_ledger_v1"),
+        recommendation_comment_id=recommendation_comment_id,
+        generated_issue_numbers=generated_issue_numbers,
+        generated_issue_transition_targets=generated_issue_transition_targets,
+    )
+
+    planner_human_decision_ledger = implementation_planner.get("human_decision_ledger_v1")
+    if not isinstance(planner_human_decision_ledger, dict):
+        return normalized_status_human_decision_ledger
+
+    normalized_planner_human_decision_ledger = human_decision_ledger.normalize_human_decision_ledger(
+        planner_human_decision_ledger,
+        recommendation_comment_id=recommendation_comment_id,
+        generated_issue_numbers=generated_issue_numbers,
+        generated_issue_transition_targets=generated_issue_transition_targets,
+    )
+
+    if (
+        _human_decision_ledger_status_score(normalized_planner_human_decision_ledger)
+        > _human_decision_ledger_status_score(normalized_status_human_decision_ledger)
+    ):
+        return normalized_planner_human_decision_ledger
+
+    return normalized_status_human_decision_ledger
 
 
 def _extract_markdown_section_lines(markdown_text, section_heading):
@@ -950,16 +1037,7 @@ def read_run_status(run_state, *, run_status_fields=RUN_STATUS_FIELDS, normalize
         )
         status_payload["accepted_decision_traceability"] = accepted_decision_traceability
 
-    normalized_human_decision_ledger = human_decision_ledger.normalize_human_decision_ledger(
-        status_payload.get("human_decision_ledger_v1"),
-        recommendation_comment_id=(status_payload.get("implementation_planner") or {}).get("recommendation_comment_id"),
-        generated_issue_numbers=[
-            generated_issue.get("number")
-            for generated_issue in ((status_payload.get("implementation_planner") or {}).get("generated_issues") or [])
-            if isinstance(generated_issue, dict)
-        ],
-    )
-    status_payload["human_decision_ledger_v1"] = normalized_human_decision_ledger
+    status_payload["human_decision_ledger_v1"] = _normalize_status_human_decision_ledger(status_payload)
 
     return status_payload
 
@@ -998,15 +1076,7 @@ def update_run_status(item, *, get_run_state_fn, read_run_status_fn, write_run_s
         recommendation_traceability=status_payload.get("recommendation_traceability"),
         implementation_planner=status_payload.get("implementation_planner"),
     )
-    status_payload["human_decision_ledger_v1"] = human_decision_ledger.normalize_human_decision_ledger(
-        status_payload.get("human_decision_ledger_v1"),
-        recommendation_comment_id=(status_payload.get("implementation_planner") or {}).get("recommendation_comment_id"),
-        generated_issue_numbers=[
-            generated_issue.get("number")
-            for generated_issue in ((status_payload.get("implementation_planner") or {}).get("generated_issues") or [])
-            if isinstance(generated_issue, dict)
-        ],
-    )
+    status_payload["human_decision_ledger_v1"] = _normalize_status_human_decision_ledger(status_payload)
 
     write_run_status_fn(run_state, status_payload)
 
