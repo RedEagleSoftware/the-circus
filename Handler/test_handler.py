@@ -5016,6 +5016,188 @@ class HandlerObservabilityTests(unittest.TestCase):
         )
         mock_add_comment.assert_called_once()
 
+    def test_approve_implementation_plan_review_rejects_human_decision_generated_issue_number_mismatch(self):
+        source_issue_number = 143
+        planner_comment_id = 9001
+        recommendation_comment_id = 4001
+        roadmap_pr_number = 88
+        plan_body = (
+            "```yaml\n"
+            "planner_result_v1:\n"
+            "  outcome: READY\n"
+            "  parent_issue: 143\n"
+            "  recommendation_comment_id: 4001\n"
+            "  roadmap_pr: 88\n"
+            "  generated_issues:\n"
+            "    - number: 201\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-dev\n"
+            "  human_decision_ledger_v1:\n"
+            "    version: 1\n"
+            "    decision_type: implementation_plan_review_approval\n"
+            "    approved_by: reviewer\n"
+            "    decision_summary: 'Approved planner output for dispatch.'\n"
+            "    recommendation_comment_ids:\n"
+            "      - 4001\n"
+            "    selected_generated_issue_numbers:\n"
+            "      - 202\n"
+            "    selected_generated_issue_urls:\n"
+            "      - https://github.com/owner/repo/issues/202\n"
+            "    applied_transition_targets:\n"
+            "      - state:ready-for-dev\n"
+            "    stale_check:\n"
+            "      status: fresh\n"
+            "      compared_recommendation_comment_id: 4001\n"
+            "      compared_roadmap_pr: 88\n"
+            "```"
+        )
+        source_item = {
+            "type": "issue",
+            "number": source_issue_number,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [
+                {"name": "state:ready-for-implementation-plan-review"},
+                {"name": "status:triage"},
+            ],
+            "comments": [
+                {"id": recommendation_comment_id, "body": "Recommendation details"},
+                {
+                    "id": planner_comment_id,
+                    "body": plan_body,
+                },
+            ],
+        }
+        roadmap_pr_item = {
+            "number": roadmap_pr_number,
+            "state": "MERGED",
+            "mergedAt": "2026-06-23T10:11:12Z",
+            "title": "Roadmap update",
+            "url": "https://github.com/owner/repo/pull/88",
+        }
+        generated_issue_201 = {
+            "type": "issue",
+            "number": 201,
+            "title": "Generated issue A",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:planned"}],
+            "body": "Parent #143\nRecommendation 4001\nRoadmap #88\nNext state: state:ready-for-dev",
+        }
+
+        with patch.object(handler.github_client, "get_item") as mock_get_item:
+            mock_get_item.side_effect = [
+                (source_item, True),
+                (roadmap_pr_item, True),
+                (generated_issue_201, True),
+            ]
+            with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(
+                        source_issue_number,
+                        plan_comment_id=planner_comment_id,
+                        dry_run=True,
+                    )
+
+        self.assertFalse(approved)
+        self.assertEqual(mock_get_item.call_count, 2)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
+
+    def test_approve_implementation_plan_review_rejects_human_decision_transition_target_mismatch(self):
+        source_issue_number = 143
+        planner_comment_id = 9001
+        recommendation_comment_id = 4001
+        roadmap_pr_number = 88
+        plan_body = (
+            "```yaml\n"
+            "planner_result_v1:\n"
+            "  outcome: READY\n"
+            "  parent_issue: 143\n"
+            "  recommendation_comment_id: 4001\n"
+            "  roadmap_pr: 88\n"
+            "  generated_issues:\n"
+            "    - number: 201\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-dev\n"
+            "  human_decision_ledger_v1:\n"
+            "    version: 1\n"
+            "    decision_type: implementation_plan_review_approval\n"
+            "    approved_by: reviewer\n"
+            "    decision_summary: 'Approved planner output for dispatch.'\n"
+            "    recommendation_comment_ids:\n"
+            "      - 4001\n"
+            "    selected_generated_issue_numbers:\n"
+            "      - 201\n"
+            "    selected_generated_issue_urls:\n"
+            "      - https://github.com/owner/repo/issues/201\n"
+            "    applied_transition_targets:\n"
+            "      - state:ready-for-architecture\n"
+            "    stale_check:\n"
+            "      status: fresh\n"
+            "      compared_recommendation_comment_id: 4001\n"
+            "      compared_roadmap_pr: 88\n"
+            "```"
+        )
+        source_item = {
+            "type": "issue",
+            "number": source_issue_number,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [
+                {"name": "state:ready-for-implementation-plan-review"},
+                {"name": "status:triage"},
+            ],
+            "comments": [
+                {"id": recommendation_comment_id, "body": "Recommendation details"},
+                {
+                    "id": planner_comment_id,
+                    "body": plan_body,
+                },
+            ],
+        }
+        roadmap_pr_item = {
+            "number": roadmap_pr_number,
+            "state": "MERGED",
+            "mergedAt": "2026-06-23T10:11:12Z",
+            "title": "Roadmap update",
+            "url": "https://github.com/owner/repo/pull/88",
+        }
+        generated_issue_201 = {
+            "type": "issue",
+            "number": 201,
+            "title": "Generated issue A",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:planned"}],
+            "body": "Parent #143\nRecommendation 4001\nRoadmap #88\nNext state: state:ready-for-dev",
+        }
+
+        with patch.object(handler.github_client, "get_item") as mock_get_item:
+            mock_get_item.side_effect = [
+                (source_item, True),
+                (roadmap_pr_item, True),
+                (generated_issue_201, True),
+            ]
+            with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(
+                        source_issue_number,
+                        plan_comment_id=planner_comment_id,
+                        dry_run=True,
+                    )
+
+        self.assertFalse(approved)
+        self.assertEqual(mock_get_item.call_count, 2)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
+
     def test_approve_implementation_plan_review_rejects_markdown_sections_without_available_human_decision_ledger(self):
         source_issue_number = 143
         planner_comment_id = 9001

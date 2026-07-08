@@ -2112,6 +2112,35 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
         print("[Approval] planner_result_v1 generated_issues must contain at least one issue for READY approval.")
         return False
 
+    approved_generated_issue_numbers = normalized_human_decision_ledger.get("selected_generated_issue_numbers")
+    approved_transition_targets = normalized_human_decision_ledger.get("applied_transition_targets")
+    planner_generated_issue_numbers = [
+        generated_issue.get("issue_number")
+        for generated_issue in planner_generated_issues
+        if isinstance(generated_issue, dict)
+    ]
+    planner_transition_targets = [
+        generated_issue.get("next_state_after_approval")
+        for generated_issue in planner_generated_issues
+        if isinstance(generated_issue, dict)
+    ]
+
+    if approved_generated_issue_numbers != planner_generated_issue_numbers:
+        print(
+            "[Approval] planner_result_v1 human_decision_ledger_v1 selected_generated_issue_numbers must "
+            "exactly match planner_result_v1 generated_issues issue numbers before approval "
+            f"(expected: {planner_generated_issue_numbers!r}, found: {approved_generated_issue_numbers!r})."
+        )
+        return False
+
+    if approved_transition_targets != planner_transition_targets:
+        print(
+            "[Approval] planner_result_v1 human_decision_ledger_v1 applied_transition_targets must exactly "
+            "match planner_result_v1 generated_issues next_state_after_approval values before approval "
+            f"(expected: {planner_transition_targets!r}, found: {approved_transition_targets!r})."
+        )
+        return False
+
     generated_issues = []
     for generated_issue in planner_generated_issues:
         generated_issue_number = generated_issue["issue_number"]
