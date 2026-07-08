@@ -90,7 +90,7 @@ The near-term roadmap sequence is:
 1. Workflow governance parity.
 2. Accepted-decision traceability.
 3. Recovery baseline.
-4. Human decision ledger.
+4. Human decision ledger (v1 `human_decision_v1` baseline implemented in issue #91; expand coverage in follow-on slices).
 5. Organizational metrics seed.
 
 This program should be decomposed into independently valuable implementation slices after roadmap synchronization. Provider routing, skills, broad parallel dispatch, and model/resource optimization remain deferred until these organizational reliability gaps are closed.

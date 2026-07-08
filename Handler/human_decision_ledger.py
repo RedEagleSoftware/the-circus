@@ -600,7 +600,7 @@ def normalize_human_decision_ledger(
     recommendation_comment_id=None,
     generated_issue_numbers=None,
     generated_issue_transition_targets=None,
-): 
+):
     diagnostics = []
     status = "missing"
 

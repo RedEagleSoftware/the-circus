@@ -60,7 +60,8 @@
 - No persistent Watchtower visibility beyond local run artifacts.
 - Implementation Planner still has gaps around deeper generated-issue validation, dependency enforcement, and end-to-end generated issue creation when not already present in approved plans.
 - Workflow-governance parity across doctrine, labels, Handler dispatchability, and unsupported-state handling remains an accepted maturity gap.
-- Human decision ledger artifacts and lightweight organizational metrics are accepted but not yet fully implemented.
+- Human decision ledger artifacts are implemented for the v1 `human_decision_v1` contract (including normalization, stale/missing diagnostics, implementation-plan approval validation, and Watchtower run-artifact recording).
+- Lightweight organizational metrics are accepted but not yet implemented.
 
 ## Current Architectural Decisions
 - GitHub labels are source of truth
@@ -98,8 +99,7 @@
  
 ## Current Task
 
-- Reconcile this operations status document with currently implemented runtime capabilities and accepted issue #84 strategy.
-- Decompose next implementation slices across governance parity, accepted-decision traceability completion, recovery baseline, human decision ledger, metrics seed, and remaining lifecycle recovery integration.
+- Decompose next implementation slices across governance parity, accepted-decision traceability completion, recovery baseline hardening, human decision ledger coverage expansion, metrics seed, and remaining lifecycle recovery integration.
 
 
 ## Next Likely Tasks
@@ -107,7 +107,7 @@
 - Implement workflow-governance parity checks across doctrine, labels, Handler dispatchability, human-owned states, and unsupported-state handling.
 - Expand accepted-decision traceability from per-run artifacts into persistent/cross-run Watchtower observability and enforcement workflows.
 - Implement a conservative recovery baseline for stale locks/runs using existing lifecycle inventory/classification diagnostics.
-- Define and implement a lightweight human decision ledger artifact contract.
+- Expand the human decision ledger beyond the current implementation-plan approval slice to broader human-owned decision paths.
 - Seed lightweight organizational metrics for visibility/review (non-control).
 - Add target repo initialization command (`python main.py --init`).
 - Add lifecycle inventory and stale worktree detection/reporting as part of stale-lock/run recovery after the read-only classification service exists.
