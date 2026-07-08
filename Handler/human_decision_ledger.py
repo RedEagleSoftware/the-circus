@@ -12,6 +12,11 @@ DECISION_TYPE_ALIASES = {
     "implementation_plan_approval": "implementation_plan_review_approval",
 }
 
+DECISION_TYPES_REQUIRING_GENERATED_ISSUES = {
+    "implementation_plan_review_approval",
+    "generated_issue_dispatch_approval",
+}
+
 
 def _coerce_positive_int(value):
     if isinstance(value, int) and value > 0:
@@ -599,6 +604,10 @@ def _has_handoff_decision_details(decision):
     )
 
 
+def _decision_type_requires_generated_issue_dispatch(decision_type):
+    return decision_type in DECISION_TYPES_REQUIRING_GENERATED_ISSUES
+
+
 def _format_yaml_scalar(value):
     if value is None:
         return "null"
@@ -842,15 +851,24 @@ def normalize_human_decision_ledger(
             and approved_by
             and decision_summary
         )
+        handoff_requires_generated_issue_dispatch = _decision_type_requires_generated_issue_dispatch(
+            decision_type
+        )
+        has_handoff_generated_issue_dispatch_data = bool(
+            selected_generated_issue_numbers and applied_transition_targets
+        )
         has_handoff_required_fields = bool(
             recommendation_comment_ids
-            and selected_generated_issue_numbers
-            and applied_transition_targets
             and decision_type
             and _has_handoff_source_identity(source)
             and _has_handoff_decision_details(decision)
             and stale_check.get("status") is not None
             and ("evidence" in raw_human_decision_payload or any(evidence.values()))
+            and (
+                has_handoff_generated_issue_dispatch_data
+                if handoff_requires_generated_issue_dispatch
+                else True
+            )
         )
 
         if has_legacy_required_fields or has_handoff_required_fields:

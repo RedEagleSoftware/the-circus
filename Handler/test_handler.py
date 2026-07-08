@@ -3878,6 +3878,10 @@ class HandlerObservabilityTests(unittest.TestCase):
             "architecture_escalation",
             "stale_plan_detected",
         ]
+        decision_types_requiring_generated_issue_dispatch = {
+            "implementation_plan_approval",
+            "generated_issue_dispatch_approval",
+        }
 
         for index, decision_type in enumerate(first_slice_decision_types, start=1):
             with self.subTest(decision_type=decision_type):
@@ -3886,6 +3890,23 @@ class HandlerObservabilityTests(unittest.TestCase):
                 planner_result_comment_id = 9000 + index
                 roadmap_pr = 80 + index
                 generated_issue_number = 200 + index
+                requires_generated_issue_dispatch = (
+                    decision_type in decision_types_requiring_generated_issue_dispatch
+                )
+
+                generated_issues = []
+                generated_issue_numbers = []
+                generated_issue_transition_targets = []
+                if requires_generated_issue_dispatch:
+                    generated_issues = [
+                        {
+                            "number": generated_issue_number,
+                            "initial_state": "state:planned",
+                            "next_state_after_approval": "state:ready-for-dev",
+                        }
+                    ]
+                    generated_issue_numbers = [generated_issue_number]
+                    generated_issue_transition_targets = ["state:ready-for-dev"]
 
                 normalized_ledger = handler.human_decision_ledger.normalize_human_decision_ledger(
                     {
@@ -3902,13 +3923,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                             "decision": {
                                 "selected_next_state": "state:ready-for-dev",
                                 "next_state_options": ["state:ready-for-dev"],
-                                "generated_issues": [
-                                    {
-                                        "number": generated_issue_number,
-                                        "initial_state": "state:planned",
-                                        "next_state_after_approval": "state:ready-for-dev",
-                                    }
-                                ],
+                                "generated_issues": generated_issues,
                             },
                             "stale_check": {
                                 "status": "fresh",
@@ -3926,8 +3941,8 @@ class HandlerObservabilityTests(unittest.TestCase):
                         },
                     },
                     recommendation_comment_id=recommendation_comment_id,
-                    generated_issue_numbers=[generated_issue_number],
-                    generated_issue_transition_targets=["state:ready-for-dev"],
+                    generated_issue_numbers=generated_issue_numbers,
+                    generated_issue_transition_targets=generated_issue_transition_targets,
                 )
 
                 self.assertEqual(normalized_ledger["status"], "available")
@@ -3937,6 +3952,12 @@ class HandlerObservabilityTests(unittest.TestCase):
                     else decision_type
                 )
                 self.assertEqual(normalized_ledger["decision_type"], expected_decision_type)
+                if requires_generated_issue_dispatch:
+                    self.assertEqual(normalized_ledger["selected_generated_issue_numbers"], [generated_issue_number])
+                    self.assertEqual(normalized_ledger["applied_transition_targets"], ["state:ready-for-dev"])
+                else:
+                    self.assertEqual(normalized_ledger["selected_generated_issue_numbers"], [])
+                    self.assertEqual(normalized_ledger["applied_transition_targets"], ["state:ready-for-dev"])
                 self.assertNotIn("decision_type contains an unsupported entry", normalized_ledger["diagnostics"])
 
     def test_approve_implementation_plan_review_audit_comment_renders_full_handoff_ledger(self):
