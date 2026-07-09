@@ -27,6 +27,15 @@ def _normalize_bucket(value):
     return str(value)
 
 
+def _normalize_repository_identifier(value):
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    normalized = value.strip().lower()
+    return normalized or None
+
+
 def _increment(counter, key, amount=1):
     normalized_key = _normalize_bucket(key)
     counter[normalized_key] = counter.get(normalized_key, 0) + amount
@@ -380,6 +389,7 @@ def _finalize_report(report):
 def aggregate_organizational_metrics(status_files, *, repository_filter=None, runtime_root=None, generated_at=None):
     timestamp = generated_at or datetime.now().isoformat(timespec="seconds")
     report = _initialize_report(runtime_root, repository_filter, timestamp)
+    normalized_repository_filter = _normalize_repository_identifier(repository_filter)
 
     report["sources"]["status_files_discovered"] = len(status_files)
     included_records = []
@@ -396,7 +406,8 @@ def aggregate_organizational_metrics(status_files, *, repository_filter=None, ru
             continue
 
         status_repository = status_payload.get("repository")
-        if repository_filter and status_repository != repository_filter:
+        normalized_status_repository = _normalize_repository_identifier(status_repository)
+        if normalized_repository_filter and normalized_status_repository != normalized_repository_filter:
             report["data_quality"]["skipped_files"] += 1
             continue
 

@@ -201,7 +201,7 @@ class OrganizationalMetricsTests(unittest.TestCase):
                 file_handle.write("{ this is not valid json }\n")
 
             generation = metrics.generate_organizational_metrics(
-                repo="owner/repo",
+                repo="OwNeR/RePo",
                 runtime_root=runtime_root,
                 generated_at="2026-07-09T07:05:00",
             )
