@@ -200,6 +200,8 @@ Partial decomposition may appear as non-authoritative analysis in an escalation 
 - Stable headings are the primary parser contract in V1.
 - Keep machine-readable blocks optional and versioned.
 - Do not make runtime dispatch behavior depend on machine-readable planner output in this phase.
+- For `### Generated Issues`, compact bullets like `- #201 — state:ready-for-dev` are acceptable when they clearly include both the generated issue reference and target state.
+- If `human_decision_ledger_v1` includes a nested `human_decision_v1` object, ensure it stays semantically aligned with the flat v1 fields because runtime normalization will read nested values and map them back into the canonical flat contract.
 
 ---
 

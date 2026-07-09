@@ -286,7 +286,7 @@ The roadmap sequence for this program is:
 1. Workflow governance parity: document and then enforce parity between accepted workflow states, label sync, Handler dispatchability, human-owned states, and unsupported-state handling.
 2. Accepted-decision traceability: record Systems Architect recommendation URL/comment ID, roadmap PR, planner issue, generated issue IDs, and outcome state in Watchtower run history while preserving GitHub as authority.
 3. Recovery baseline: complete stale-lock/run recovery, workspace lifecycle classification, and dependency-blocked resume behavior before expanding parallelism or provider routing.
-4. Human decision ledger: standardize artifacts for roadmap acceptance, implementation-plan approval, generated issue dispatch approval, and stale-plan/change-request loops.
+4. Human decision ledger: establish the v1 `human_decision_v1` artifact contract and approval-path validation baseline (issue #91), then expand standardized artifacts for roadmap acceptance, generated issue dispatch approval, and stale-plan/change-request loops.
 5. Organizational metrics seed: start with simple, inspectable counts and categories for run outcomes, blockers, recovery events, review changes requested, and plan churn.
 
 These initiatives should become independently valuable implementation slices after roadmap synchronization. Metrics are visibility and review inputs in v1; they should not become automatic routing or control signals until later approved runtime capabilities validate that behavior.

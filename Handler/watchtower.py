@@ -3,6 +3,7 @@ import os
 import re
 from datetime import datetime
 
+from Handler import human_decision_ledger
 from Handler import target_instructions
 from Handler import workspace_diagnostics
 
@@ -61,6 +62,7 @@ RUN_STATUS_FIELDS = [
     "workflow_classification",
     "recommendation_traceability",
     "accepted_decision_traceability",
+    "human_decision_ledger_v1",
     "recovery_decision",
     "recovery_reason",
     "recovery_recommendation",
@@ -71,9 +73,96 @@ RUN_STATUS_FIELDS = [
     "dependency_resolution",
 ]
 
+HUMAN_DECISION_LEDGER_STATUS_PRIORITY = {
+    "available": 3,
+    "partial": 2,
+    "missing": 1,
+    "invalid": 0,
+}
+
 
 def _trim_trailing_markdown_punctuation(value):
     return value.rstrip(")].,;:!?")
+
+
+def _normalize_generated_issue_numbers(generated_issues):
+    if not isinstance(generated_issues, list):
+        return []
+
+    normalized_issue_numbers = []
+    for generated_issue in generated_issues:
+        if not isinstance(generated_issue, dict):
+            continue
+
+        generated_issue_number = generated_issue.get("number")
+        if isinstance(generated_issue_number, int) and generated_issue_number > 0:
+            normalized_issue_numbers.append(generated_issue_number)
+
+    return normalized_issue_numbers
+
+
+def _normalize_generated_issue_transition_targets(generated_issues):
+    if not isinstance(generated_issues, list):
+        return []
+
+    normalized_transition_targets = []
+    for generated_issue in generated_issues:
+        if not isinstance(generated_issue, dict):
+            continue
+
+        transition_target = generated_issue.get("next_state_after_approval")
+        if not isinstance(transition_target, str):
+            continue
+
+        normalized_transition_target = transition_target.strip().lower()
+        if normalized_transition_target:
+            normalized_transition_targets.append(normalized_transition_target)
+
+    return normalized_transition_targets
+
+
+def _human_decision_ledger_status_score(ledger_payload):
+    if not isinstance(ledger_payload, dict):
+        return -1
+
+    return HUMAN_DECISION_LEDGER_STATUS_PRIORITY.get(ledger_payload.get("status"), -1)
+
+
+def _normalize_status_human_decision_ledger(status_payload):
+    implementation_planner = status_payload.get("implementation_planner")
+    if not isinstance(implementation_planner, dict):
+        implementation_planner = {}
+
+    generated_issues = implementation_planner.get("generated_issues")
+    recommendation_comment_id = implementation_planner.get("recommendation_comment_id")
+    generated_issue_numbers = _normalize_generated_issue_numbers(generated_issues)
+    generated_issue_transition_targets = _normalize_generated_issue_transition_targets(generated_issues)
+
+    normalized_status_human_decision_ledger = human_decision_ledger.normalize_human_decision_ledger(
+        status_payload.get("human_decision_ledger_v1"),
+        recommendation_comment_id=recommendation_comment_id,
+        generated_issue_numbers=generated_issue_numbers,
+        generated_issue_transition_targets=generated_issue_transition_targets,
+    )
+
+    planner_human_decision_ledger = implementation_planner.get("human_decision_ledger_v1")
+    if not isinstance(planner_human_decision_ledger, dict):
+        return normalized_status_human_decision_ledger
+
+    normalized_planner_human_decision_ledger = human_decision_ledger.normalize_human_decision_ledger(
+        planner_human_decision_ledger,
+        recommendation_comment_id=recommendation_comment_id,
+        generated_issue_numbers=generated_issue_numbers,
+        generated_issue_transition_targets=generated_issue_transition_targets,
+    )
+
+    if (
+        _human_decision_ledger_status_score(normalized_planner_human_decision_ledger)
+        > _human_decision_ledger_status_score(normalized_status_human_decision_ledger)
+    ):
+        return normalized_planner_human_decision_ledger
+
+    return normalized_status_human_decision_ledger
 
 
 def _extract_markdown_section_lines(markdown_text, section_heading):
@@ -422,6 +511,7 @@ def build_implementation_planner_snapshot(
     roadmap_pr_number=None,
     roadmap_reference_merged=None,
     generated_issues=None,
+    human_decision_ledger_v1=None,
 ):
     generated_issue_links = []
     source_recommendation_url = None
@@ -509,6 +599,7 @@ def build_implementation_planner_snapshot(
         "recommendation_comment_id": recommendation_comment_id,
         "roadmap_pr_number": roadmap_pr_number,
         "roadmap_reference_merged": roadmap_reference_merged,
+        "human_decision_ledger_v1": human_decision_ledger_v1,
     }
 
     snapshot["recommendation_traceability"] = build_implementation_planner_recommendation_traceability_snapshot(snapshot)
@@ -891,6 +982,7 @@ def initialize_run_status(
         recommendation_traceability=status_payload.get("recommendation_traceability"),
         implementation_planner=status_payload.get("implementation_planner"),
     )
+    status_payload["human_decision_ledger_v1"] = human_decision_ledger.normalize_human_decision_ledger(None)
 
     for field in run_status_fields:
         status_payload.setdefault(field, None)
@@ -945,6 +1037,8 @@ def read_run_status(run_state, *, run_status_fields=RUN_STATUS_FIELDS, normalize
         )
         status_payload["accepted_decision_traceability"] = accepted_decision_traceability
 
+    status_payload["human_decision_ledger_v1"] = _normalize_status_human_decision_ledger(status_payload)
+
     return status_payload
 
 
@@ -982,6 +1076,7 @@ def update_run_status(item, *, get_run_state_fn, read_run_status_fn, write_run_s
         recommendation_traceability=status_payload.get("recommendation_traceability"),
         implementation_planner=status_payload.get("implementation_planner"),
     )
+    status_payload["human_decision_ledger_v1"] = _normalize_status_human_decision_ledger(status_payload)
 
     write_run_status_fn(run_state, status_payload)
 
@@ -997,6 +1092,11 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
     workflow_classification = status_payload.get("workflow_classification") or {}
     recommendation_traceability = status_payload.get("recommendation_traceability") or {}
     accepted_decision_traceability = status_payload.get("accepted_decision_traceability") or {}
+    human_decision_ledger_v1 = status_payload.get("human_decision_ledger_v1") or {}
+    human_decision_source = human_decision_ledger_v1.get("source") or {}
+    human_decision_details = human_decision_ledger_v1.get("decision") or {}
+    human_decision_stale_check = human_decision_ledger_v1.get("stale_check") or {}
+    human_decision_evidence = human_decision_ledger_v1.get("evidence") or {}
     label_transition = status_payload.get("label_transition")
     lifecycle_diagnostics = status_payload.get("lifecycle_diagnostics")
     if not lifecycle_diagnostics:
@@ -1087,6 +1187,53 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
     if isinstance(accepted_decision_diagnostics, list) and accepted_decision_diagnostics:
         for accepted_decision_diagnostic in accepted_decision_diagnostics:
             lines.append(f"  - {accepted_decision_diagnostic}")
+    else:
+        lines.append("  - none")
+
+    lines.extend(
+        [
+            "",
+            "## Human Decision Ledger",
+            f"- version: `{human_decision_ledger_v1.get('version')}`",
+            f"- status: `{human_decision_ledger_v1.get('status')}`",
+            f"- decision_type: `{human_decision_ledger_v1.get('decision_type')}`",
+            f"- approved_by: `{human_decision_ledger_v1.get('approved_by')}`",
+            f"- decision_summary: `{human_decision_ledger_v1.get('decision_summary')}`",
+            f"- recommendation_comment_ids: `{human_decision_ledger_v1.get('recommendation_comment_ids')}`",
+            f"- selected_generated_issue_numbers: `{human_decision_ledger_v1.get('selected_generated_issue_numbers')}`",
+            f"- selected_generated_issue_urls: `{human_decision_ledger_v1.get('selected_generated_issue_urls')}`",
+            f"- applied_transition_targets: `{human_decision_ledger_v1.get('applied_transition_targets')}`",
+            f"- rationale_summary: `{human_decision_ledger_v1.get('rationale_summary')}`",
+            "- source:",
+            f"  - repo: `{human_decision_source.get('repo')}`",
+            f"  - issue_number: `{human_decision_source.get('issue_number')}`",
+            f"  - accepted_recommendation_url: `{human_decision_source.get('accepted_recommendation_url')}`",
+            f"  - accepted_recommendation_comment_id: `{human_decision_source.get('accepted_recommendation_comment_id')}`",
+            f"  - roadmap_pr: `{human_decision_source.get('roadmap_pr')}`",
+            f"  - planner_issue_number: `{human_decision_source.get('planner_issue_number')}`",
+            f"  - planner_result_comment_id: `{human_decision_source.get('planner_result_comment_id')}`",
+            f"  - implementation_plan_artifact: `{human_decision_source.get('implementation_plan_artifact')}`",
+            "- decision:",
+            f"  - selected_next_state: `{human_decision_details.get('selected_next_state')}`",
+            f"  - next_state_options: `{human_decision_details.get('next_state_options')}`",
+            f"  - generated_issues: `{human_decision_details.get('generated_issues')}`",
+            "- stale_check:",
+            f"  - status: `{human_decision_stale_check.get('status')}`",
+            f"  - compared_recommendation_comment_id: `{human_decision_stale_check.get('compared_recommendation_comment_id')}`",
+            f"  - compared_roadmap_pr: `{human_decision_stale_check.get('compared_roadmap_pr')}`",
+            f"  - diagnostics: `{human_decision_stale_check.get('diagnostics')}`",
+            "- evidence:",
+            f"  - github_comment_url: `{human_decision_evidence.get('github_comment_url')}`",
+            f"  - github_comment_id: `{human_decision_evidence.get('github_comment_id')}`",
+            f"  - watchtower_run_status: `{human_decision_evidence.get('watchtower_run_status')}`",
+            "- diagnostics:",
+        ]
+    )
+
+    human_decision_ledger_diagnostics = human_decision_ledger_v1.get("diagnostics")
+    if isinstance(human_decision_ledger_diagnostics, list) and human_decision_ledger_diagnostics:
+        for human_decision_ledger_diagnostic in human_decision_ledger_diagnostics:
+            lines.append(f"  - {human_decision_ledger_diagnostic}")
     else:
         lines.append("  - none")
 

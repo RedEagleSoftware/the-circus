@@ -3582,8 +3582,543 @@ class HandlerObservabilityTests(unittest.TestCase):
                         "next_state_after_approval": "state:ready-for-architecture",
                     },
                 ],
+                "human_decision_ledger_v1": {
+                    "version": 1,
+                    "status": "partial",
+                    "decision_type": "implementation_plan_review_approval",
+                    "approved_by": None,
+                    "decision_summary": None,
+                    "recommendation_comment_ids": [50001],
+                    "based_on_recommendation_comment_ids": [50001],
+                    "selected_generated_issue_numbers": [201, 202],
+                    "selected_generated_issue_urls": [],
+                    "applied_transition_targets": ["state:ready-for-dev", "state:ready-for-architecture"],
+                    "rationale_summary": None,
+                    "source": {
+                        "repo": None,
+                        "issue_number": None,
+                        "accepted_recommendation_url": None,
+                        "accepted_recommendation_comment_id": None,
+                        "roadmap_pr": None,
+                        "planner_issue_number": None,
+                        "planner_result_comment_id": None,
+                        "implementation_plan_artifact": None,
+                    },
+                    "decision": {
+                        "selected_next_state": None,
+                        "next_state_options": [],
+                        "generated_issues": [],
+                    },
+                    "stale_check": {
+                        "status": None,
+                        "compared_recommendation_comment_id": None,
+                        "compared_roadmap_pr": None,
+                        "diagnostics": [],
+                    },
+                    "evidence": {
+                        "github_comment_url": None,
+                        "github_comment_id": None,
+                        "watchtower_run_status": None,
+                    },
+                    "diagnostics": [
+                        "human decision ledger missing",
+                        "recommendation_comment_ids defaulted from recommendation_comment_id",
+                        "selected_generated_issue_numbers defaulted from generated_issues",
+                        "applied_transition_targets defaulted from generated_issues",
+                        "decision_type defaulted from workflow",
+                        "approved_by missing",
+                        "decision_summary missing",
+                    ],
+                },
             },
         )
+
+    def test_parse_planner_result_v1_parses_nested_human_decision_ledger_yaml_block(self):
+        body = (
+            "```yaml\n"
+            "planner_result_v1:\n"
+            "  outcome: READY\n"
+            "  parent_issue: 143\n"
+            "  recommendation_comment_id: 50001\n"
+            "  roadmap_pr: 90\n"
+            "  generated_issues:\n"
+            "    - number: 201\n"
+            "      next_state_after_approval: state:ready-for-dev\n"
+            "  human_decision_ledger_v1:\n"
+            "    version: 1\n"
+            "    decision_type: implementation_plan_review_approval\n"
+            "    approved_by: reviewer\n"
+            "    decision_summary: 'Selected by reviewer decision.'\n"
+            "    recommendation_comment_ids:\n"
+            "      - 50001\n"
+            "    selected_generated_issue_numbers:\n"
+            "      - 201\n"
+            "    selected_generated_issue_urls:\n"
+            "      - https://github.com/RedEagleSoftware/the-circus/issues/201\n"
+            "    applied_transition_targets:\n"
+            "      - state:ready-for-dev\n"
+            "    rationale_summary: 'Selected by reviewer decision.'\n"
+            "```"
+        )
+
+        planner_result = handler.parse_planner_result_v1(body)
+
+        self.assertEqual(
+            planner_result["human_decision_ledger_v1"],
+            {
+                "version": 1,
+                "status": "available",
+                "decision_type": "implementation_plan_review_approval",
+                "approved_by": "reviewer",
+                "decision_summary": "Selected by reviewer decision.",
+                "recommendation_comment_ids": [50001],
+                "based_on_recommendation_comment_ids": [50001],
+                "selected_generated_issue_numbers": [201],
+                "selected_generated_issue_urls": [
+                    "https://github.com/RedEagleSoftware/the-circus/issues/201",
+                ],
+                "applied_transition_targets": ["state:ready-for-dev"],
+                "rationale_summary": "Selected by reviewer decision.",
+                "source": {
+                    "repo": None,
+                    "issue_number": None,
+                    "accepted_recommendation_url": None,
+                    "accepted_recommendation_comment_id": None,
+                    "roadmap_pr": None,
+                    "planner_issue_number": None,
+                    "planner_result_comment_id": None,
+                    "implementation_plan_artifact": None,
+                },
+                "decision": {
+                    "selected_next_state": None,
+                    "next_state_options": [],
+                    "generated_issues": [],
+                },
+                "stale_check": {
+                    "status": None,
+                    "compared_recommendation_comment_id": None,
+                    "compared_roadmap_pr": None,
+                    "diagnostics": [],
+                },
+                "evidence": {
+                    "github_comment_url": None,
+                    "github_comment_id": None,
+                    "watchtower_run_status": None,
+                },
+                "diagnostics": [],
+            },
+        )
+
+    def test_parse_planner_result_v1_parses_handoff_shaped_human_decision_v1_yaml_block(self):
+        body = (
+            "```yaml\n"
+            "planner_result_v1:\n"
+            "  outcome: READY\n"
+            "  parent_issue: 143\n"
+            "  recommendation_comment_id: 50001\n"
+            "  roadmap_pr: 90\n"
+            "  generated_issues:\n"
+            "    - number: 201\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-dev\n"
+            "  human_decision_ledger_v1:\n"
+            "    human_decision_v1:\n"
+            "      decision_type: implementation_plan_approval\n"
+            "      source:\n"
+            "        repo: RedEagleSoftware/the-circus\n"
+            "        issue_number: 143\n"
+            "        accepted_recommendation_comment_id: 50001\n"
+            "        roadmap_pr: 90\n"
+            "        planner_result_comment_id: 9111\n"
+            "      decision:\n"
+            "        selected_next_state: state:ready-for-dev\n"
+            "        next_state_options:\n"
+            "          - state:ready-for-dev\n"
+            "        generated_issues:\n"
+            "          - number: 201\n"
+            "            initial_state: state:planned\n"
+            "            next_state_after_approval: state:ready-for-dev\n"
+            "      stale_check:\n"
+            "        status: fresh\n"
+            "        compared_recommendation_comment_id: 50001\n"
+            "        compared_roadmap_pr: 90\n"
+            "        diagnostics:\n"
+            "          - verified\n"
+            "      evidence:\n"
+            "        github_comment_url: https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-9111\n"
+            "        github_comment_id: 9111\n"
+            "```"
+        )
+
+        planner_result = handler.parse_planner_result_v1(body)
+
+        self.assertIsNotNone(planner_result)
+        ledger = planner_result["human_decision_ledger_v1"]
+        self.assertEqual(ledger["decision_type"], "implementation_plan_review_approval")
+        self.assertEqual(ledger["status"], "available")
+        self.assertEqual(ledger["recommendation_comment_ids"], [50001])
+        self.assertEqual(ledger["selected_generated_issue_numbers"], [201])
+        self.assertEqual(ledger["applied_transition_targets"], ["state:ready-for-dev"])
+        self.assertEqual(
+            ledger["source"],
+            {
+                "repo": "RedEagleSoftware/the-circus",
+                "issue_number": 143,
+                "accepted_recommendation_url": None,
+                "accepted_recommendation_comment_id": 50001,
+                "roadmap_pr": 90,
+                "planner_issue_number": None,
+                "planner_result_comment_id": 9111,
+                "implementation_plan_artifact": None,
+            },
+        )
+        self.assertEqual(
+            ledger["decision"],
+            {
+                "selected_next_state": "state:ready-for-dev",
+                "next_state_options": ["state:ready-for-dev"],
+                "generated_issues": [
+                    {
+                        "number": 201,
+                        "initial_state": "state:planned",
+                        "next_state_after_approval": "state:ready-for-dev",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(
+            ledger["stale_check"],
+            {
+                "status": "fresh",
+                "compared_recommendation_comment_id": 50001,
+                "compared_roadmap_pr": 90,
+                "diagnostics": ["verified"],
+            },
+        )
+        self.assertEqual(
+            ledger["evidence"],
+            {
+                "github_comment_url": "https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-9111",
+                "github_comment_id": 9111,
+                "watchtower_run_status": None,
+            },
+        )
+        self.assertNotIn("approved_by missing", ledger["diagnostics"])
+        self.assertNotIn("decision_summary missing", ledger["diagnostics"])
+        self.assertNotIn("decision_type contains an unsupported entry", ledger["diagnostics"])
+        self.assertNotIn("decision_type defaulted from workflow", ledger["diagnostics"])
+
+    def test_parse_planner_result_v1_handoff_yaml_treats_nulls_and_empty_list_as_yaml_values(self):
+        body = (
+            "```yaml\n"
+            "planner_result_v1:\n"
+            "  outcome: READY\n"
+            "  parent_issue: 143\n"
+            "  recommendation_comment_id: 50001\n"
+            "  roadmap_pr: 90\n"
+            "  generated_issues:\n"
+            "    - number: 201\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-dev\n"
+            "  human_decision_ledger_v1:\n"
+            "    human_decision_v1:\n"
+            "      decision_type: implementation_plan_approval\n"
+            "      source:\n"
+            "        repo: RedEagleSoftware/the-circus\n"
+            "        issue_number: 143\n"
+            "        accepted_recommendation_comment_id: 50001\n"
+            "        roadmap_pr: 90\n"
+            "        planner_result_comment_id: null\n"
+            "        implementation_plan_artifact: ~\n"
+            "      decision:\n"
+            "        selected_next_state: state:ready-for-dev\n"
+            "        next_state_options:\n"
+            "          - state:ready-for-dev\n"
+            "        generated_issues:\n"
+            "          - number: 201\n"
+            "            initial_state: state:planned\n"
+            "            next_state_after_approval: state:ready-for-dev\n"
+            "      stale_check:\n"
+            "        status: fresh\n"
+            "        compared_recommendation_comment_id: 50001\n"
+            "        compared_roadmap_pr: 90\n"
+            "        diagnostics: []\n"
+            "      evidence:\n"
+            "        github_comment_url: null\n"
+            "        github_comment_id: null\n"
+            "        watchtower_run_status: null\n"
+            "```"
+        )
+
+        planner_result = handler.parse_planner_result_v1(body)
+
+        self.assertIsNotNone(planner_result)
+        ledger = planner_result["human_decision_ledger_v1"]
+        self.assertEqual(ledger["status"], "available")
+        self.assertIsNone(ledger["source"]["planner_result_comment_id"])
+        self.assertIsNone(ledger["source"]["implementation_plan_artifact"])
+        self.assertEqual(ledger["stale_check"]["diagnostics"], [])
+        self.assertEqual(
+            ledger["evidence"],
+            {
+                "github_comment_url": None,
+                "github_comment_id": None,
+                "watchtower_run_status": None,
+            },
+        )
+        self.assertNotIn("stale_check.diagnostics must be a list of strings", ledger["diagnostics"])
+        self.assertNotIn("evidence.github_comment_id must be a positive integer", ledger["diagnostics"])
+
+    def test_human_decision_ledger_supports_first_slice_decision_types(self):
+        first_slice_decision_types = [
+            "roadmap_acceptance",
+            "implementation_plan_approval",
+            "generated_issue_dispatch_approval",
+            "implementation_planning_changes_requested",
+            "architecture_escalation",
+            "stale_plan_detected",
+        ]
+        decision_types_requiring_generated_issue_dispatch = {
+            "implementation_plan_approval",
+            "generated_issue_dispatch_approval",
+        }
+
+        for index, decision_type in enumerate(first_slice_decision_types, start=1):
+            with self.subTest(decision_type=decision_type):
+                recommendation_comment_id = 50000 + index
+                planner_issue_number = 140 + index
+                planner_result_comment_id = 9000 + index
+                roadmap_pr = 80 + index
+                generated_issue_number = 200 + index
+                requires_generated_issue_dispatch = (
+                    decision_type in decision_types_requiring_generated_issue_dispatch
+                )
+
+                generated_issues = []
+                generated_issue_numbers = []
+                generated_issue_transition_targets = []
+                if requires_generated_issue_dispatch:
+                    generated_issues = [
+                        {
+                            "number": generated_issue_number,
+                            "initial_state": "state:planned",
+                            "next_state_after_approval": "state:ready-for-dev",
+                        }
+                    ]
+                    generated_issue_numbers = [generated_issue_number]
+                    generated_issue_transition_targets = ["state:ready-for-dev"]
+
+                normalized_ledger = handler.human_decision_ledger.normalize_human_decision_ledger(
+                    {
+                        "version": 1,
+                        "human_decision_v1": {
+                            "decision_type": decision_type,
+                            "source": {
+                                "repo": "RedEagleSoftware/the-circus",
+                                "issue_number": planner_issue_number,
+                                "accepted_recommendation_comment_id": recommendation_comment_id,
+                                "roadmap_pr": roadmap_pr,
+                                "planner_result_comment_id": planner_result_comment_id,
+                            },
+                            "decision": {
+                                "selected_next_state": "state:ready-for-dev",
+                                "next_state_options": ["state:ready-for-dev"],
+                                "generated_issues": generated_issues,
+                            },
+                            "stale_check": {
+                                "status": "fresh",
+                                "compared_recommendation_comment_id": recommendation_comment_id,
+                                "compared_roadmap_pr": roadmap_pr,
+                                "diagnostics": [],
+                            },
+                            "evidence": {
+                                "github_comment_url": (
+                                    "https://github.com/RedEagleSoftware/the-circus/issues/"
+                                    f"{planner_issue_number}#issuecomment-{planner_result_comment_id}"
+                                ),
+                                "github_comment_id": planner_result_comment_id,
+                            },
+                        },
+                    },
+                    recommendation_comment_id=recommendation_comment_id,
+                    generated_issue_numbers=generated_issue_numbers,
+                    generated_issue_transition_targets=generated_issue_transition_targets,
+                )
+
+                self.assertEqual(normalized_ledger["status"], "available")
+                expected_decision_type = (
+                    "implementation_plan_review_approval"
+                    if decision_type == "implementation_plan_approval"
+                    else decision_type
+                )
+                self.assertEqual(normalized_ledger["decision_type"], expected_decision_type)
+                if requires_generated_issue_dispatch:
+                    self.assertEqual(normalized_ledger["selected_generated_issue_numbers"], [generated_issue_number])
+                    self.assertEqual(normalized_ledger["applied_transition_targets"], ["state:ready-for-dev"])
+                else:
+                    self.assertEqual(normalized_ledger["selected_generated_issue_numbers"], [])
+                    self.assertEqual(normalized_ledger["applied_transition_targets"], ["state:ready-for-dev"])
+                self.assertNotIn("decision_type contains an unsupported entry", normalized_ledger["diagnostics"])
+
+    def test_human_decision_ledger_rejects_unsupported_stale_check_status_for_handoff_shape(self):
+        normalized_ledger = handler.human_decision_ledger.normalize_human_decision_ledger(
+            {
+                "version": 1,
+                "human_decision_v1": {
+                    "decision_type": "roadmap_acceptance",
+                    "source": {
+                        "repo": "RedEagleSoftware/the-circus",
+                        "issue_number": 143,
+                        "accepted_recommendation_comment_id": 50001,
+                        "roadmap_pr": 90,
+                    },
+                    "decision": {
+                        "selected_next_state": "state:ready-for-roadmap-update",
+                        "next_state_options": ["state:ready-for-roadmap-update"],
+                        "generated_issues": [],
+                    },
+                    "stale_check": {
+                        "status": "banana",
+                        "compared_recommendation_comment_id": 50001,
+                        "compared_roadmap_pr": 90,
+                        "diagnostics": ["input used unsupported stale status"],
+                    },
+                    "evidence": {
+                        "github_comment_url": "https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-9111",
+                        "github_comment_id": 9111,
+                    },
+                },
+            },
+            recommendation_comment_id=50001,
+            generated_issue_numbers=[],
+            generated_issue_transition_targets=[],
+        )
+
+        self.assertNotEqual(normalized_ledger["status"], "available")
+        self.assertEqual(normalized_ledger["status"], "partial")
+        self.assertIsNone(normalized_ledger["stale_check"]["status"])
+        self.assertIn("stale_check.status contains an unsupported entry", normalized_ledger["diagnostics"])
+
+    def test_approve_implementation_plan_review_audit_comment_renders_full_handoff_ledger(self):
+        source_issue_number = 143
+        planner_comment_id = 9001
+        recommendation_comment_id = 4001
+        roadmap_pr_number = 88
+        plan_body = (
+            "```yaml\n"
+            "planner_result_v1:\n"
+            "  outcome: READY\n"
+            "  parent_issue: 143\n"
+            "  recommendation_comment_id: 4001\n"
+            "  roadmap_pr: 88\n"
+            "  generated_issues:\n"
+            "    - number: 201\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-dev\n"
+            "  human_decision_ledger_v1:\n"
+            "    human_decision_v1:\n"
+            "      decision_type: implementation_plan_approval\n"
+            "      source:\n"
+            "        repo: RedEagleSoftware/the-circus\n"
+            "        issue_number: 143\n"
+            "        accepted_recommendation_comment_id: 4001\n"
+            "        roadmap_pr: 88\n"
+            "        planner_result_comment_id: 9001\n"
+            "      decision:\n"
+            "        selected_next_state: state:ready-for-dev\n"
+            "        next_state_options:\n"
+            "          - state:ready-for-dev\n"
+            "        generated_issues:\n"
+            "          - number: 201\n"
+            "            initial_state: state:planned\n"
+            "            next_state_after_approval: state:ready-for-dev\n"
+            "      stale_check:\n"
+            "        status: fresh\n"
+            "        compared_recommendation_comment_id: 4001\n"
+            "        compared_roadmap_pr: 88\n"
+            "      evidence:\n"
+            "        github_comment_url: https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-9001\n"
+            "        github_comment_id: 9001\n"
+            "```"
+        )
+        source_item = {
+            "type": "issue",
+            "number": source_issue_number,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [
+                {"name": "state:ready-for-implementation-plan-review"},
+                {"name": "status:triage"},
+            ],
+            "comments": [
+                {"id": recommendation_comment_id, "body": "Recommendation details"},
+                {
+                    "id": planner_comment_id,
+                    "body": plan_body,
+                },
+            ],
+        }
+        roadmap_pr_item = {
+            "number": roadmap_pr_number,
+            "state": "MERGED",
+            "mergedAt": "2026-06-23T10:11:12Z",
+            "title": "Roadmap update",
+            "url": "https://github.com/owner/repo/pull/88",
+        }
+        generated_issue_201 = {
+            "type": "issue",
+            "number": 201,
+            "title": "Generated issue A",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:planned"}],
+            "body": "Parent #143\nRecommendation 4001\nRoadmap #88\nNext state: state:ready-for-dev",
+        }
+        generated_issue_201_after = {
+            "type": "issue",
+            "number": 201,
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-dev"}],
+        }
+        source_item_after = {
+            "type": "issue",
+            "number": source_issue_number,
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-human-review"}],
+        }
+
+        with patch.object(handler.github_client, "get_item") as mock_get_item:
+            mock_get_item.side_effect = [
+                (source_item, True),
+                (roadmap_pr_item, True),
+                (generated_issue_201, True),
+                (generated_issue_201_after, True),
+                (source_item_after, True),
+            ]
+            with patch.object(handler.github_client, "replace_label", return_value=True):
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(
+                        source_issue_number,
+                        plan_comment_id=planner_comment_id,
+                    )
+
+        self.assertTrue(approved)
+        mock_add_comment.assert_called_once()
+        audit_comment = mock_add_comment.call_args.args[0]["comment"]
+        self.assertIn("human_decision_v1:", audit_comment)
+        self.assertIn("source:", audit_comment)
+        self.assertIn("decision:", audit_comment)
+        self.assertIn("stale_check:", audit_comment)
+        self.assertIn("evidence:", audit_comment)
+        self.assertIn("next_state_options:", audit_comment)
+        self.assertIn("generated_issues:", audit_comment)
 
     def test_parse_planner_result_v1_rejects_missing_generated_issues(self):
         body = "```yaml\nplanner_result_v1:\n  outcome: READY\n```"
@@ -3591,6 +4126,482 @@ class HandlerObservabilityTests(unittest.TestCase):
         planner_result = handler.parse_planner_result_v1(body)
 
         self.assertIsNone(planner_result)
+
+    def test_approve_implementation_plan_review_rejects_stale_human_decision_ledger(self):
+        source_issue_number = 143
+        planner_comment_id = 9001
+        source_item = {
+            "type": "issue",
+            "number": source_issue_number,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+            "comments": [
+                {"id": 4001, "body": "Recommendation details"},
+                {
+                    "id": planner_comment_id,
+                    "body": (
+                        "```yaml\n"
+                        "planner_result_v1:\n"
+                        "  outcome: READY\n"
+                        "  parent_issue: 143\n"
+                        "  recommendation_comment_id: 4001\n"
+                        "  roadmap_pr: 88\n"
+                        "  generated_issues:\n"
+                        "    - number: 201\n"
+                        "      initial_state: state:planned\n"
+                        "      next_state_after_approval: state:ready-for-dev\n"
+                        "  human_decision_ledger_v1:\n"
+                        "    version: 1\n"
+                        "    decision_type: implementation_plan_review_approval\n"
+                        "    source:\n"
+                        "      repo: RedEagleSoftware/the-circus\n"
+                        "      issue_number: 143\n"
+                        "      accepted_recommendation_comment_id: 4001\n"
+                        "      roadmap_pr: 88\n"
+                        "      planner_result_comment_id: 9001\n"
+                        "    decision:\n"
+                        "      selected_next_state: state:ready-for-dev\n"
+                        "      generated_issues:\n"
+                        "        - number: 201\n"
+                        "          initial_state: state:planned\n"
+                        "          next_state_after_approval: state:ready-for-dev\n"
+                        "    stale_check:\n"
+                        "      status: stale\n"
+                        "      compared_recommendation_comment_id: 3999\n"
+                        "      compared_roadmap_pr: 88\n"
+                        "      diagnostics:\n"
+                        "        - recommendation reference is stale\n"
+                        "    evidence:\n"
+                        "      github_comment_url: https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-9001\n"
+                        "      github_comment_id: 9001\n"
+                        "```"
+                    ),
+                },
+            ],
+        }
+
+        with patch.object(handler.github_client, "get_item", return_value=(source_item, True)) as mock_get_item:
+            with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(
+                        source_issue_number,
+                        plan_comment_id=planner_comment_id,
+                    )
+
+        self.assertFalse(approved)
+        self.assertEqual(mock_get_item.call_count, 1)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
+
+    def test_approve_implementation_plan_review_rejects_fresh_human_decision_ledger_without_required_identity_fields(self):
+        source_issue_number = 143
+        planner_comment_id = 9001
+        source_item = {
+            "type": "issue",
+            "number": source_issue_number,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+            "comments": [
+                {"id": 4001, "body": "Recommendation details"},
+                {
+                    "id": planner_comment_id,
+                    "body": (
+                        "```yaml\n"
+                        "planner_result_v1:\n"
+                        "  outcome: READY\n"
+                        "  parent_issue: 143\n"
+                        "  recommendation_comment_id: 4001\n"
+                        "  roadmap_pr: 88\n"
+                        "  generated_issues:\n"
+                        "    - number: 201\n"
+                        "      initial_state: state:planned\n"
+                        "      next_state_after_approval: state:ready-for-dev\n"
+                        "  human_decision_ledger_v1:\n"
+                        "    version: 1\n"
+                        "    decision_type: implementation_plan_review_approval\n"
+                        "    source:\n"
+                        "      repo: RedEagleSoftware/the-circus\n"
+                        "      issue_number: 143\n"
+                        "      planner_result_comment_id: 9001\n"
+                        "    decision:\n"
+                        "      selected_next_state: state:ready-for-dev\n"
+                        "      generated_issues:\n"
+                        "        - number: 201\n"
+                        "          initial_state: state:planned\n"
+                        "          next_state_after_approval: state:ready-for-dev\n"
+                        "    stale_check:\n"
+                        "      status: fresh\n"
+                        "    evidence:\n"
+                        "      github_comment_url: https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-9001\n"
+                        "      github_comment_id: 9001\n"
+                        "```"
+                    ),
+                },
+            ],
+        }
+
+        with patch.object(handler.github_client, "get_item", return_value=(source_item, True)) as mock_get_item:
+            with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(
+                        source_issue_number,
+                        plan_comment_id=planner_comment_id,
+                    )
+
+        self.assertFalse(approved)
+        self.assertEqual(mock_get_item.call_count, 1)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
+
+    def test_approve_implementation_plan_review_rejects_fresh_human_decision_ledger_without_stale_check_compared_ids(self):
+        source_issue_number = 143
+        planner_comment_id = 9001
+        source_item = {
+            "type": "issue",
+            "number": source_issue_number,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+            "comments": [
+                {"id": 4001, "body": "Recommendation details"},
+                {
+                    "id": planner_comment_id,
+                    "body": (
+                        "```yaml\n"
+                        "planner_result_v1:\n"
+                        "  outcome: READY\n"
+                        "  parent_issue: 143\n"
+                        "  recommendation_comment_id: 4001\n"
+                        "  roadmap_pr: 88\n"
+                        "  generated_issues:\n"
+                        "    - number: 201\n"
+                        "      initial_state: state:planned\n"
+                        "      next_state_after_approval: state:ready-for-dev\n"
+                        "  human_decision_ledger_v1:\n"
+                        "    version: 1\n"
+                        "    decision_type: implementation_plan_review_approval\n"
+                        "    source:\n"
+                        "      repo: RedEagleSoftware/the-circus\n"
+                        "      issue_number: 143\n"
+                        "      accepted_recommendation_comment_id: 4001\n"
+                        "      roadmap_pr: 88\n"
+                        "      planner_result_comment_id: 9001\n"
+                        "    decision:\n"
+                        "      selected_next_state: state:ready-for-dev\n"
+                        "      generated_issues:\n"
+                        "        - number: 201\n"
+                        "          initial_state: state:planned\n"
+                        "          next_state_after_approval: state:ready-for-dev\n"
+                        "    stale_check:\n"
+                        "      status: fresh\n"
+                        "    evidence:\n"
+                        "      github_comment_url: https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-9001\n"
+                        "      github_comment_id: 9001\n"
+                        "```"
+                    ),
+                },
+            ],
+        }
+
+        with patch.object(handler.github_client, "get_item", return_value=(source_item, True)) as mock_get_item:
+            with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(
+                        source_issue_number,
+                        plan_comment_id=planner_comment_id,
+                    )
+
+        self.assertFalse(approved)
+        self.assertEqual(mock_get_item.call_count, 1)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
+
+    def test_approve_implementation_plan_review_rejects_reference_mismatch_human_decision_ledger(self):
+        source_issue_number = 143
+        planner_comment_id = 9001
+        source_item = {
+            "type": "issue",
+            "number": source_issue_number,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+            "comments": [
+                {"id": 4001, "body": "Recommendation details"},
+                {
+                    "id": planner_comment_id,
+                    "body": (
+                        "```yaml\n"
+                        "planner_result_v1:\n"
+                        "  outcome: READY\n"
+                        "  parent_issue: 143\n"
+                        "  recommendation_comment_id: 4001\n"
+                        "  roadmap_pr: 88\n"
+                        "  generated_issues:\n"
+                        "    - number: 201\n"
+                        "      initial_state: state:planned\n"
+                        "      next_state_after_approval: state:ready-for-dev\n"
+                        "  human_decision_ledger_v1:\n"
+                        "    version: 1\n"
+                        "    decision_type: implementation_plan_review_approval\n"
+                        "    source:\n"
+                        "      repo: RedEagleSoftware/the-circus\n"
+                        "      issue_number: 143\n"
+                        "      accepted_recommendation_comment_id: 4001\n"
+                        "      roadmap_pr: 88\n"
+                        "      planner_result_comment_id: 9001\n"
+                        "    decision:\n"
+                        "      selected_next_state: state:ready-for-dev\n"
+                        "      generated_issues:\n"
+                        "        - number: 201\n"
+                        "          initial_state: state:planned\n"
+                        "          next_state_after_approval: state:ready-for-dev\n"
+                        "    stale_check:\n"
+                        "      status: reference_mismatch\n"
+                        "      compared_recommendation_comment_id: 3999\n"
+                        "      compared_roadmap_pr: 88\n"
+                        "      diagnostics:\n"
+                        "        - recommendation reference mismatches source\n"
+                        "    evidence:\n"
+                        "      github_comment_url: https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-9001\n"
+                        "      github_comment_id: 9001\n"
+                        "```"
+                    ),
+                },
+            ],
+        }
+
+        with patch.object(handler.github_client, "get_item", return_value=(source_item, True)) as mock_get_item:
+            with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(
+                        source_issue_number,
+                        plan_comment_id=planner_comment_id,
+                    )
+
+        self.assertFalse(approved)
+        self.assertEqual(mock_get_item.call_count, 1)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
+
+    def test_approve_implementation_plan_review_rejects_non_approval_human_decision_types(self):
+        source_issue_number = 143
+        planner_comment_id = 9001
+        non_approval_decision_types = [
+            "roadmap_acceptance",
+            "implementation_planning_changes_requested",
+            "architecture_escalation",
+            "stale_plan_detected",
+        ]
+
+        for decision_type in non_approval_decision_types:
+            with self.subTest(decision_type=decision_type):
+                source_item = {
+                    "type": "issue",
+                    "number": source_issue_number,
+                    "title": "Implementation planning complete",
+                    "state": "OPEN",
+                    "closed": False,
+                    "locked": False,
+                    "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+                    "comments": [
+                        {"id": 4001, "body": "Recommendation details"},
+                        {
+                            "id": planner_comment_id,
+                            "body": (
+                                "```yaml\n"
+                                "planner_result_v1:\n"
+                                "  outcome: READY\n"
+                                "  parent_issue: 143\n"
+                                "  recommendation_comment_id: 4001\n"
+                                "  roadmap_pr: 88\n"
+                                "  generated_issues:\n"
+                                "    - number: 201\n"
+                                "      initial_state: state:planned\n"
+                                "      next_state_after_approval: state:ready-for-dev\n"
+                                "  human_decision_ledger_v1:\n"
+                                "    human_decision_v1:\n"
+                                f"      decision_type: {decision_type}\n"
+                                "      source:\n"
+                                "        repo: RedEagleSoftware/the-circus\n"
+                                "        issue_number: 143\n"
+                                "        accepted_recommendation_comment_id: 4001\n"
+                                "        roadmap_pr: 88\n"
+                                "        planner_result_comment_id: 9001\n"
+                                "      decision:\n"
+                                "        selected_next_state: state:ready-for-dev\n"
+                                "        generated_issues:\n"
+                                "          - number: 201\n"
+                                "            initial_state: state:planned\n"
+                                "            next_state_after_approval: state:ready-for-dev\n"
+                                "      stale_check:\n"
+                                "        status: fresh\n"
+                                "        compared_recommendation_comment_id: 4001\n"
+                                "        compared_roadmap_pr: 88\n"
+                                "      evidence:\n"
+                                "        github_comment_url: https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-9001\n"
+                                "        github_comment_id: 9001\n"
+                                "```"
+                            ),
+                        },
+                    ],
+                }
+
+                with patch.object(handler.github_client, "get_item", return_value=(source_item, True)) as mock_get_item:
+                    with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                        with patch.object(handler, "add_comment") as mock_add_comment:
+                            approved = handler.approve_implementation_plan_review(
+                                source_issue_number,
+                                plan_comment_id=planner_comment_id,
+                            )
+
+                self.assertFalse(approved)
+                self.assertEqual(mock_get_item.call_count, 1)
+                mock_replace_label.assert_not_called()
+                mock_add_comment.assert_not_called()
+
+    def test_approve_implementation_plan_review_rejects_fresh_stale_check_recommendation_mismatch(self):
+        source_issue_number = 143
+        planner_comment_id = 9001
+        source_item = {
+            "type": "issue",
+            "number": source_issue_number,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+            "comments": [
+                {"id": 4001, "body": "Recommendation details"},
+                {
+                    "id": planner_comment_id,
+                    "body": (
+                        "```yaml\n"
+                        "planner_result_v1:\n"
+                        "  outcome: READY\n"
+                        "  parent_issue: 143\n"
+                        "  recommendation_comment_id: 4001\n"
+                        "  roadmap_pr: 88\n"
+                        "  generated_issues:\n"
+                        "    - number: 201\n"
+                        "      initial_state: state:planned\n"
+                        "      next_state_after_approval: state:ready-for-dev\n"
+                        "  human_decision_ledger_v1:\n"
+                        "    version: 1\n"
+                        "    decision_type: implementation_plan_review_approval\n"
+                        "    source:\n"
+                        "      repo: RedEagleSoftware/the-circus\n"
+                        "      issue_number: 143\n"
+                        "      accepted_recommendation_comment_id: 4001\n"
+                        "      roadmap_pr: 88\n"
+                        "      planner_result_comment_id: 9001\n"
+                        "    decision:\n"
+                        "      selected_next_state: state:ready-for-dev\n"
+                        "      generated_issues:\n"
+                        "        - number: 201\n"
+                        "          initial_state: state:planned\n"
+                        "          next_state_after_approval: state:ready-for-dev\n"
+                        "    stale_check:\n"
+                        "      status: fresh\n"
+                        "      compared_recommendation_comment_id: 3999\n"
+                        "      compared_roadmap_pr: 88\n"
+                        "    evidence:\n"
+                        "      github_comment_url: https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-9001\n"
+                        "      github_comment_id: 9001\n"
+                        "```"
+                    ),
+                },
+            ],
+        }
+
+        with patch.object(handler.github_client, "get_item", return_value=(source_item, True)) as mock_get_item:
+            with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(
+                        source_issue_number,
+                        plan_comment_id=planner_comment_id,
+                    )
+
+        self.assertFalse(approved)
+        self.assertEqual(mock_get_item.call_count, 1)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
+
+    def test_approve_implementation_plan_review_rejects_fresh_stale_check_roadmap_mismatch(self):
+        source_issue_number = 143
+        planner_comment_id = 9001
+        source_item = {
+            "type": "issue",
+            "number": source_issue_number,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+            "comments": [
+                {"id": 4001, "body": "Recommendation details"},
+                {
+                    "id": planner_comment_id,
+                    "body": (
+                        "```yaml\n"
+                        "planner_result_v1:\n"
+                        "  outcome: READY\n"
+                        "  parent_issue: 143\n"
+                        "  recommendation_comment_id: 4001\n"
+                        "  roadmap_pr: 88\n"
+                        "  generated_issues:\n"
+                        "    - number: 201\n"
+                        "      initial_state: state:planned\n"
+                        "      next_state_after_approval: state:ready-for-dev\n"
+                        "  human_decision_ledger_v1:\n"
+                        "    version: 1\n"
+                        "    decision_type: implementation_plan_review_approval\n"
+                        "    source:\n"
+                        "      repo: RedEagleSoftware/the-circus\n"
+                        "      issue_number: 143\n"
+                        "      accepted_recommendation_comment_id: 4001\n"
+                        "      roadmap_pr: 88\n"
+                        "      planner_result_comment_id: 9001\n"
+                        "    decision:\n"
+                        "      selected_next_state: state:ready-for-dev\n"
+                        "      generated_issues:\n"
+                        "        - number: 201\n"
+                        "          initial_state: state:planned\n"
+                        "          next_state_after_approval: state:ready-for-dev\n"
+                        "    stale_check:\n"
+                        "      status: fresh\n"
+                        "      compared_recommendation_comment_id: 4001\n"
+                        "      compared_roadmap_pr: 77\n"
+                        "    evidence:\n"
+                        "      github_comment_url: https://github.com/RedEagleSoftware/the-circus/issues/143#issuecomment-9001\n"
+                        "      github_comment_id: 9001\n"
+                        "```"
+                    ),
+                },
+            ],
+        }
+
+        with patch.object(handler.github_client, "get_item", return_value=(source_item, True)) as mock_get_item:
+            with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(
+                        source_issue_number,
+                        plan_comment_id=planner_comment_id,
+                    )
+
+        self.assertFalse(approved)
+        self.assertEqual(mock_get_item.call_count, 1)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
 
     def test_parse_planner_result_from_markdown_sections_extracts_ready_metadata(self):
         body = (
@@ -3624,6 +4635,54 @@ class HandlerObservabilityTests(unittest.TestCase):
                         "next_state_after_approval": "state:ready-for-architecture",
                     },
                 ],
+                "human_decision_ledger_v1": {
+                    "version": 1,
+                    "status": "partial",
+                    "decision_type": "implementation_plan_review_approval",
+                    "approved_by": None,
+                    "decision_summary": None,
+                    "recommendation_comment_ids": [4001],
+                    "based_on_recommendation_comment_ids": [4001],
+                    "selected_generated_issue_numbers": [201, 202],
+                    "selected_generated_issue_urls": [],
+                    "applied_transition_targets": ["state:ready-for-dev", "state:ready-for-architecture"],
+                    "rationale_summary": None,
+                    "source": {
+                        "repo": None,
+                        "issue_number": None,
+                        "accepted_recommendation_url": None,
+                        "accepted_recommendation_comment_id": None,
+                        "roadmap_pr": None,
+                        "planner_issue_number": None,
+                        "planner_result_comment_id": None,
+                        "implementation_plan_artifact": None,
+                    },
+                    "decision": {
+                        "selected_next_state": None,
+                        "next_state_options": [],
+                        "generated_issues": [],
+                    },
+                    "stale_check": {
+                        "status": None,
+                        "compared_recommendation_comment_id": None,
+                        "compared_roadmap_pr": None,
+                        "diagnostics": [],
+                    },
+                    "evidence": {
+                        "github_comment_url": None,
+                        "github_comment_id": None,
+                        "watchtower_run_status": None,
+                    },
+                    "diagnostics": [
+                        "human decision ledger missing",
+                        "recommendation_comment_ids defaulted from recommendation_comment_id",
+                        "selected_generated_issue_numbers defaulted from generated_issues",
+                        "applied_transition_targets defaulted from generated_issues",
+                        "decision_type defaulted from workflow",
+                        "approved_by missing",
+                        "decision_summary missing",
+                    ],
+                },
             },
         )
 
@@ -3667,6 +4726,54 @@ class HandlerObservabilityTests(unittest.TestCase):
                         "next_state_after_approval": "state:ready-for-dev",
                     },
                 ],
+                "human_decision_ledger_v1": {
+                    "version": 1,
+                    "status": "partial",
+                    "decision_type": "implementation_plan_review_approval",
+                    "approved_by": None,
+                    "decision_summary": None,
+                    "recommendation_comment_ids": [4817675158],
+                    "based_on_recommendation_comment_ids": [4817675158],
+                    "selected_generated_issue_numbers": [89, 90],
+                    "selected_generated_issue_urls": [],
+                    "applied_transition_targets": ["state:ready-for-architecture", "state:ready-for-dev"],
+                    "rationale_summary": None,
+                    "source": {
+                        "repo": None,
+                        "issue_number": None,
+                        "accepted_recommendation_url": None,
+                        "accepted_recommendation_comment_id": None,
+                        "roadmap_pr": None,
+                        "planner_issue_number": None,
+                        "planner_result_comment_id": None,
+                        "implementation_plan_artifact": None,
+                    },
+                    "decision": {
+                        "selected_next_state": None,
+                        "next_state_options": [],
+                        "generated_issues": [],
+                    },
+                    "stale_check": {
+                        "status": None,
+                        "compared_recommendation_comment_id": None,
+                        "compared_roadmap_pr": None,
+                        "diagnostics": [],
+                    },
+                    "evidence": {
+                        "github_comment_url": None,
+                        "github_comment_id": None,
+                        "watchtower_run_status": None,
+                    },
+                    "diagnostics": [
+                        "human decision ledger missing",
+                        "recommendation_comment_ids defaulted from recommendation_comment_id",
+                        "selected_generated_issue_numbers defaulted from generated_issues",
+                        "applied_transition_targets defaulted from generated_issues",
+                        "decision_type defaulted from workflow",
+                        "approved_by missing",
+                        "decision_summary missing",
+                    ],
+                },
             },
         )
 
@@ -3696,6 +4803,23 @@ class HandlerObservabilityTests(unittest.TestCase):
             "    - number: 201\n"
             "      initial_state: state:planned\n"
             "      next_state_after_approval: state:ready-for-dev\n"
+            "  human_decision_ledger_v1:\n"
+            "    version: 1\n"
+            "    decision_type: implementation_plan_review_approval\n"
+            "    approved_by: reviewer\n"
+            "    decision_summary: 'Approved planner output for dispatch.'\n"
+            "    recommendation_comment_ids:\n"
+            "      - 4001\n"
+            "    selected_generated_issue_numbers:\n"
+            "      - 201\n"
+            "    selected_generated_issue_urls:\n"
+            "      - https://github.com/owner/repo/issues/201\n"
+            "    applied_transition_targets:\n"
+            "      - state:ready-for-dev\n"
+            "    stale_check:\n"
+            "      status: fresh\n"
+            "      compared_recommendation_comment_id: 4001\n"
+            "      compared_roadmap_pr: 88\n"
             "```"
         )
         source_item = {
@@ -3818,6 +4942,26 @@ class HandlerObservabilityTests(unittest.TestCase):
             "    - number: 202\n"
             "      initial_state: state:planned\n"
             "      next_state_after_approval: state:ready-for-architecture\n"
+            "  human_decision_ledger_v1:\n"
+            "    version: 1\n"
+            "    decision_type: implementation_plan_review_approval\n"
+            "    approved_by: reviewer\n"
+            "    decision_summary: 'Approved planner output for dispatch.'\n"
+            "    recommendation_comment_ids:\n"
+            "      - 4001\n"
+            "    selected_generated_issue_numbers:\n"
+            "      - 201\n"
+            "      - 202\n"
+            "    selected_generated_issue_urls:\n"
+            "      - https://github.com/owner/repo/issues/201\n"
+            "      - https://github.com/owner/repo/issues/202\n"
+            "    applied_transition_targets:\n"
+            "      - state:ready-for-dev\n"
+            "      - state:ready-for-architecture\n"
+            "    stale_check:\n"
+            "      status: fresh\n"
+            "      compared_recommendation_comment_id: 4001\n"
+            "      compared_roadmap_pr: 88\n"
             "```"
         )
         source_item = {
@@ -3937,7 +5081,189 @@ class HandlerObservabilityTests(unittest.TestCase):
         )
         mock_add_comment.assert_called_once()
 
-    def test_approve_implementation_plan_review_transitions_using_markdown_sections_without_planner_result_v1(self):
+    def test_approve_implementation_plan_review_rejects_human_decision_generated_issue_number_mismatch(self):
+        source_issue_number = 143
+        planner_comment_id = 9001
+        recommendation_comment_id = 4001
+        roadmap_pr_number = 88
+        plan_body = (
+            "```yaml\n"
+            "planner_result_v1:\n"
+            "  outcome: READY\n"
+            "  parent_issue: 143\n"
+            "  recommendation_comment_id: 4001\n"
+            "  roadmap_pr: 88\n"
+            "  generated_issues:\n"
+            "    - number: 201\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-dev\n"
+            "  human_decision_ledger_v1:\n"
+            "    version: 1\n"
+            "    decision_type: implementation_plan_review_approval\n"
+            "    approved_by: reviewer\n"
+            "    decision_summary: 'Approved planner output for dispatch.'\n"
+            "    recommendation_comment_ids:\n"
+            "      - 4001\n"
+            "    selected_generated_issue_numbers:\n"
+            "      - 202\n"
+            "    selected_generated_issue_urls:\n"
+            "      - https://github.com/owner/repo/issues/202\n"
+            "    applied_transition_targets:\n"
+            "      - state:ready-for-dev\n"
+            "    stale_check:\n"
+            "      status: fresh\n"
+            "      compared_recommendation_comment_id: 4001\n"
+            "      compared_roadmap_pr: 88\n"
+            "```"
+        )
+        source_item = {
+            "type": "issue",
+            "number": source_issue_number,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [
+                {"name": "state:ready-for-implementation-plan-review"},
+                {"name": "status:triage"},
+            ],
+            "comments": [
+                {"id": recommendation_comment_id, "body": "Recommendation details"},
+                {
+                    "id": planner_comment_id,
+                    "body": plan_body,
+                },
+            ],
+        }
+        roadmap_pr_item = {
+            "number": roadmap_pr_number,
+            "state": "MERGED",
+            "mergedAt": "2026-06-23T10:11:12Z",
+            "title": "Roadmap update",
+            "url": "https://github.com/owner/repo/pull/88",
+        }
+        generated_issue_201 = {
+            "type": "issue",
+            "number": 201,
+            "title": "Generated issue A",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:planned"}],
+            "body": "Parent #143\nRecommendation 4001\nRoadmap #88\nNext state: state:ready-for-dev",
+        }
+
+        with patch.object(handler.github_client, "get_item") as mock_get_item:
+            mock_get_item.side_effect = [
+                (source_item, True),
+                (roadmap_pr_item, True),
+                (generated_issue_201, True),
+            ]
+            with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(
+                        source_issue_number,
+                        plan_comment_id=planner_comment_id,
+                        dry_run=True,
+                    )
+
+        self.assertFalse(approved)
+        self.assertEqual(mock_get_item.call_count, 2)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
+
+    def test_approve_implementation_plan_review_rejects_human_decision_transition_target_mismatch(self):
+        source_issue_number = 143
+        planner_comment_id = 9001
+        recommendation_comment_id = 4001
+        roadmap_pr_number = 88
+        plan_body = (
+            "```yaml\n"
+            "planner_result_v1:\n"
+            "  outcome: READY\n"
+            "  parent_issue: 143\n"
+            "  recommendation_comment_id: 4001\n"
+            "  roadmap_pr: 88\n"
+            "  generated_issues:\n"
+            "    - number: 201\n"
+            "      initial_state: state:planned\n"
+            "      next_state_after_approval: state:ready-for-dev\n"
+            "  human_decision_ledger_v1:\n"
+            "    version: 1\n"
+            "    decision_type: implementation_plan_review_approval\n"
+            "    approved_by: reviewer\n"
+            "    decision_summary: 'Approved planner output for dispatch.'\n"
+            "    recommendation_comment_ids:\n"
+            "      - 4001\n"
+            "    selected_generated_issue_numbers:\n"
+            "      - 201\n"
+            "    selected_generated_issue_urls:\n"
+            "      - https://github.com/owner/repo/issues/201\n"
+            "    applied_transition_targets:\n"
+            "      - state:ready-for-architecture\n"
+            "    stale_check:\n"
+            "      status: fresh\n"
+            "      compared_recommendation_comment_id: 4001\n"
+            "      compared_roadmap_pr: 88\n"
+            "```"
+        )
+        source_item = {
+            "type": "issue",
+            "number": source_issue_number,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [
+                {"name": "state:ready-for-implementation-plan-review"},
+                {"name": "status:triage"},
+            ],
+            "comments": [
+                {"id": recommendation_comment_id, "body": "Recommendation details"},
+                {
+                    "id": planner_comment_id,
+                    "body": plan_body,
+                },
+            ],
+        }
+        roadmap_pr_item = {
+            "number": roadmap_pr_number,
+            "state": "MERGED",
+            "mergedAt": "2026-06-23T10:11:12Z",
+            "title": "Roadmap update",
+            "url": "https://github.com/owner/repo/pull/88",
+        }
+        generated_issue_201 = {
+            "type": "issue",
+            "number": 201,
+            "title": "Generated issue A",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:planned"}],
+            "body": "Parent #143\nRecommendation 4001\nRoadmap #88\nNext state: state:ready-for-dev",
+        }
+
+        with patch.object(handler.github_client, "get_item") as mock_get_item:
+            mock_get_item.side_effect = [
+                (source_item, True),
+                (roadmap_pr_item, True),
+                (generated_issue_201, True),
+            ]
+            with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(
+                        source_issue_number,
+                        plan_comment_id=planner_comment_id,
+                        dry_run=True,
+                    )
+
+        self.assertFalse(approved)
+        self.assertEqual(mock_get_item.call_count, 2)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
+
+    def test_approve_implementation_plan_review_rejects_markdown_sections_without_available_human_decision_ledger(self):
         source_issue_number = 143
         planner_comment_id = 9001
         recommendation_comment_id = 4001
@@ -4042,34 +5368,10 @@ class HandlerObservabilityTests(unittest.TestCase):
                         plan_comment_id=planner_comment_id,
                     )
 
-        self.assertTrue(approved)
-        self.assertEqual(mock_get_item.call_count, 7)
-        mock_replace_label.assert_has_calls(
-            [
-                unittest.mock.call(
-                    generated_issue_201,
-                    remove_label_value="state:planned",
-                    add_label_value="state:ready-for-dev",
-                    repo=unittest.mock.ANY,
-                    run_command_fn=unittest.mock.ANY,
-                ),
-                unittest.mock.call(
-                    generated_issue_202,
-                    remove_label_value="state:planned",
-                    add_label_value="state:ready-for-architecture",
-                    repo=unittest.mock.ANY,
-                    run_command_fn=unittest.mock.ANY,
-                ),
-                unittest.mock.call(
-                    source_item,
-                    remove_label_value="state:ready-for-implementation-plan-review",
-                    add_label_value="state:ready-for-human-review",
-                    repo=unittest.mock.ANY,
-                    run_command_fn=unittest.mock.ANY,
-                ),
-            ]
-        )
-        mock_add_comment.assert_called_once()
+        self.assertFalse(approved)
+        self.assertEqual(mock_get_item.call_count, 1)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
         for call in mock_get_item.call_args_list:
             self.assertNotIn("locked", call.kwargs.get("fields", ""))
 
@@ -4099,6 +5401,26 @@ class HandlerObservabilityTests(unittest.TestCase):
                         "    - number: 202\n"
                         "      initial_state: state:planned\n"
                         "      next_state_after_approval: state:ready-for-architecture\n"
+                        "  human_decision_ledger_v1:\n"
+                        "    version: 1\n"
+                        "    decision_type: implementation_plan_review_approval\n"
+                        "    approved_by: reviewer\n"
+                        "    decision_summary: 'Approved planner output for dispatch.'\n"
+                        "    recommendation_comment_ids:\n"
+                        "      - 4001\n"
+                        "    selected_generated_issue_numbers:\n"
+                        "      - 201\n"
+                        "      - 202\n"
+                        "    selected_generated_issue_urls:\n"
+                        "      - https://github.com/owner/repo/issues/201\n"
+                        "      - https://github.com/owner/repo/issues/202\n"
+                        "    applied_transition_targets:\n"
+                        "      - state:ready-for-dev\n"
+                        "      - state:ready-for-architecture\n"
+                        "    stale_check:\n"
+                        "      status: fresh\n"
+                        "      compared_recommendation_comment_id: 4001\n"
+                        "      compared_roadmap_pr: 88\n"
                         "```"
                     ),
                 },
@@ -4179,6 +5501,23 @@ class HandlerObservabilityTests(unittest.TestCase):
                         "    - number: 201\n"
                         "      initial_state: state:planned\n"
                         "      next_state_after_approval: state:ready-for-dev\n"
+                        "  human_decision_ledger_v1:\n"
+                        "    version: 1\n"
+                        "    decision_type: implementation_plan_review_approval\n"
+                        "    approved_by: reviewer\n"
+                        "    decision_summary: 'Approved planner output for dispatch.'\n"
+                        "    recommendation_comment_ids:\n"
+                        "      - 4001\n"
+                        "    selected_generated_issue_numbers:\n"
+                        "      - 201\n"
+                        "    selected_generated_issue_urls:\n"
+                        "      - https://github.com/owner/repo/issues/201\n"
+                        "    applied_transition_targets:\n"
+                        "      - state:ready-for-dev\n"
+                        "    stale_check:\n"
+                        "      status: fresh\n"
+                        "      compared_recommendation_comment_id: 4001\n"
+                        "      compared_roadmap_pr: 88\n"
                         "```"
                     ),
                 },
@@ -4238,6 +5577,121 @@ class HandlerObservabilityTests(unittest.TestCase):
                         "Roadmap reference: https://github.com/RedEagleSoftware/the-circus/pull/88\n\n"
                         "### Generated Issues\n"
                         "None\n"
+                    ),
+                },
+            ],
+        }
+        roadmap_pr_item = {
+            "number": 88,
+            "state": "MERGED",
+            "mergedAt": "2026-06-23T10:11:12Z",
+            "title": "Roadmap update",
+            "url": "https://github.com/owner/repo/pull/88",
+        }
+
+        with patch.object(handler.github_client, "get_item") as mock_get_item:
+            mock_get_item.side_effect = [
+                (source_item, True),
+                (roadmap_pr_item, True),
+            ]
+            with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(143, plan_comment_id=9001, dry_run=True)
+
+        self.assertFalse(approved)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
+
+    def test_approve_implementation_plan_review_rejects_non_dispatch_target_state(self):
+        source_item = {
+            "type": "issue",
+            "number": 143,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+            "comments": [
+                {"id": 4001, "body": "Recommendation details"},
+                {
+                    "id": 9001,
+                    "body": (
+                        "```yaml\n"
+                        "planner_result_v1:\n"
+                        "  outcome: READY\n"
+                        "  parent_issue: 143\n"
+                        "  recommendation_comment_id: 4001\n"
+                        "  roadmap_pr: 88\n"
+                        "  generated_issues:\n"
+                        "    - number: 201\n"
+                        "      initial_state: state:planned\n"
+                        "      next_state_after_approval: state:ready-for-implementation-plan-review\n"
+                        "```"
+                    ),
+                },
+            ],
+        }
+        roadmap_pr_item = {
+            "number": 88,
+            "state": "MERGED",
+            "mergedAt": "2026-06-23T10:11:12Z",
+            "title": "Roadmap update",
+            "url": "https://github.com/owner/repo/pull/88",
+        }
+
+        with patch.object(handler.github_client, "get_item") as mock_get_item:
+            mock_get_item.side_effect = [
+                (source_item, True),
+                (roadmap_pr_item, True),
+            ]
+            with patch.object(handler.github_client, "replace_label") as mock_replace_label:
+                with patch.object(handler, "add_comment") as mock_add_comment:
+                    approved = handler.approve_implementation_plan_review(143, plan_comment_id=9001, dry_run=True)
+
+        self.assertFalse(approved)
+        mock_replace_label.assert_not_called()
+        mock_add_comment.assert_not_called()
+
+    def test_approve_implementation_plan_review_rejects_unsupported_decision_type_without_dispatch_mutation(self):
+        source_item = {
+            "type": "issue",
+            "number": 143,
+            "title": "Implementation planning complete",
+            "state": "OPEN",
+            "closed": False,
+            "locked": False,
+            "labels": [{"name": "state:ready-for-implementation-plan-review"}],
+            "comments": [
+                {"id": 4001, "body": "Recommendation details"},
+                {
+                    "id": 9001,
+                    "body": (
+                        "```yaml\n"
+                        "planner_result_v1:\n"
+                        "  outcome: READY\n"
+                        "  parent_issue: 143\n"
+                        "  recommendation_comment_id: 4001\n"
+                        "  roadmap_pr: 88\n"
+                        "  generated_issues:\n"
+                        "    - number: 201\n"
+                        "      initial_state: state:planned\n"
+                        "      next_state_after_approval: state:ready-for-dev\n"
+                        "  human_decision_ledger_v1:\n"
+                        "    version: 1\n"
+                        "    decision_type: not_a_real_decision_type\n"
+                        "    approved_by: reviewer\n"
+                        "    decision_summary: 'Approved planner output for dispatch.'\n"
+                        "    recommendation_comment_ids:\n"
+                        "      - 4001\n"
+                        "    selected_generated_issue_numbers:\n"
+                        "      - 201\n"
+                        "    applied_transition_targets:\n"
+                        "      - state:ready-for-dev\n"
+                        "    stale_check:\n"
+                        "      status: fresh\n"
+                        "      compared_recommendation_comment_id: 4001\n"
+                        "      compared_roadmap_pr: 88\n"
+                        "```"
                     ),
                 },
             ],
@@ -6230,6 +7684,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                             "outcome": "READY",
                             "outcome_valid": True,
                             "diagnostic": None,
+                            "recommendation_comment_id": 50001,
                             "implementation_plan": "C:/target/repo/Watchtower/runs/issue-69/run-001/implementation-plan.md",
                             "recommended_route": None,
                             "generated_issues": [
@@ -6245,12 +7700,48 @@ class HandlerObservabilityTests(unittest.TestCase):
                         },
                         recommendation_traceability={
                             "available": True,
-                            "recommendation_url": "https://github.com/owner/repo/issues/69#issuecomment-50001",
-                            "recommendation_comment_id": 50001,
+                            "recommendation_url": "https://github.com/owner/repo/issues/69#issuecomment-50002",
+                            "recommendation_comment_id": 50002,
                             "source_issue": 69,
                             "roadmap_reference": "https://github.com/owner/repo/pull/90",
                             "source": "implementation-planner",
                             "diagnostic": None,
+                        },
+                        human_decision_ledger_v1={
+                            "human_decision_v1": {
+                                "decision_type": "implementation_plan_review_approval",
+                                "source": {
+                                    "repo": "owner/repo",
+                                    "issue_number": 69,
+                                    "accepted_recommendation_comment_id": 50001,
+                                    "roadmap_pr": 90,
+                                    "planner_result_comment_id": 9111,
+                                },
+                                "decision": {
+                                    "selected_next_state": "state:ready-for-dev",
+                                    "next_state_options": ["state:ready-for-dev"],
+                                    "generated_issues": [
+                                        {
+                                            "number": 69,
+                                            "issue_url": "https://github.com/owner/repo/issues/69",
+                                            "title": "Record planner outcomes",
+                                            "initial_state": "state:planned",
+                                            "next_state_after_approval": "state:ready-for-dev",
+                                        }
+                                    ],
+                                },
+                                "stale_check": {
+                                    "status": "fresh",
+                                    "compared_recommendation_comment_id": 50001,
+                                    "compared_roadmap_pr": 90,
+                                    "diagnostics": ["verified against recommendation"],
+                                },
+                                "evidence": {
+                                    "github_comment_url": "https://github.com/owner/repo/issues/69#issuecomment-9111",
+                                    "github_comment_id": 9111,
+                                    "watchtower_run_status": "accepted",
+                                },
+                            }
                         },
                     )
                     handler.write_run_result(item)
@@ -6264,14 +7755,198 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("  - #69: `https://github.com/owner/repo/issues/69`", implementation_section)
         traceability_section = result_content.split("## Recommendation Traceability", 1)[1].split("## Implementation Planner", 1)[0]
         self.assertIn("- available: `True`", traceability_section)
-        self.assertIn("- recommendation comment ID: `50001`", traceability_section)
+        self.assertIn("- recommendation comment ID: `50002`", traceability_section)
         accepted_traceability_section = result_content.split("## Accepted Decision Traceability", 1)[1].split(
             "## Implementation Planner", 1
         )[0]
         self.assertIn("- version: `1`", accepted_traceability_section)
         self.assertIn("- status: `available`", accepted_traceability_section)
-        self.assertIn("- recommendation comment ID: `50001`", accepted_traceability_section)
+        self.assertIn("- recommendation comment ID: `50002`", accepted_traceability_section)
         self.assertIn("- planner outcome: `READY`", accepted_traceability_section)
+        self.assertIn("  - accepted recommendation reference mismatches planner metadata", accepted_traceability_section)
+        human_decision_section = result_content.split("## Human Decision Ledger", 1)[1].split("## Implementation Planner", 1)[0]
+        self.assertIn("- source:", human_decision_section)
+        self.assertIn("  - accepted_recommendation_comment_id: `50001`", human_decision_section)
+        self.assertIn("- decision:", human_decision_section)
+        self.assertIn("  - generated_issues: `", human_decision_section)
+        self.assertIn("'number': 69", human_decision_section)
+        self.assertIn("'next_state_after_approval': 'state:ready-for-dev'", human_decision_section)
+        self.assertIn("- stale_check:", human_decision_section)
+        self.assertIn("  - diagnostics: `['verified against recommendation']`", human_decision_section)
+        self.assertIn("- evidence:", human_decision_section)
+        self.assertIn("  - watchtower_run_status: `accepted`", human_decision_section)
+        self.assertNotIn("  - accepted recommendation reference mismatches planner metadata", human_decision_section)
+
+    def test_read_run_status_promotes_planner_human_decision_ledger_when_more_complete(self):
+        planner_human_decision_ledger = {
+            "human_decision_v1": {
+                "decision_type": "implementation_plan_review_approval",
+                "source": {
+                    "repo": "owner/repo",
+                    "issue_number": 69,
+                    "accepted_recommendation_comment_id": 50001,
+                    "roadmap_pr": 90,
+                    "planner_result_comment_id": 9111,
+                },
+                "decision": {
+                    "selected_next_state": "state:ready-for-dev",
+                    "next_state_options": ["state:ready-for-dev"],
+                    "generated_issues": [
+                        {
+                            "number": 70,
+                            "issue_url": "https://github.com/owner/repo/issues/70",
+                            "title": "Implement planner promotion",
+                            "initial_state": "state:planned",
+                            "next_state_after_approval": "state:ready-for-dev",
+                        }
+                    ],
+                },
+                "stale_check": {
+                    "status": "fresh",
+                    "compared_recommendation_comment_id": 50001,
+                    "compared_roadmap_pr": 90,
+                },
+                "evidence": {
+                    "github_comment_url": "https://github.com/owner/repo/issues/69#issuecomment-9111",
+                    "github_comment_id": 9111,
+                    "watchtower_run_status": "accepted",
+                },
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = os.path.join(temp_dir, "owner-repo", "issue-69", "run-001-developer")
+            os.makedirs(run_dir, exist_ok=True)
+            run_state = {
+                "status_path": os.path.join(run_dir, "status.json"),
+                "result_path": os.path.join(run_dir, "result.md"),
+                "launch_brief_path": os.path.join(run_dir, "launch-brief.md"),
+            }
+            with open(run_state["result_path"], "w", encoding="utf-8") as result_file:
+                result_file.write("# Result\n")
+            with open(run_state["launch_brief_path"], "w", encoding="utf-8") as launch_brief_file:
+                launch_brief_file.write("# Launch Brief\n")
+
+            with open(run_state["status_path"], "w", encoding="utf-8") as status_file:
+                json.dump(
+                    {
+                        "repository": "owner/repo",
+                        "item_number": 69,
+                        "human_decision_ledger_v1": {
+                            "version": 1,
+                            "status": "missing",
+                        },
+                        "implementation_planner": {
+                            "recommendation_comment_id": 50001,
+                            "generated_issues": [
+                                {
+                                    "number": 70,
+                                    "next_state_after_approval": "state:ready-for-dev",
+                                }
+                            ],
+                            "human_decision_ledger_v1": planner_human_decision_ledger,
+                        },
+                    },
+                    status_file,
+                )
+                status_file.write("\n")
+
+            status_payload = handler.watchtower.read_run_status(
+                run_state,
+                normalize_path_for_display_fn=lambda path: path.replace("\\", "/"),
+            )
+
+        normalized_ledger = status_payload["human_decision_ledger_v1"]
+        self.assertEqual(normalized_ledger["status"], "available")
+        self.assertEqual(normalized_ledger["source"]["accepted_recommendation_comment_id"], 50001)
+        self.assertEqual(normalized_ledger["stale_check"]["status"], "fresh")
+        self.assertEqual(normalized_ledger["evidence"]["github_comment_id"], 9111)
+
+    def test_update_run_status_promotes_planner_human_decision_ledger_when_more_complete(self):
+        item = {
+            "type": "issue",
+            "number": 69,
+            "title": "Planner ledger promotion",
+            "working_branch": "circus/issue-69-ledger-promotion",
+        }
+        config = {
+            "agent": "junie",
+            "mode": "developer",
+            "model": "gpt-5.3-codex",
+            "effort": "Medium",
+        }
+
+        planner_human_decision_ledger = {
+            "human_decision_v1": {
+                "decision_type": "implementation_plan_review_approval",
+                "source": {
+                    "repo": "owner/repo",
+                    "issue_number": 69,
+                    "accepted_recommendation_comment_id": 50001,
+                    "roadmap_pr": 90,
+                    "planner_result_comment_id": 9111,
+                },
+                "decision": {
+                    "selected_next_state": "state:ready-for-dev",
+                    "next_state_options": ["state:ready-for-dev"],
+                    "generated_issues": [
+                        {
+                            "number": 70,
+                            "issue_url": "https://github.com/owner/repo/issues/70",
+                            "title": "Implement planner promotion",
+                            "initial_state": "state:planned",
+                            "next_state_after_approval": "state:ready-for-dev",
+                        }
+                    ],
+                },
+                "stale_check": {
+                    "status": "fresh",
+                    "compared_recommendation_comment_id": 50001,
+                    "compared_roadmap_pr": 90,
+                },
+                "evidence": {
+                    "github_comment_url": "https://github.com/owner/repo/issues/69#issuecomment-9111",
+                    "github_comment_id": 9111,
+                    "watchtower_run_status": "accepted",
+                },
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            launch_brief_path = os.path.join(temp_dir, "owner-repo", "issue-69", "run-001-developer", "launch-brief.md")
+            os.makedirs(os.path.dirname(launch_brief_path), exist_ok=True)
+            with open(launch_brief_path, "w", encoding="utf-8") as launch_brief_file:
+                launch_brief_file.write("# Launch Brief\n")
+
+            with patch.object(handler, "REPO", "owner/repo"):
+                with patch.object(handler, "TARGET_REPO_PATH", "C:/target/repo"):
+                    run_state = handler.initialize_run_status(item, "state:changes-requested", config, launch_brief_path)
+                    handler.update_run_status(
+                        item,
+                        implementation_planner={
+                            "outcome": "READY",
+                            "recommendation_comment_id": 50001,
+                            "generated_issues": [
+                                {
+                                    "number": 70,
+                                    "url": "https://github.com/owner/repo/issues/70",
+                                    "next_state_after_approval": "state:ready-for-dev",
+                                }
+                            ],
+                            "human_decision_ledger_v1": planner_human_decision_ledger,
+                        },
+                    )
+                    status_payload = handler.watchtower.read_run_status(
+                        run_state,
+                        normalize_path_for_display_fn=lambda path: path.replace("\\", "/"),
+                    )
+
+        normalized_ledger = status_payload["human_decision_ledger_v1"]
+        self.assertEqual(normalized_ledger["status"], "available")
+        self.assertEqual(normalized_ledger["source"]["accepted_recommendation_comment_id"], 50001)
+        self.assertEqual(normalized_ledger["stale_check"]["status"], "fresh")
+        self.assertEqual(normalized_ledger["evidence"]["github_comment_id"], 9111)
+        self.assertEqual(normalized_ledger["decision"]["selected_next_state"], "state:ready-for-dev")
 
     def test_write_run_result_includes_workspace_lifecycle_diagnostics(self):
         item = {

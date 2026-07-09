@@ -13,6 +13,12 @@ This changelog tracks notable completed work by GitHub issue.
 - [concise user-visible or workflow-significant change]
 - [optional second concise change]
 
+### Issue #91 - Ensure implementation planner decision artifacts preserve approval traceability
+
+- Updated planner-result parsing so generated issue transition targets are consistently propagated into `human_decision_ledger_v1` defaults, including markdown `### Generated Issues` compact bullets such as `- #201 — state:ready-for-dev`.
+- Expanded ledger normalization compatibility so nested `human_decision_v1` payloads can supply canonical flat decision fields without breaking existing approval-gate contracts.
+- Aligned approval-gate regression coverage for markdown-section parsing so validation fails at ledger availability before downstream transition checks when no explicit human decision is provided.
+
 ### Issue #89 - [Generated] Complete accepted-decision traceability artifacts
 
 - Added a versioned `accepted_decision_traceability` snapshot to Handler run status artifacts, with explicit diagnostics for missing, ambiguous, and reference-mismatch decision links.

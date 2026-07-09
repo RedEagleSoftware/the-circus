@@ -14,6 +14,7 @@ from Handler import dependencies
 from Handler import developer_flow
 from Handler import git_workspace
 from Handler import github_client
+from Handler import human_decision_ledger
 from Handler import paths as handler_paths
 from Handler import recovery
 from Handler import review_flow
@@ -55,6 +56,10 @@ IMPLEMENTATION_PLAN_FILENAME = watchtower.IMPLEMENTATION_PLAN_FILENAME
 REVIEW_OUTCOMES = workflow.REVIEW_OUTCOMES
 REVIEW_OUTCOME_MARKERS = workflow.REVIEW_OUTCOME_MARKERS
 IMPLEMENTATION_PLAN_OUTCOMES = {"READY", "BLOCKED", "ESCALATION_REQUIRED"}
+IMPLEMENTATION_PLAN_APPROVAL_DECISION_TYPES = {
+    "implementation_plan_review_approval",
+    "generated_issue_dispatch_approval",
+}
 PLANNER_RESULT_V1_JSON_BLOCK_PATTERN = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 PLANNER_RESULT_V1_FENCED_BLOCK_PATTERN = re.compile(r"```(?:yaml|yml|json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 STATE_LABEL_PATTERN = re.compile(r"\b(state:[A-Za-z0-9][A-Za-z0-9-]*)\b")
@@ -1354,8 +1359,26 @@ def parse_planner_result_v1(body):
                 }
             )
 
+        recommendation_comment_id = planner_result.get("recommendation_comment_id")
+        if not isinstance(recommendation_comment_id, int) or recommendation_comment_id <= 0:
+            recommendation_comment_id = None
+
+        normalized_human_decision_ledger = human_decision_ledger.normalize_human_decision_ledger(
+            planner_result.get("human_decision_ledger_v1"),
+            recommendation_comment_id=recommendation_comment_id,
+            generated_issue_numbers=[issue.get("issue_number") for issue in normalized_generated_issues],
+            generated_issue_transition_targets=[
+                issue.get("next_state_after_approval") for issue in normalized_generated_issues
+            ],
+        )
+
         return {
+            "outcome": planner_result.get("outcome"),
+            "parent_issue": planner_result.get("parent_issue"),
+            "recommendation_comment_id": recommendation_comment_id,
+            "roadmap_pr": planner_result.get("roadmap_pr"),
             "generated_issues": normalized_generated_issues,
+            "human_decision_ledger_v1": normalized_human_decision_ledger,
         }
 
     for match in PLANNER_RESULT_V1_FENCED_BLOCK_PATTERN.finditer(body):
@@ -1410,6 +1433,17 @@ def parse_planner_result_from_markdown_sections(body):
 
         next_state_after_approval = None
         for generated_issue_line in generated_issue_block.get("lines", []):
+            normalized_generated_issue_line = generated_issue_line.strip().lower()
+            has_explicit_next_state_marker = (
+                "next workflow state after human approval" in normalized_generated_issue_line
+                or "suggested next workflow state after human approval" in normalized_generated_issue_line
+            )
+            has_compact_next_state_format = bool(
+                re.search(r"^[-*+]?\s*#?\d+\s*[—-]\s*state:[a-z0-9-]+", normalized_generated_issue_line)
+            )
+            if not has_explicit_next_state_marker and not has_compact_next_state_format:
+                continue
+
             next_state_match = STATE_LABEL_PATTERN.search(generated_issue_line)
             if not next_state_match:
                 continue
@@ -1446,6 +1480,14 @@ def parse_planner_result_from_markdown_sections(body):
         "recommendation_comment_id": recommendation_comment_id,
         "roadmap_pr": roadmap_pr,
         "generated_issues": normalized_generated_issues,
+        "human_decision_ledger_v1": human_decision_ledger.normalize_human_decision_ledger(
+            None,
+            recommendation_comment_id=recommendation_comment_id,
+            generated_issue_numbers=[issue.get("issue_number") for issue in normalized_generated_issues],
+            generated_issue_transition_targets=[
+                issue.get("next_state_after_approval") for issue in normalized_generated_issues
+            ],
+        ),
     }
 
 
@@ -1464,10 +1506,159 @@ def _parse_yaml_scalar_value(raw_value):
     ):
         stripped_value = stripped_value[1:-1]
 
+    lowered_value = stripped_value.lower()
+    if lowered_value in {"null", "~"}:
+        return None
+
+    if stripped_value == "[]":
+        return []
+
     if re.fullmatch(r"-?\d+", stripped_value):
         return int(stripped_value)
 
     return stripped_value
+
+
+def _is_yaml_inline_mapping(value):
+    if not isinstance(value, str):
+        return False
+
+    stripped_value = value.strip()
+    return (
+        re.match(r"^[A-Za-z0-9_][A-Za-z0-9_-]*\s*:\s", stripped_value) is not None
+        or re.match(r"^[A-Za-z0-9_][A-Za-z0-9_-]*\s*:$", stripped_value) is not None
+    )
+
+
+def _next_yaml_non_empty_line(lines, index):
+    while index < len(lines):
+        candidate = lines[index]
+        if candidate.strip():
+            return index, candidate
+        index += 1
+
+    return None, None
+
+
+def _parse_yaml_nested_list(lines, *, start_index, parent_indent):
+    values = []
+    index = start_index
+
+    while index < len(lines):
+        item_index, item_line = _next_yaml_non_empty_line(lines, index)
+        if item_index is None:
+            return values, len(lines)
+
+        item_indent = len(item_line) - len(item_line.lstrip(" "))
+        if item_indent <= parent_indent:
+            return values, item_index
+
+        stripped_item_line = item_line.strip()
+        if not stripped_item_line.startswith("-"):
+            return None, None
+
+        item_payload = stripped_item_line[1:].strip()
+        index = item_index + 1
+
+        if not item_payload:
+            nested_value, next_index = _parse_yaml_nested_value(lines, start_index=index, parent_indent=item_indent)
+            if nested_value is None:
+                values.append("")
+                continue
+
+            values.append(nested_value)
+            index = next_index
+            continue
+
+        if _is_yaml_inline_mapping(item_payload):
+            nested_key, nested_value = item_payload.split(":", 1)
+            item_mapping = {nested_key.strip(): _parse_yaml_scalar_value(nested_value)}
+
+            while index < len(lines):
+                field_index, field_line = _next_yaml_non_empty_line(lines, index)
+                if field_index is None:
+                    values.append(item_mapping)
+                    return values, len(lines)
+
+                field_indent = len(field_line) - len(field_line.lstrip(" "))
+                if field_indent <= item_indent:
+                    break
+
+                stripped_field_line = field_line.strip()
+                if ":" not in stripped_field_line:
+                    return None, None
+
+                field_key, field_value = stripped_field_line.split(":", 1)
+                normalized_field_key = field_key.strip()
+                if field_value.strip():
+                    item_mapping[normalized_field_key] = _parse_yaml_scalar_value(field_value)
+                    index = field_index + 1
+                    continue
+
+                nested_field_value, next_index = _parse_yaml_nested_value(
+                    lines,
+                    start_index=field_index + 1,
+                    parent_indent=field_indent,
+                )
+                item_mapping[normalized_field_key] = nested_field_value if nested_field_value is not None else []
+                index = next_index if next_index is not None else field_index + 1
+
+            values.append(item_mapping)
+            continue
+
+        values.append(_parse_yaml_scalar_value(item_payload))
+
+    return values, index
+
+
+def _parse_yaml_nested_value(lines, *, start_index, parent_indent):
+    next_index, next_line = _next_yaml_non_empty_line(lines, start_index)
+    if next_index is None:
+        return None, len(lines)
+
+    next_indent = len(next_line) - len(next_line.lstrip(" "))
+    if next_indent <= parent_indent:
+        return None, next_index
+
+    if next_line.strip().startswith("-"):
+        return _parse_yaml_nested_list(lines, start_index=next_index, parent_indent=parent_indent)
+
+    return _parse_yaml_nested_mapping(lines, start_index=next_index, parent_indent=parent_indent)
+
+
+def _parse_yaml_nested_mapping(lines, *, start_index, parent_indent):
+    nested_fields = {}
+    index = start_index
+
+    while index < len(lines):
+        nested_index, nested_line = _next_yaml_non_empty_line(lines, index)
+        if nested_index is None:
+            return nested_fields, len(lines)
+
+        stripped_nested_line = nested_line.strip()
+        nested_indent = len(nested_line) - len(nested_line.lstrip(" "))
+        if nested_indent <= parent_indent:
+            return nested_fields, nested_index
+
+        if ":" not in stripped_nested_line:
+            return None, None
+
+        nested_key, nested_value = stripped_nested_line.split(":", 1)
+        normalized_nested_key = nested_key.strip()
+        if nested_value.strip():
+            nested_fields[normalized_nested_key] = _parse_yaml_scalar_value(nested_value)
+            index = nested_index + 1
+            continue
+
+        nested_fields_value, next_index = _parse_yaml_nested_value(
+            lines,
+            start_index=nested_index + 1,
+            parent_indent=nested_indent,
+        )
+        nested_fields[normalized_nested_key] = nested_fields_value if nested_fields_value is not None else []
+        index = next_index if next_index is not None else nested_index + 1
+
+    return nested_fields, len(lines)
 
 
 def parse_planner_result_v1_yaml_block(block_text):
@@ -1555,7 +1746,17 @@ def parse_planner_result_v1_yaml_block(block_text):
             return None
 
         field_key, field_value = stripped_line.split(":", 1)
-        planner_fields[field_key.strip()] = _parse_yaml_scalar_value(field_value)
+        normalized_field_key = field_key.strip()
+        if normalized_field_key == "human_decision_ledger_v1" and not field_value.strip():
+            nested_fields, next_index = _parse_yaml_nested_mapping(lines, start_index=index + 1, parent_indent=indent)
+            if nested_fields is None:
+                return None
+
+            planner_fields[normalized_field_key] = nested_fields
+            index = next_index
+            continue
+
+        planner_fields[normalized_field_key] = _parse_yaml_scalar_value(field_value)
         index += 1
 
     if not generated_issues:
@@ -1596,6 +1797,14 @@ def parse_planner_result_v1_yaml_block(block_text):
         "recommendation_comment_id": planner_fields.get("recommendation_comment_id"),
         "roadmap_pr": planner_fields.get("roadmap_pr"),
         "generated_issues": normalized_generated_issues,
+        "human_decision_ledger_v1": human_decision_ledger.normalize_human_decision_ledger(
+            planner_fields.get("human_decision_ledger_v1"),
+            recommendation_comment_id=planner_fields.get("recommendation_comment_id"),
+            generated_issue_numbers=[issue.get("issue_number") for issue in normalized_generated_issues],
+            generated_issue_transition_targets=[
+                issue.get("next_state_after_approval") for issue in normalized_generated_issues
+            ],
+        ),
     }
 
 
@@ -1801,6 +2010,48 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
     parent_issue = planner_result.get("parent_issue")
     recommendation_comment_id = planner_result.get("recommendation_comment_id")
     roadmap_pr = planner_result.get("roadmap_pr")
+    normalized_human_decision_ledger = human_decision_ledger.normalize_human_decision_ledger(
+        planner_result.get("human_decision_ledger_v1"),
+        recommendation_comment_id=recommendation_comment_id,
+        generated_issue_numbers=[
+            generated_issue.get("issue_number")
+            for generated_issue in planner_result.get("generated_issues", [])
+            if isinstance(generated_issue, dict)
+        ],
+        generated_issue_transition_targets=[
+            generated_issue.get("next_state_after_approval")
+            for generated_issue in planner_result.get("generated_issues", [])
+            if isinstance(generated_issue, dict)
+        ],
+    )
+
+    if normalized_human_decision_ledger.get("status") != "available":
+        print(
+            "[Approval] planner_result_v1 human_decision_ledger_v1 must be available before approval "
+            f"(found: {normalized_human_decision_ledger.get('status')!r})."
+        )
+        return False
+
+    decision_type = normalized_human_decision_ledger.get("decision_type")
+    if decision_type not in IMPLEMENTATION_PLAN_APPROVAL_DECISION_TYPES:
+        print(
+            "[Approval] planner_result_v1 human_decision_ledger_v1 decision_type must be one of "
+            f"{sorted(IMPLEMENTATION_PLAN_APPROVAL_DECISION_TYPES)!r} before approval "
+            f"(found: {decision_type!r})."
+        )
+        return False
+
+    stale_check_status = normalized_human_decision_ledger.get("stale_check", {}).get("status")
+    if not human_decision_ledger.is_dispatch_approval_stale_check_fresh(
+        normalized_human_decision_ledger,
+        recommendation_comment_id=recommendation_comment_id,
+        roadmap_pr=roadmap_pr,
+    ):
+        print(
+            "[Approval] planner_result_v1 human_decision_ledger_v1 stale_check.status must be "
+            f"'fresh' before approval (found: {stale_check_status!r})."
+        )
+        return False
 
     if outcome != "READY":
         print(f"[Approval] planner_result_v1 outcome must be READY before approval (found: {outcome!r}).")
@@ -1861,6 +2112,35 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
         print("[Approval] planner_result_v1 generated_issues must contain at least one issue for READY approval.")
         return False
 
+    approved_generated_issue_numbers = normalized_human_decision_ledger.get("selected_generated_issue_numbers")
+    approved_transition_targets = normalized_human_decision_ledger.get("applied_transition_targets")
+    planner_generated_issue_numbers = [
+        generated_issue.get("issue_number")
+        for generated_issue in planner_generated_issues
+        if isinstance(generated_issue, dict)
+    ]
+    planner_transition_targets = [
+        generated_issue.get("next_state_after_approval")
+        for generated_issue in planner_generated_issues
+        if isinstance(generated_issue, dict)
+    ]
+
+    if approved_generated_issue_numbers != planner_generated_issue_numbers:
+        print(
+            "[Approval] planner_result_v1 human_decision_ledger_v1 selected_generated_issue_numbers must "
+            "exactly match planner_result_v1 generated_issues issue numbers before approval "
+            f"(expected: {planner_generated_issue_numbers!r}, found: {approved_generated_issue_numbers!r})."
+        )
+        return False
+
+    if approved_transition_targets != planner_transition_targets:
+        print(
+            "[Approval] planner_result_v1 human_decision_ledger_v1 applied_transition_targets must exactly "
+            "match planner_result_v1 generated_issues next_state_after_approval values before approval "
+            f"(expected: {planner_transition_targets!r}, found: {approved_transition_targets!r})."
+        )
+        return False
+
     generated_issues = []
     for generated_issue in planner_generated_issues:
         generated_issue_number = generated_issue["issue_number"]
@@ -1878,6 +2158,13 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
             print(
                 f"[Approval] Generated issue #{generated_issue_number} target state '{target_state}' is human-owned "
                 "and not dispatchable."
+            )
+            return False
+
+        if target_state not in LABEL_MAP:
+            print(
+                f"[Approval] Generated issue #{generated_issue_number} target state '{target_state}' is not "
+                "a supported dispatch workflow state."
             )
             return False
 
@@ -1962,7 +2249,12 @@ def approve_implementation_plan_review(source_issue_number, plan_comment_id=None
         f"- Recommendation comment id: {recommendation_comment_id}",
         f"- Roadmap PR: #{roadmap_pr}",
         f"- Transitioned generated issues: {', '.join(f'#{issue_number}' for issue_number in transitioned_issue_numbers)}",
+        "",
+        "Human decision ledger artifact:",
     ]
+    audit_lines.extend(
+        human_decision_ledger.render_human_decision_ledger_markdown_block(normalized_human_decision_ledger)
+    )
     if not _add_source_audit_comment(source_issue_number, audit_lines):
         print(f"[Approval] Failed to record approval audit comment on source issue #{source_issue_number}.")
         return False
@@ -2965,6 +3257,9 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     if isinstance(planner_result, dict) and isinstance(planner_result.get("roadmap_pr"), int)
                     else None
                 )
+                planner_result_human_decision_ledger = (
+                    planner_result.get("human_decision_ledger_v1") if isinstance(planner_result, dict) else None
+                )
                 planner_result_comment_id = (
                     planner_result_metadata.get("planner_result_comment_id")
                     if isinstance(planner_result_metadata, dict)
@@ -3017,6 +3312,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         roadmap_pr_number=planner_result_roadmap_pr,
                         roadmap_reference_merged=roadmap_reference_merged,
                         generated_issues=planner_result_generated_issues,
+                        human_decision_ledger_v1=planner_result_human_decision_ledger,
                     )
                     update_run_status(
                         item,
@@ -3145,6 +3441,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                         roadmap_pr_number=planner_result_roadmap_pr,
                         roadmap_reference_merged=roadmap_reference_merged,
                         generated_issues=planner_result_generated_issues,
+                        human_decision_ledger_v1=planner_result_human_decision_ledger,
                     )
                     update_run_status(
                         item,
@@ -3186,6 +3483,7 @@ def launch_agent(item, state_label, config, role_prompt_path, launch_brief_path)
                     roadmap_pr_number=planner_result_roadmap_pr,
                     roadmap_reference_merged=roadmap_reference_merged,
                     generated_issues=planner_result_generated_issues,
+                    human_decision_ledger_v1=planner_result_human_decision_ledger,
                 )
                 if not ready_snapshot.get("generated_issues"):
                     ready_snapshot["diagnostic"] = (
