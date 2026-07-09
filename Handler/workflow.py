@@ -10,6 +10,7 @@ from Handler.workflow_states import (
     IMPLEMENTATION_PLAN_REVIEW_LABEL,
     IMPLEMENTATION_PLANNING_LABEL,
     LOCK_LABEL,
+    PLANNED_LABEL,
     REVIEW_LABEL,
     ROADMAP_UPDATE_LABEL,
     SYSTEMS_ARCHITECTURE_LABEL,
@@ -49,6 +50,8 @@ def get_known_state_labels(labels):
 def get_dispatchable_state_labels(labels):
     return [label for label in labels if label in LABEL_MAP]
 
+def get_is_planned_state_label(labels) -> bool:
+    return PLANNED_LABEL in labels
 
 def get_unsupported_state_labels(labels):
     return [label for label in get_state_labels(labels) if label not in WORKFLOW_STATES]
@@ -78,6 +81,7 @@ def resolve_dispatch_config(item, labels):
     primary_states = get_primary_workflow_state_labels(labels)
     dispatchable_states = get_dispatchable_state_labels(labels)
     unsupported_states = get_unsupported_state_labels(labels)
+    is_planned = get_is_planned_state_label(labels)
 
     if unsupported_states:
         item["comment"] = (
@@ -103,7 +107,7 @@ def resolve_dispatch_config(item, labels):
         item["skip_reason"] = f"ambiguous workflow state labels: {', '.join(primary_states)}"
         return None
 
-    if not dispatchable_states:
+    if not dispatchable_states and not is_planned:
         item["comment"] = (
             "Handler skipped this item: non-dispatch workflow state label found "
             f"({primary_states[0]}). This state requires human or scheduler action before dispatch."
