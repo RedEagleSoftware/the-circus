@@ -1180,6 +1180,18 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
             f"- planner artifact: `{(accepted_decision_traceability.get('planner') or {}).get('artifact')}`",
             f"- outcome state: `{accepted_decision_traceability.get('outcome_state')}`",
             "- diagnostics:",
+        ]
+    )
+
+    accepted_decision_diagnostics = accepted_decision_traceability.get("diagnostics")
+    if isinstance(accepted_decision_diagnostics, list) and accepted_decision_diagnostics:
+        for accepted_decision_diagnostic in accepted_decision_diagnostics:
+            lines.append(f"  - {accepted_decision_diagnostic}")
+    else:
+        lines.append("  - none")
+
+    lines.extend(
+        [
             "",
             "## Human Decision Ledger",
             f"- version: `{human_decision_ledger_v1.get('version')}`",
@@ -1217,13 +1229,6 @@ def write_run_result(item, *, get_run_state_fn, read_run_status_fn):
             "- diagnostics:",
         ]
     )
-
-    accepted_decision_diagnostics = accepted_decision_traceability.get("diagnostics")
-    if isinstance(accepted_decision_diagnostics, list) and accepted_decision_diagnostics:
-        for accepted_decision_diagnostic in accepted_decision_diagnostics:
-            lines.append(f"  - {accepted_decision_diagnostic}")
-    else:
-        lines.append("  - none")
 
     human_decision_ledger_diagnostics = human_decision_ledger_v1.get("diagnostics")
     if isinstance(human_decision_ledger_diagnostics, list) and human_decision_ledger_diagnostics:

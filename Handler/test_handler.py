@@ -7684,6 +7684,7 @@ class HandlerObservabilityTests(unittest.TestCase):
                             "outcome": "READY",
                             "outcome_valid": True,
                             "diagnostic": None,
+                            "recommendation_comment_id": 50001,
                             "implementation_plan": "C:/target/repo/Watchtower/runs/issue-69/run-001/implementation-plan.md",
                             "recommended_route": None,
                             "generated_issues": [
@@ -7699,8 +7700,8 @@ class HandlerObservabilityTests(unittest.TestCase):
                         },
                         recommendation_traceability={
                             "available": True,
-                            "recommendation_url": "https://github.com/owner/repo/issues/69#issuecomment-50001",
-                            "recommendation_comment_id": 50001,
+                            "recommendation_url": "https://github.com/owner/repo/issues/69#issuecomment-50002",
+                            "recommendation_comment_id": 50002,
                             "source_issue": 69,
                             "roadmap_reference": "https://github.com/owner/repo/pull/90",
                             "source": "implementation-planner",
@@ -7754,14 +7755,15 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("  - #69: `https://github.com/owner/repo/issues/69`", implementation_section)
         traceability_section = result_content.split("## Recommendation Traceability", 1)[1].split("## Implementation Planner", 1)[0]
         self.assertIn("- available: `True`", traceability_section)
-        self.assertIn("- recommendation comment ID: `50001`", traceability_section)
+        self.assertIn("- recommendation comment ID: `50002`", traceability_section)
         accepted_traceability_section = result_content.split("## Accepted Decision Traceability", 1)[1].split(
             "## Implementation Planner", 1
         )[0]
         self.assertIn("- version: `1`", accepted_traceability_section)
         self.assertIn("- status: `available`", accepted_traceability_section)
-        self.assertIn("- recommendation comment ID: `50001`", accepted_traceability_section)
+        self.assertIn("- recommendation comment ID: `50002`", accepted_traceability_section)
         self.assertIn("- planner outcome: `READY`", accepted_traceability_section)
+        self.assertIn("  - accepted recommendation reference mismatches planner metadata", accepted_traceability_section)
         human_decision_section = result_content.split("## Human Decision Ledger", 1)[1].split("## Implementation Planner", 1)[0]
         self.assertIn("- source:", human_decision_section)
         self.assertIn("  - accepted_recommendation_comment_id: `50001`", human_decision_section)
@@ -7773,6 +7775,7 @@ class HandlerObservabilityTests(unittest.TestCase):
         self.assertIn("  - diagnostics: `['verified against recommendation']`", human_decision_section)
         self.assertIn("- evidence:", human_decision_section)
         self.assertIn("  - watchtower_run_status: `accepted`", human_decision_section)
+        self.assertNotIn("  - accepted recommendation reference mismatches planner metadata", human_decision_section)
 
     def test_read_run_status_promotes_planner_human_decision_ledger_when_more_complete(self):
         planner_human_decision_ledger = {
