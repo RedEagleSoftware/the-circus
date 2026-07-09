@@ -166,6 +166,32 @@ class MainStartupTests(unittest.TestCase):
         self.assertEqual(context.exception.code, 1)
         mock_parity.assert_called_once_with()
 
+    def test_main_generate_organizational_metrics_runs_command_and_skips_polling(self):
+        with patch.object(main, "run_generate_organizational_metrics") as mock_generate:
+            with patch.object(main, "launch_handler_polling") as mock_poll:
+                with patch.object(main, "run_label_sync") as mock_sync:
+                    main.main(["--generate-organizational-metrics"])
+
+        mock_generate.assert_called_once_with(metrics_repo=None, metrics_output_dir=None)
+        mock_poll.assert_not_called()
+        mock_sync.assert_not_called()
+
+    def test_main_generate_organizational_metrics_supports_repo_and_output_overrides(self):
+        with patch.object(main, "run_generate_organizational_metrics") as mock_generate:
+            with patch.object(main, "launch_handler_polling") as mock_poll:
+                main.main(
+                    [
+                        "--generate-organizational-metrics",
+                        "--metrics-repo",
+                        "owner/repo",
+                        "--metrics-output-dir",
+                        "C:/tmp/metrics",
+                    ]
+                )
+
+        mock_generate.assert_called_once_with(metrics_repo="owner/repo", metrics_output_dir="C:/tmp/metrics")
+        mock_poll.assert_not_called()
+
     def test_main_default_path_does_not_run_label_sync(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.object(main, "run_label_sync") as mock_sync:

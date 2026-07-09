@@ -209,6 +209,15 @@ def run_workflow_governance_parity_check():
     return parity_result["ok"]
 
 
+def run_generate_organizational_metrics(metrics_repo=None, metrics_output_dir=None):
+    from Handler.metrics import generate_organizational_metrics
+
+    generation_result = generate_organizational_metrics(repo=metrics_repo, output_dir=metrics_output_dir)
+    print(f"[Metrics] Generated JSON: {generation_result['json_path']}")
+    print(f"[Metrics] Generated Markdown: {generation_result['markdown_path']}")
+    return generation_result
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="The Circus orchestrator launcher")
     parser.add_argument(
@@ -225,6 +234,19 @@ def main(argv=None):
         "--check-workflow-governance",
         action="store_true",
         help="Run workflow governance parity checks and exit.",
+    )
+    parser.add_argument(
+        "--generate-organizational-metrics",
+        action="store_true",
+        help="Generate read-only organizational metrics artifacts from local Watchtower runtime data and exit.",
+    )
+    parser.add_argument(
+        "--metrics-output-dir",
+        help="Optional output directory for organizational metrics artifacts.",
+    )
+    parser.add_argument(
+        "--metrics-repo",
+        help="Optional repository filter override (owner/repo). Defaults to CIRCUS_REPO when set.",
     )
     parser.add_argument(
         "--approve-implementation-plan",
@@ -261,6 +283,10 @@ def main(argv=None):
         parity_ok = run_workflow_governance_parity_check()
         if not parity_ok:
             raise SystemExit(1)
+        return
+
+    if args.generate_organizational_metrics:
+        run_generate_organizational_metrics(metrics_repo=args.metrics_repo, metrics_output_dir=args.metrics_output_dir)
         return
 
     if args.approve_implementation_plan is not None:
