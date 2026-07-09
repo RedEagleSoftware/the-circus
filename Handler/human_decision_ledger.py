@@ -504,15 +504,9 @@ def is_dispatch_approval_stale_check_fresh(
     compared_recommendation_comment_id = stale_check.get("compared_recommendation_comment_id")
     source_recommendation_comment_id = source.get("accepted_recommendation_comment_id")
     if recommendation_comment_id is not None:
-        if (
-            compared_recommendation_comment_id is None
-            and source_recommendation_comment_id is None
-        ):
+        if compared_recommendation_comment_id is None:
             return False
-        if (
-            compared_recommendation_comment_id is not None
-            and compared_recommendation_comment_id != recommendation_comment_id
-        ):
+        if compared_recommendation_comment_id != recommendation_comment_id:
             return False
         if (
             source_recommendation_comment_id is not None
@@ -523,9 +517,9 @@ def is_dispatch_approval_stale_check_fresh(
     compared_roadmap_pr = stale_check.get("compared_roadmap_pr")
     source_roadmap_pr = source.get("roadmap_pr")
     if roadmap_pr is not None:
-        if compared_roadmap_pr is None and source_roadmap_pr is None:
+        if compared_roadmap_pr is None:
             return False
-        if compared_roadmap_pr is not None and compared_roadmap_pr != roadmap_pr:
+        if compared_roadmap_pr != roadmap_pr:
             return False
         if source_roadmap_pr is not None and source_roadmap_pr != roadmap_pr:
             return False
